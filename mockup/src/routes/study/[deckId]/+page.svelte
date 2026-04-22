@@ -2,14 +2,36 @@
     import { onMount } from "svelte";
     import { page } from "$app/stores";
     import { decks, cards as fakeCards } from "$lib/data";
-    import { fetchDecks, fetchCards, type ApiCardSummary } from "$lib/api";
+    import {
+        fetchDecks,
+        fetchQueue,
+        postAnswer,
+        type ApiCardSummary,
+        type AnswerRating,
+    } from "$lib/api";
     import Kbd from "$lib/components/Kbd.svelte";
 
-    let deckIdParam = $derived($page.params.deckId);
+    let deckIdParam = $derived($page.params.deckId ?? "");
     let deckName = $state("…");
     let deckEmoji = $state("📚");
-    let liveCards = $state<ApiCardSummary[] | null>(null);
-    let idx = $state(0);
+
+    // Live (backend-driven) state.
+    let mode = $state<"loading" | "live" | "offline">("loading");
+    let deckNumericId = $state<number | null>(null);
+    let currentCard = $state<ApiCardSummary | null>(null);
+    let counts = $state<{ new: number; learning: number; review: number } | null>(null);
+    let sessionStartedWith = $state(0);
+    let answeredCount = $state(0);
+    let cardStartedAt = $state(0);
+    let sending = $state(false);
+    let lastError = $state<string | null>(null);
+
+    // Offline fallback when backend is unreachable.
+    let offlineIdx = $state(0);
+    let offlineCards = $derived(
+        mode === "offline" ? fakeCards.filter((c) => c.deckId === deckIdParam) : [],
+    );
+
     let showAnswer = $state(false);
 
     onMount(async () => {
@@ -21,21 +43,28 @@
                 flat.find((d) => slug(d.name) === deckIdParam) ??
                 flat.find((d) => d.name.toLowerCase().includes(deckIdParam.toLowerCase())) ??
                 flat[0];
-            if (hit) {
-                deckName = hit.name;
-                deckEmoji = "📚";
-                const res = await fetchCards(`deck:"${hit.name.replace(/"/g, "\\\"")}"`, 50);
-                liveCards = res.cards;
-            }
+            if (!hit) throw new Error("no deck matched");
+            deckName = hit.name;
+            deckEmoji = "📚";
+            deckNumericId = hit.id;
+            const res = await fetchQueue(hit.id, 1);
+            counts = { new: res.new, learning: res.learning, review: res.review };
+            sessionStartedWith = res.new + res.learning + res.review;
+            currentCard = res.cards[0] ?? null;
+            cardStartedAt = Date.now();
+            mode = "live";
         } catch {
-            // fallback path: find fake deck
+            // Backend unreachable — degrade to the fake-data preview.
             const fd = decks.find((d) => d.id === deckIdParam) ?? decks[0];
             deckName = fd.name;
             deckEmoji = fd.emoji;
+            mode = "offline";
         }
     });
 
-    function flattenTree(tree: { id: number; name: string; level: number; children: any[] }[]): Array<{ id: number; name: string }> {
+    function flattenTree(
+        tree: { id: number; name: string; level: number; children: any[] }[],
+    ): Array<{ id: number; name: string }> {
         const out: Array<{ id: number; name: string }> = [];
         const walk = (nodes: any[]) => {
             for (const n of nodes) {
@@ -51,17 +80,6 @@
         return name.toLowerCase().replace(/[^a-z0-9-]+/g, "-");
     }
 
-    let fallbackCards = $derived(fakeCards.filter((c) => c.deckId === deckIdParam));
-    let deckCards = $derived(
-        liveCards
-            ? liveCards.map((c) => ({ front: stripHtml(c.front_html), back: stripHtml(c.back_html) }))
-            : fallbackCards.map((c) => ({ front: c.front, back: c.back })),
-    );
-    let card = $derived(deckCards[idx] ?? { front: "—", back: "" });
-    let progressPct = $derived(
-        deckCards.length > 0 ? ((idx + (showAnswer ? 0.5 : 0)) / deckCards.length) * 100 : 0,
-    );
-
     function stripHtml(html: string): string {
         // Simple, safe-for-prototype: strip tags, trim, collapse whitespace.
         // Real reviewer will render HTML with the notetype's CSS.
@@ -73,15 +91,79 @@
             .trim();
     }
 
+    let face = $derived<{ front: string; back: string }>(
+        mode === "live"
+            ? currentCard
+                ? { front: stripHtml(currentCard.front_html), back: stripHtml(currentCard.back_html) }
+                : { front: "—", back: "" }
+            : offlineCards[offlineIdx]
+              ? { front: offlineCards[offlineIdx].front, back: offlineCards[offlineIdx].back }
+              : { front: "—", back: "" },
+    );
+
+    let total = $derived<number>(
+        mode === "live"
+            ? Math.max(sessionStartedWith, 1)
+            : Math.max(offlineCards.length, 1),
+    );
+    let position = $derived<number>(
+        mode === "live"
+            ? Math.min(answeredCount + (currentCard ? 1 : 0), total)
+            : Math.min(offlineIdx + 1, total),
+    );
+    let progressPct = $derived<number>(
+        mode === "live"
+            ? Math.min(((answeredCount + (showAnswer ? 0.5 : 0)) / total) * 100, 100)
+            : Math.min(((offlineIdx + (showAnswer ? 0.5 : 0)) / total) * 100, 100),
+    );
+
+    let done = $derived(mode === "live" && currentCard === null && sessionStartedWith > 0);
+
+    const GRADE_TO_RATING: Record<1 | 2 | 3 | 4, AnswerRating> = {
+        1: "again",
+        2: "hard",
+        3: "good",
+        4: "easy",
+    };
+
     function reveal() {
+        if (mode === "live" && !currentCard) return;
         showAnswer = true;
     }
-    function answer(_grade: 1 | 2 | 3 | 4) {
-        showAnswer = false;
-        idx = Math.min(idx + 1, deckCards.length - 1);
+
+    async function answer(grade: 1 | 2 | 3 | 4) {
+        if (mode === "offline") {
+            showAnswer = false;
+            offlineIdx = Math.min(offlineIdx + 1, Math.max(offlineCards.length - 1, 0));
+            return;
+        }
+        if (sending || !currentCard || deckNumericId === null) return;
+        sending = true;
+        lastError = null;
+        // Clamp ms_taken: backend caps via deck preset; keep it within u32 sanity.
+        const msTaken = Math.min(Math.max(Date.now() - cardStartedAt, 0), 60_000);
+        try {
+            const res = await postAnswer({
+                card_id: currentCard.id,
+                deck_id: deckNumericId,
+                rating: GRADE_TO_RATING[grade],
+                milliseconds_taken: msTaken,
+            });
+            counts = { new: res.new, learning: res.learning, review: res.review };
+            answeredCount += 1;
+            currentCard = res.cards[0] ?? null;
+            showAnswer = false;
+            cardStartedAt = Date.now();
+        } catch (err) {
+            lastError = err instanceof Error ? err.message : "Failed to record answer";
+        } finally {
+            sending = false;
+        }
     }
+
     function onKey(e: KeyboardEvent) {
         if (e.target instanceof HTMLElement && ["INPUT", "TEXTAREA"].includes(e.target.tagName)) return;
+        if (done) return;
         if (!showAnswer && (e.key === " " || e.key === "Enter")) {
             e.preventDefault();
             reveal();
@@ -107,9 +189,9 @@
             <span>{deckName}</span>
         </a>
         <div class="counter">
-            <span class="i">{idx + 1}</span>
+            <span class="i">{position}</span>
             <span class="slash">/</span>
-            <span class="total">{deckCards.length}</span>
+            <span class="total">{total}</span>
         </div>
         <div class="spacer">
             <button class="icon-btn" aria-label="Edit current card" title="Edit · E">
@@ -123,46 +205,60 @@
 
     <div class="progress"><div class="progress-fill" style:width="{progressPct}%"></div></div>
 
+    {#if lastError}
+        <div class="error-banner" role="alert">{lastError}</div>
+    {/if}
+
     <div class="content">
-        <div class="card-stack">
-            <article class="card-face front">
-                <div class="front-text">{card.front}</div>
-            </article>
-            {#if showAnswer}
-                <div class="divider"><span>ANSWER</span></div>
-                <article class="card-face back">
-                    <div class="back-text">{card.back}</div>
+        {#if done}
+            <div class="empty-state">
+                <div class="empty-title">All caught up</div>
+                <div class="empty-sub">No more cards scheduled in {deckName} today.</div>
+                <a href="/" class="empty-back">Back to decks</a>
+            </div>
+        {:else}
+            <div class="card-stack">
+                <article class="card-face front">
+                    <div class="front-text">{face.front}</div>
                 </article>
-            {/if}
-        </div>
+                {#if showAnswer}
+                    <div class="divider"><span>ANSWER</span></div>
+                    <article class="card-face back">
+                        <div class="back-text">{face.back}</div>
+                    </article>
+                {/if}
+            </div>
+        {/if}
     </div>
 
     <footer>
-        {#if !showAnswer}
+        {#if done}
+            <!-- no footer controls when the deck is finished -->
+        {:else if !showAnswer}
             <div class="reveal">
-                <button class="reveal-btn" onclick={reveal}>
+                <button class="reveal-btn" onclick={reveal} disabled={mode === "live" && !currentCard}>
                     Show answer
                     <Kbd>Space</Kbd>
                 </button>
             </div>
         {:else}
             <div class="answers">
-                <button class="ans ans-again" onclick={() => answer(1)}>
+                <button class="ans ans-again" onclick={() => answer(1)} disabled={sending}>
                     <span class="ans-label">Again</span>
                     <span class="ans-hint">&lt; 1 min</span>
                     <span class="ans-key"><Kbd>1</Kbd></span>
                 </button>
-                <button class="ans ans-hard" onclick={() => answer(2)}>
+                <button class="ans ans-hard" onclick={() => answer(2)} disabled={sending}>
                     <span class="ans-label">Hard</span>
                     <span class="ans-hint">6 min</span>
                     <span class="ans-key"><Kbd>2</Kbd></span>
                 </button>
-                <button class="ans ans-good" onclick={() => answer(3)}>
+                <button class="ans ans-good" onclick={() => answer(3)} disabled={sending}>
                     <span class="ans-label">Good</span>
                     <span class="ans-hint">10 min</span>
                     <span class="ans-key"><Kbd>3</Kbd></span>
                 </button>
-                <button class="ans ans-easy" onclick={() => answer(4)}>
+                <button class="ans ans-easy" onclick={() => answer(4)} disabled={sending}>
                     <span class="ans-label">Easy</span>
                     <span class="ans-hint">4 d</span>
                     <span class="ans-key"><Kbd>4</Kbd></span>
@@ -397,5 +493,55 @@
     }
     .ans-easy .ans-label {
         color: var(--easy);
+    }
+    .ans:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        transform: none;
+    }
+    .reveal-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .error-banner {
+        margin: var(--space-2) var(--space-8) 0;
+        padding: var(--space-2) var(--space-3);
+        border: 1px solid var(--again);
+        border-radius: var(--radius-sm);
+        color: var(--again);
+        font-size: var(--text-sm);
+        text-align: center;
+    }
+
+    .empty-state {
+        max-width: 420px;
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-3);
+        align-items: center;
+    }
+    .empty-title {
+        font-family: var(--font-serif);
+        font-size: var(--text-2xl);
+        color: var(--text);
+    }
+    .empty-sub {
+        font-size: var(--text-sm);
+        color: var(--text-muted);
+    }
+    .empty-back {
+        margin-top: var(--space-2);
+        padding: 0.6rem 1.1rem;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        background: var(--bg-elevated);
+        color: var(--text);
+        font-size: var(--text-sm);
+    }
+    .empty-back:hover {
+        border-color: var(--accent);
+        background: var(--bg-hover);
     }
 </style>

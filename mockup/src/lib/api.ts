@@ -91,3 +91,20 @@ export async function fetchQueue(
     const query = new URLSearchParams({ deck_id: String(deckId), limit: String(limit) });
     return getJson<ApiQueueResponse>(`/api/study/queue?${query}`);
 }
+
+export type AnswerRating = "again" | "hard" | "good" | "easy";
+
+export interface AnswerRequest {
+    card_id: number;
+    deck_id: number;
+    rating: AnswerRating;
+    milliseconds_taken?: number;
+}
+
+export async function postAnswer(req: AnswerRequest): Promise<ApiQueueResponse> {
+    return getJson<ApiQueueResponse>("/api/study/answer", {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify(req),
+    });
+}
