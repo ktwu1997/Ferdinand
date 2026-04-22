@@ -2,7 +2,7 @@ pub mod cards;
 pub mod decks;
 pub mod study;
 
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::Router;
 use serde::Serialize;
 
@@ -15,6 +15,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/cards", get(cards::list_cards))
         .route("/api/cards/{id}", get(cards::get_card))
         .route("/api/study/queue", get(study::get_queue))
+        .route("/api/study/answer", post(study::post_answer))
 }
 
 #[derive(Serialize, utoipa::ToSchema)]

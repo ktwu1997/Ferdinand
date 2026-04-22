@@ -33,12 +33,18 @@ pub fn seed_if_requested(col: &mut Collection) -> anyhow::Result<()> {
         Some(id) => {
             // Seed only if the deck is empty — supports retrying after an earlier
             // failure where the deck got created but notes didn't.
-            let cid_count = col.search_cards(
-                format!("deck:\"{DEMO_DECK}\"").as_str(),
-                anki::search::SortMode::NoOrder,
-            )?.len();
+            let cid_count = col
+                .search_cards(
+                    format!("deck:\"{DEMO_DECK}\"").as_str(),
+                    anki::search::SortMode::NoOrder,
+                )?
+                .len();
             if cid_count > 0 {
-                tracing::info!(deck = DEMO_DECK, cards = cid_count, "bootstrap skipped: deck has cards");
+                tracing::info!(
+                    deck = DEMO_DECK,
+                    cards = cid_count,
+                    "bootstrap skipped: deck has cards"
+                );
                 return Ok(());
             }
             id
@@ -56,7 +62,11 @@ pub fn seed_if_requested(col: &mut Collection) -> anyhow::Result<()> {
         col.add_note(&mut note, deck_id)?;
     }
 
-    tracing::info!(deck = DEMO_DECK, count = SAMPLE_NOTES.len(), "bootstrap seeded");
+    tracing::info!(
+        deck = DEMO_DECK,
+        count = SAMPLE_NOTES.len(),
+        "bootstrap seeded"
+    );
     Ok(())
 }
 
