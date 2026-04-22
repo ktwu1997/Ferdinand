@@ -1,0 +1,133 @@
+use anki::card::{Card, CardQueueNumber};
+use anki::prelude::*;
+use anki::search::SortMode;
+use anki::template::RenderedNode;
+use axum::extract::{Path, Query, State};
+use axum::Json;
+use serde::{Deserialize, Serialize};
+
+use crate::error::ApiResult;
+use crate::state::AppState;
+
+/// Flattened card view used by the Browse list and the Study queue preview.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CardSummary {
+    pub id: i64,
+    pub note_id: i64,
+    pub deck_id: i64,
+    pub deck_name: String,
+    pub template_idx: u32,
+    pub front_html: String,
+    pub back_html: String,
+    pub tags: Vec<String>,
+    pub state: &'static str,
+    pub ease_factor: f32,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CardListResponse {
+    pub total: usize,
+    pub cards: Vec<CardSummary>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListQuery {
+    /// Anki search expression, e.g. `deck:"Ferdinand demo"` or `tag:leech`.
+    /// If absent, defaults to all cards.
+    pub q: Option<String>,
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+}
+
+fn default_limit() -> usize {
+    50
+}
+
+/// List cards matching an Anki search expression.
+#[utoipa::path(
+    get,
+    path = "/api/cards",
+    responses((status = 200, body = CardListResponse)),
+    params(
+        ("q" = Option<String>, Query, description = "Anki search expression"),
+        ("limit" = Option<usize>, Query, description = "Max cards returned")
+    )
+)]
+pub async fn list_cards(
+    State(state): State<AppState>,
+    Query(q): Query<ListQuery>,
+) -> ApiResult<Json<CardListResponse>> {
+    let mut col = state.col.lock().await;
+    let search = q.q.as_deref().unwrap_or("").trim().to_string();
+    let ids = col.search_cards(search.as_str(), SortMode::NoOrder)?;
+    let total = ids.len();
+    let cards = ids
+        .into_iter()
+        .take(q.limit)
+        .map(|cid| build_summary(&mut col, cid))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Json(CardListResponse { total, cards }))
+}
+
+/// Fetch a single card by id with rendered HTML.
+#[utoipa::path(
+    get,
+    path = "/api/cards/{id}",
+    responses((status = 200, body = CardSummary)),
+    params(("id" = i64, Path, description = "Card id"))
+)]
+pub async fn get_card(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> ApiResult<Json<CardSummary>> {
+    let mut col = state.col.lock().await;
+    let summary = build_summary(&mut col, CardId(id))?;
+    Ok(Json(summary))
+}
+
+pub(crate) fn build_summary(col: &mut Collection, cid: CardId) -> anyhow::Result<CardSummary> {
+    let card = col
+        .storage
+        .get_card(cid)?
+        .ok_or_else(|| anyhow::anyhow!("card {cid} not found"))?;
+    let note = col
+        .storage
+        .get_note(card.note_id())?
+        .ok_or_else(|| anyhow::anyhow!("note {} not found for card {cid}", card.note_id()))?;
+    let deck = col
+        .get_deck(card.deck_id())?
+        .ok_or_else(|| anyhow::anyhow!("deck {} not found for card {cid}", card.deck_id()))?;
+    let rendered = col.render_existing_card(cid, false, true)?;
+    Ok(CardSummary {
+        id: cid.0,
+        note_id: card.note_id().0,
+        deck_id: card.deck_id().0,
+        deck_name: deck.human_name(),
+        template_idx: u32::from(card.template_idx()),
+        front_html: flatten_nodes(&rendered.qnodes),
+        back_html: flatten_nodes(&rendered.anodes),
+        tags: note.tags.clone(),
+        state: card_state_label(&card),
+        ease_factor: card.ease_factor(),
+    })
+}
+
+fn flatten_nodes(nodes: &[RenderedNode]) -> String {
+    let mut out = String::new();
+    for n in nodes {
+        match n {
+            RenderedNode::Text { text } => out.push_str(text),
+            RenderedNode::Replacement { current_text, .. } => out.push_str(current_text),
+        }
+    }
+    out
+}
+
+fn card_state_label(card: &Card) -> &'static str {
+    match card.queue_number() {
+        CardQueueNumber::New => "new",
+        CardQueueNumber::Learning => "learning",
+        CardQueueNumber::Review => "review",
+        CardQueueNumber::Invalid => "suspended",
+    }
+}

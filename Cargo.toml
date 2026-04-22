@@ -7,6 +7,7 @@ rust-version = "1.80"
 
 [workspace]
 members = [
+  "anki_server",
   "build/configure",
   "build/ninja_gen",
   "build/runner",

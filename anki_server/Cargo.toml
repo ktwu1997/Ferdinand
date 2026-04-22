@@ -1,0 +1,27 @@
+[package]
+name = "anki_server"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+rust-version.workspace = true
+workspace = ".."
+description = "HTTP + WebSocket server wrapping rslib for the web and iOS clients"
+
+[[bin]]
+name = "anki_server"
+path = "src/main.rs"
+
+[dependencies]
+anki = { path = "../rslib", features = ["rustls"] }
+anki_proto = { path = "../rslib/proto" }
+anyhow.workspace = true
+axum = { workspace = true }
+serde = { workspace = true }
+serde_json.workspace = true
+tokio = { workspace = true, features = ["fs", "rt-multi-thread", "macros", "signal", "sync"] }
+tower-http = { version = "0.6.6", features = ["trace", "cors"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+utoipa = { version = "5.3", features = ["axum_extras"] }
