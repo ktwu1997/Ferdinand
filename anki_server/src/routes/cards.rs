@@ -22,6 +22,9 @@ pub struct CardSummary {
     pub tags: Vec<String>,
     pub state: &'static str,
     pub ease_factor: f32,
+    pub notetype_id: i64,
+    pub notetype_name: String,
+    pub notetype_css: String,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -97,6 +100,9 @@ pub(crate) fn build_summary(col: &mut Collection, cid: CardId) -> anyhow::Result
     let deck = col
         .get_deck(card.deck_id())?
         .ok_or_else(|| anyhow::anyhow!("deck {} not found for card {cid}", card.deck_id()))?;
+    let notetype = col
+        .get_notetype(note.notetype_id)?
+        .ok_or_else(|| anyhow::anyhow!("notetype {} not found for note {}", note.notetype_id, note.id))?;
     let rendered = col.render_existing_card(cid, false, true)?;
     Ok(CardSummary {
         id: cid.0,
@@ -109,6 +115,9 @@ pub(crate) fn build_summary(col: &mut Collection, cid: CardId) -> anyhow::Result
         tags: note.tags.clone(),
         state: card_state_label(&card),
         ease_factor: card.ease_factor(),
+        notetype_id: notetype.id.0,
+        notetype_name: notetype.name.clone(),
+        notetype_css: notetype.config.css.clone(),
     })
 }
 
