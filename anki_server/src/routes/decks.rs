@@ -1,3 +1,4 @@
+use anki::timestamp::TimestampSecs;
 use axum::extract::State;
 use axum::Json;
 use serde::Serialize;
@@ -33,9 +34,9 @@ pub struct DeckListResponse {
 )]
 pub async fn list_decks(State(state): State<AppState>) -> ApiResult<Json<DeckListResponse>> {
     let mut col = state.col.lock().await;
-    // `deck_tree(None)` returns today's due counts using the collection's
-    // current day cutoff. Passing Some(now) would pin it to a specific day.
-    let tree = col.deck_tree(None)?;
+    // deck_tree(None) returns the tree structure only; due and total counts
+    // are populated only when a timestamp is supplied (see rslib tree.rs).
+    let tree = col.deck_tree(Some(TimestampSecs::now()))?;
     let decks = convert(tree).children;
     Ok(Json(DeckListResponse { decks }))
 }
