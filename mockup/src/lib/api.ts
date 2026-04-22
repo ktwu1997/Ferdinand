@@ -38,6 +38,9 @@ export interface ApiCardSummary {
     tags: string[];
     state: "new" | "learning" | "review" | "suspended";
     ease_factor: number;
+    notetype_id: number;
+    notetype_name: string;
+    notetype_css: string;
 }
 
 export interface ApiCardListResponse {

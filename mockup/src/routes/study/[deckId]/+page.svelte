@@ -10,6 +10,9 @@
         type AnswerRating,
     } from "$lib/api";
     import Kbd from "$lib/components/Kbd.svelte";
+    import CardFace from "$lib/components/CardFace.svelte";
+
+    const OFFLINE_CARD_CSS = `.card{font-family:var(--font-serif,serif);font-size:3rem;text-align:center;line-height:1.15;letter-spacing:-0.02em;}`;
 
     let deckIdParam = $derived($page.params.deckId ?? "");
     let deckName = $state("…");
@@ -80,25 +83,18 @@
         return name.toLowerCase().replace(/[^a-z0-9-]+/g, "-");
     }
 
-    function stripHtml(html: string): string {
-        // Simple, safe-for-prototype: strip tags, trim, collapse whitespace.
-        // Real reviewer will render HTML with the notetype's CSS.
-        return html
-            .replace(/<hr[^>]*>/gi, "\n\n")
-            .replace(/<br\s*\/?>(\r?\n)?/gi, "\n")
-            .replace(/<[^>]+>/g, "")
-            .replace(/\n{3,}/g, "\n\n")
-            .trim();
-    }
-
-    let face = $derived<{ front: string; back: string }>(
+    let frontHtml = $derived<string>(
         mode === "live"
-            ? currentCard
-                ? { front: stripHtml(currentCard.front_html), back: stripHtml(currentCard.back_html) }
-                : { front: "—", back: "" }
-            : offlineCards[offlineIdx]
-              ? { front: offlineCards[offlineIdx].front, back: offlineCards[offlineIdx].back }
-              : { front: "—", back: "" },
+            ? (currentCard?.front_html ?? "—")
+            : (offlineCards[offlineIdx]?.front ?? "—"),
+    );
+    let backHtml = $derived<string>(
+        mode === "live"
+            ? (currentCard?.back_html ?? "")
+            : (offlineCards[offlineIdx]?.back ?? ""),
+    );
+    let cardCss = $derived<string>(
+        mode === "live" ? (currentCard?.notetype_css ?? "") : OFFLINE_CARD_CSS,
     );
 
     let total = $derived<number>(
@@ -188,11 +184,19 @@
             <span class="emoji">{deckEmoji}</span>
             <span>{deckName}</span>
         </a>
-        <div class="counter">
-            <span class="i">{position}</span>
-            <span class="slash">/</span>
-            <span class="total">{total}</span>
-        </div>
+        {#if mode === "live" && counts}
+            <div class="counts" aria-label="Remaining cards by kind">
+                <span class="count count-new" class:zero={counts.new === 0} title="New cards remaining">{counts.new}</span>
+                <span class="count count-learn" class:zero={counts.learning === 0} title="Learning cards remaining">{counts.learning}</span>
+                <span class="count count-review" class:zero={counts.review === 0} title="Review cards remaining">{counts.review}</span>
+            </div>
+        {:else}
+            <div class="counter">
+                <span class="i">{position}</span>
+                <span class="slash">/</span>
+                <span class="total">{total}</span>
+            </div>
+        {/if}
         <div class="spacer">
             <button class="icon-btn" aria-label="Edit current card" title="Edit · E">
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>
@@ -219,12 +223,12 @@
         {:else}
             <div class="card-stack">
                 <article class="card-face front">
-                    <div class="front-text">{face.front}</div>
+                    <CardFace html={frontHtml} css={cardCss} testid="card-face-front" />
                 </article>
                 {#if showAnswer}
                     <div class="divider"><span>ANSWER</span></div>
                     <article class="card-face back">
-                        <div class="back-text">{face.back}</div>
+                        <CardFace html={backHtml} css={cardCss} testid="card-face-back" />
                     </article>
                 {/if}
             </div>
@@ -314,6 +318,32 @@
         margin: 0 4px;
         color: var(--text-subtle);
     }
+    .counts {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--space-4);
+        font-size: var(--text-sm);
+        font-weight: 500;
+        font-variant-numeric: tabular-nums;
+        justify-self: center;
+    }
+    .count {
+        min-width: 1.5rem;
+        text-align: center;
+        transition: color var(--duration-fast) var(--ease), opacity var(--duration-fast) var(--ease);
+    }
+    .count.zero {
+        opacity: 0.35;
+    }
+    .count-new {
+        color: var(--count-new);
+    }
+    .count-learn {
+        color: var(--count-learn);
+    }
+    .count-review {
+        color: var(--count-review);
+    }
     .spacer {
         display: flex;
         justify-content: flex-end;
@@ -361,24 +391,8 @@
         gap: var(--space-8);
     }
     .card-face {
-        text-align: center;
-    }
-    .front-text {
-        font-family: var(--font-serif);
-        font-size: var(--text-hero);
-        line-height: 1.15;
-        letter-spacing: -0.02em;
-        color: var(--text);
-        white-space: pre-wrap;
-    }
-    .back-text {
-        font-family: var(--font-serif);
-        font-size: var(--text-2xl);
-        line-height: 1.4;
-        color: var(--text);
-        max-width: 640px;
-        margin: 0 auto;
-        white-space: pre-wrap;
+        display: flex;
+        justify-content: center;
     }
     .divider {
         position: relative;
