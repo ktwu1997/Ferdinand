@@ -39,6 +39,11 @@
     --good: oklch(55% 0.11 155);
     --easy: oklch(55% 0.12 220);
 
+    /* Queue-count chips (reviewer bottom/top bar) — Anki classic palette */
+    --count-new: oklch(55% 0.15 245);
+    --count-learn: oklch(58% 0.17 25);
+    --count-review: oklch(52% 0.12 150);
+
     /* Shadows — very subtle on cream */
     --shadow-sm: 0 1px 2px oklch(20% 0.01 60 / 0.04);
     --shadow-md: 0 4px 16px oklch(20% 0.01 60 / 0.06);
@@ -75,6 +80,10 @@
     --hard: oklch(75% 0.14 60);
     --good: oklch(70% 0.13 155);
     --easy: oklch(70% 0.14 220);
+
+    --count-new: oklch(72% 0.14 245);
+    --count-learn: oklch(72% 0.17 25);
+    --count-review: oklch(70% 0.13 150);
 
     --shadow-sm: 0 1px 2px oklch(0% 0 0 / 0.4);
     --shadow-md: 0 4px 16px oklch(0% 0 0 / 0.45);
