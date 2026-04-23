@@ -384,7 +384,7 @@
         padding: var(--space-8);
     }
     .card-stack {
-        max-width: 760px;
+        max-width: 640px;
         width: 100%;
         display: flex;
         flex-direction: column;
@@ -392,7 +392,15 @@
     }
     .card-face {
         display: flex;
+        align-items: center;
         justify-content: center;
+        background: #ffffff;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-md);
+        padding: clamp(2.5rem, 7vw, 4.5rem) clamp(1.75rem, 5vw, 3.5rem);
+        min-height: clamp(280px, 38vh, 420px);
+        width: 100%;
     }
     .divider {
         position: relative;
