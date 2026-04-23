@@ -4,7 +4,7 @@
     import Kbd from "$lib/components/Kbd.svelte";
     import { fetchCards, type ApiCardSummary } from "$lib/api";
 
-    let liveCards: ApiCardSummary[] | null = $state(null);
+    let liveCards = $state<ApiCardSummary[] | null>(null);
     let query = $state("");
     let openSection = $state<Record<string, boolean>>({ decks: true, tags: true, saved: true });
     let selectedIdx = $state(0);
