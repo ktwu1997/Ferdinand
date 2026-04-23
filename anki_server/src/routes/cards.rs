@@ -1,13 +1,29 @@
+use std::sync::LazyLock;
+
 use anki::card::{Card, CardQueueNumber};
 use anki::prelude::*;
 use anki::search::SortMode;
 use anki::template::RenderedNode;
 use axum::extract::{Path, Query, State};
 use axum::Json;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::error::ApiResult;
 use crate::state::AppState;
+
+// Anki's default Basic template renders the answer as
+// "{{FrontSide}}\n\n<hr id=answer>\n\n{{Back}}", so rendered.anodes
+// carries the question again at the top. Our UI shows front and back
+// as two separate cards, so we strip the prefix up to and including
+// the `<hr id=answer>` marker. Same pattern used by Anki core for
+// CSV export (rslib/.../csv/export.rs) and pylib exporting.py.
+static FRONTSIDE_PREFIX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?is)^.*<hr id=answer>\n*").unwrap());
+
+fn strip_frontside_prefix(s: &str) -> String {
+    FRONTSIDE_PREFIX.replace(s, "").into_owned()
+}
 
 /// Flattened card view used by the Browse list and the Study queue preview.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -111,7 +127,7 @@ pub(crate) fn build_summary(col: &mut Collection, cid: CardId) -> anyhow::Result
         deck_name: deck.human_name(),
         template_idx: u32::from(card.template_idx()),
         front_html: flatten_nodes(&rendered.qnodes),
-        back_html: flatten_nodes(&rendered.anodes),
+        back_html: strip_frontside_prefix(&flatten_nodes(&rendered.anodes)),
         tags: note.tags.clone(),
         state: card_state_label(&card),
         ease_factor: card.ease_factor(),
