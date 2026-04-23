@@ -20,6 +20,7 @@ ts/.svelte-kit
 .yarn
 .claude/settings.local.json
 .claude/user.md
+.claude/scheduled_tasks.lock
 .venv
 docs/_build/
 docs/autoapi/
