@@ -47,12 +47,12 @@
                 <div class="field">
                     <div class="field-head">
                         <div>
-                            <label>Desired retention</label>
+                            <label for="desired-retention">Desired retention</label>
                             <p class="hint">Target probability of recalling a card when due.</p>
                         </div>
                         <div class="value-pill">90%</div>
                     </div>
-                    <input type="range" min="70" max="97" value="90" />
+                    <input id="desired-retention" type="range" min="70" max="97" value="90" />
                     <div class="scale">
                         <span>70%</span>
                         <span>85%</span>
@@ -63,7 +63,7 @@
                 <div class="field">
                     <div class="field-head">
                         <div>
-                            <label>Maximum interval</label>
+                            <span class="field-label">Maximum interval</span>
                             <p class="hint">Cap in days. Longer = fewer reviews but slower learning.</p>
                         </div>
                         <div class="value-pill">36,500 d</div>
@@ -93,7 +93,7 @@
                 <div class="field">
                     <div class="field-head">
                         <div>
-                            <label>Theme</label>
+                            <span class="field-label">Theme</span>
                             <p class="hint">Light uses a warm cream base; dark is a deep warm gray.</p>
                         </div>
                     </div>
@@ -210,7 +210,8 @@
         align-items: flex-start;
         gap: var(--space-4);
     }
-    label {
+    label,
+    .field-label {
         font-size: var(--text-sm);
         font-weight: 500;
     }
