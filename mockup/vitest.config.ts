@@ -23,6 +23,10 @@ export default defineConfig({
                 "./src/test/stubs/app-environment.ts",
                 import.meta.url,
             ).pathname,
+            "$app/stores": new URL(
+                "./src/test/stubs/app-stores.ts",
+                import.meta.url,
+            ).pathname,
         },
     },
 });
