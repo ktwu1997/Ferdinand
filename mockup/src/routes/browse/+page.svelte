@@ -163,10 +163,10 @@
             </div>
             <div class="filters">
                 <button class="pill active">All</button>
-                <button class="pill">New</button>
-                <button class="pill">Learning</button>
-                <button class="pill">Review</button>
-                <button class="pill">Suspended</button>
+                <button class="pill pill-new">New</button>
+                <button class="pill pill-learning">Learning</button>
+                <button class="pill pill-review">Review</button>
+                <button class="pill pill-suspended">Suspended</button>
             </div>
             <div class="count-tag">{filtered.length} of {rows.length}</div>
         </div>
@@ -377,15 +377,25 @@
         align-items: center;
         gap: var(--space-2);
         flex: 1;
-        padding: 0.5rem 0.75rem;
+        padding: 0.55rem 0.85rem;
         border: 1px solid var(--border);
         border-radius: var(--radius-md);
-        background: var(--bg-elevated);
+        background: #ffffff;
         color: var(--text-subtle);
         max-width: 480px;
+        transition:
+            border-color var(--duration-fast) var(--ease),
+            box-shadow var(--duration-fast) var(--ease);
+    }
+    :global([data-theme="dark"]) .search {
+        background: var(--bg-elevated);
+    }
+    .search:hover {
+        border-color: var(--border-strong);
     }
     .search:focus-within {
         border-color: var(--accent);
+        box-shadow: var(--shadow-sm);
     }
     .search input {
         background: none;
@@ -404,30 +414,57 @@
     .filters {
         display: flex;
         gap: 2px;
-        padding: 2px;
+        padding: 3px;
         background: var(--bg-subtle);
         border-radius: var(--radius-md);
     }
     .pill {
-        padding: 0.3rem 0.75rem;
+        padding: 0.35rem 0.8rem;
         font-size: var(--text-xs);
         color: var(--text-muted);
         border-radius: var(--radius-sm);
         font-weight: 500;
+        transition:
+            color var(--duration-fast) var(--ease),
+            background var(--duration-fast) var(--ease),
+            box-shadow var(--duration-fast) var(--ease);
+    }
+    .pill:hover:not(.active) {
+        color: var(--text);
+        background: var(--bg-hover);
     }
     .pill.active {
         background: var(--bg-elevated);
         color: var(--text);
         box-shadow: var(--shadow-sm);
     }
-    .pill:hover:not(.active) {
-        color: var(--text);
+
+    /* Hover tints echo row state chip palette for semantic hinting */
+    .pill.pill-new:hover:not(.active) {
+        background: color-mix(in oklch, var(--info) 10%, transparent);
+        color: var(--info);
+    }
+    .pill.pill-learning:hover:not(.active) {
+        background: color-mix(in oklch, var(--warning) 14%, transparent);
+        color: var(--warning);
+    }
+    .pill.pill-review:hover:not(.active) {
+        background: color-mix(in oklch, var(--success) 12%, transparent);
+        color: var(--success);
+    }
+    .pill.pill-suspended:hover:not(.active) {
+        background: var(--bg-inset);
+        color: var(--text-muted);
     }
     .count-tag {
         font-size: var(--text-xs);
         color: var(--text-subtle);
         font-variant-numeric: tabular-nums;
+        font-family: var(--font-mono);
         margin-left: auto;
+        padding: 3px 8px;
+        background: var(--bg-subtle);
+        border-radius: var(--radius-sm);
     }
 
     .list {
