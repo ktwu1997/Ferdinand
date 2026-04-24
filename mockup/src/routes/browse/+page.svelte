@@ -3,8 +3,12 @@
     import { cards as fakeCards, decks, savedSearches, tags } from "$lib/data";
     import Kbd from "$lib/components/Kbd.svelte";
     import { fetchCards, type ApiCardSummary } from "$lib/api";
+    import BrowseRow from "$lib/browse/BrowseRow.svelte";
+    import BrowseRowSkeleton from "$lib/browse/BrowseRowSkeleton.svelte";
+    import { stripHtmlToSnippet } from "$lib/browse/media";
 
     let liveCards = $state<ApiCardSummary[] | null>(null);
+    let loading = $state(true);
     let query = $state("");
     let openSection = $state<Record<string, boolean>>({ decks: true, tags: true, saved: true });
     let selectedIdx = $state(0);
@@ -13,36 +17,34 @@
         try {
             const res = await fetchCards("", 100);
             liveCards = res.cards;
-        } catch {}
+        } catch {
+            // fall back to fake data
+        } finally {
+            loading = false;
+        }
     });
 
-    // Normalized shape used by the table + editor, either from live or fake data.
     type Row = {
         id: string;
-        front: string;
-        back: string;
+        frontHtml: string;
+        backHtml: string;
+        frontSnippet: string;
+        backSnippet: string;
         tags: string[];
         due: string;
-        state: string;
+        state: "new" | "learning" | "review" | "suspended" | string;
         deckName: string;
         deckEmoji: string;
     };
-
-    function stripHtml(html: string): string {
-        return html
-            .replace(/<hr[^>]*>/gi, "  ·  ")
-            .replace(/<br\s*\/?>(\r?\n)?/gi, " ")
-            .replace(/<[^>]+>/g, "")
-            .replace(/\s+/g, " ")
-            .trim();
-    }
 
     let rows: Row[] = $derived(
         liveCards
             ? liveCards.map((c) => ({
                   id: String(c.id),
-                  front: stripHtml(c.front_html),
-                  back: stripHtml(c.back_html),
+                  frontHtml: c.front_html,
+                  backHtml: c.back_html,
+                  frontSnippet: stripHtmlToSnippet(c.front_html, 140),
+                  backSnippet: stripHtmlToSnippet(c.back_html, 280),
                   tags: c.tags,
                   due: "—",
                   state: c.state,
@@ -51,8 +53,10 @@
               }))
             : fakeCards.map((c) => ({
                   id: c.id,
-                  front: c.front.split("\n")[0],
-                  back: c.back,
+                  frontHtml: c.front,
+                  backHtml: c.back,
+                  frontSnippet: c.front.split("\n")[0],
+                  backSnippet: c.back,
                   tags: c.tags,
                   due: c.due,
                   state: c.state,
@@ -65,8 +69,8 @@
         rows.filter(
             (r) =>
                 query === "" ||
-                r.front.toLowerCase().includes(query.toLowerCase()) ||
-                r.back.toLowerCase().includes(query.toLowerCase()),
+                r.frontSnippet.toLowerCase().includes(query.toLowerCase()) ||
+                r.backSnippet.toLowerCase().includes(query.toLowerCase()),
         ),
     );
     let selected = $derived(filtered[selectedIdx] ?? filtered[0] ?? rows[0]);
@@ -76,6 +80,9 @@
     }
     function selectRow(i: number) {
         selectedIdx = i;
+    }
+    function clearQuery() {
+        query = "";
     }
 </script>
 
@@ -142,7 +149,7 @@
         </div>
     </div>
 
-    <!-- results table -->
+    <!-- results list -->
     <div class="results">
         <div class="toolbar">
             <div class="search">
@@ -164,40 +171,35 @@
             <div class="count-tag">{filtered.length} of {rows.length}</div>
         </div>
 
-        <div class="table">
-            <div class="thead">
-                <div class="th front">Front</div>
-                <div class="th deck">Deck</div>
-                <div class="th tags-col">Tags</div>
-                <div class="th due">Due</div>
-                <div class="th state">State</div>
-            </div>
-            <div class="tbody">
-                {#each filtered as r, i (r.id)}
-                    <button
-                        class="tr"
-                        class:selected={selected?.id === r.id}
-                        onclick={() => selectRow(i)}
-                    >
-                        <div class="td front">
-                            <div class="front-line">{r.front}</div>
-                        </div>
-                        <div class="td deck">
-                            <span class="deck-emoji">{r.deckEmoji}</span>
-                            <span>{r.deckName}</span>
-                        </div>
-                        <div class="td tags-col">
-                            {#each r.tags as t (t)}
-                                <span class="tag">#{t}</span>
-                            {/each}
-                        </div>
-                        <div class="td due">{r.due}</div>
-                        <div class="td state">
-                            <span class="state-chip state-{r.state}">{r.state}</span>
-                        </div>
-                    </button>
+        <div class="list" role="list">
+            {#if loading}
+                {#each [0, 1, 2, 3, 4] as i (i)}
+                    <BrowseRowSkeleton />
                 {/each}
-            </div>
+            {:else if filtered.length === 0}
+                <div class="empty" role="status" aria-live="polite">
+                    <div class="empty-title">No cards match</div>
+                    <div class="empty-hint">
+                        Try a broader query, or
+                        <button class="empty-action" onclick={clearQuery}>clear the search</button>.
+                    </div>
+                </div>
+            {:else}
+                {#each filtered as r, i (r.id)}
+                    <BrowseRow
+                        id={r.id}
+                        frontHtml={r.frontHtml}
+                        backHtml={r.backHtml}
+                        deckName={r.deckName}
+                        deckEmoji={r.deckEmoji}
+                        tags={r.tags}
+                        due={r.due}
+                        state={r.state}
+                        selected={selected?.id === r.id}
+                        onSelect={() => selectRow(i)}
+                    />
+                {/each}
+            {/if}
         </div>
     </div>
 
@@ -211,12 +213,12 @@
         </div>
 
         <div class="field">
-            <label>Front</label>
-            <div class="field-value" contenteditable="true">{selected?.front ?? ""}</div>
+            <label for="field-front">Front</label>
+            <div id="field-front" class="field-value" contenteditable="true" role="textbox" tabindex="0" aria-label="Front">{selected?.frontSnippet ?? ""}</div>
         </div>
         <div class="field">
-            <label>Back</label>
-            <div class="field-value" contenteditable="true">{selected?.back ?? ""}</div>
+            <label for="field-back">Back</label>
+            <div id="field-back" class="field-value" contenteditable="true" role="textbox" tabindex="0" aria-label="Back">{selected?.backSnippet ?? ""}</div>
         </div>
 
         <div class="meta">
@@ -428,120 +430,44 @@
         margin-left: auto;
     }
 
-    .table {
+    .list {
         flex: 1;
         overflow-y: auto;
         display: flex;
         flex-direction: column;
+        gap: var(--space-2);
+        padding: var(--space-4) var(--space-6);
     }
-    .thead,
-    .tr {
-        display: grid;
-        grid-template-columns: minmax(0, 2fr) minmax(0, 1.2fr) minmax(0, 1.4fr) 70px 90px;
-        align-items: center;
-        gap: var(--space-3);
-        padding: 0 var(--space-6);
+
+    .empty {
+        margin: var(--space-8) auto;
+        padding: var(--space-6);
+        max-width: 320px;
+        text-align: center;
+        border: 1px dashed var(--border);
+        border-radius: var(--radius-md);
+        background: #ffffff;
     }
-    .thead {
-        height: 32px;
-        font-size: 0.65rem;
-        font-weight: 500;
-        letter-spacing: 0.1em;
-        text-transform: uppercase;
-        color: var(--text-subtle);
-        border-bottom: 1px solid var(--border);
-        position: sticky;
-        top: 0;
-        background: var(--bg);
-        z-index: 1;
+    :global([data-theme="dark"]) .empty {
+        background: var(--bg-elevated);
     }
-    .th {
-        text-align: left;
-    }
-    .th.due,
-    .th.state {
-        text-align: right;
-    }
-    .tbody {
-        display: flex;
-        flex-direction: column;
-    }
-    .tr {
-        height: 46px;
-        border-bottom: 1px solid var(--border);
-        font-size: var(--text-sm);
-        color: var(--text);
-        text-align: left;
-        background: transparent;
-        cursor: pointer;
-        transition: background var(--duration-fast) var(--ease);
-    }
-    .tr:hover {
-        background: var(--bg-hover);
-    }
-    .tr.selected {
-        background: var(--accent-bg);
-    }
-    .td {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        min-width: 0;
-    }
-    .front-line {
+    .empty-title {
         font-family: var(--font-serif);
-        font-size: 0.95rem;
+        font-size: var(--text-lg);
+        color: var(--text);
+        margin-bottom: var(--space-2);
     }
-    .td.deck {
-        display: flex;
-        align-items: center;
-        gap: var(--space-2);
+    .empty-hint {
+        font-size: var(--text-sm);
         color: var(--text-muted);
     }
-    .deck-emoji {
-        font-size: 0.9rem;
+    .empty-action {
+        color: var(--accent);
+        text-decoration: underline;
+        text-underline-offset: 2px;
     }
-    .td.tags-col {
-        color: var(--text-muted);
-        display: flex;
-        gap: var(--space-2);
-    }
-    .tag {
-        font-family: var(--font-mono);
-        font-size: 0.7rem;
-        color: var(--text-subtle);
-        background: var(--bg-subtle);
-        padding: 1px 6px;
-        border-radius: var(--radius-sm);
-    }
-    .td.due,
-    .td.state {
-        text-align: right;
-        font-variant-numeric: tabular-nums;
-        color: var(--text-muted);
-    }
-    .state-chip {
-        font-size: 0.7rem;
-        padding: 2px 8px;
-        border-radius: 999px;
-        text-transform: capitalize;
-        font-weight: 500;
-    }
-    .state-new {
-        background: color-mix(in oklch, var(--info) 12%, transparent);
-        color: var(--info);
-    }
-    .state-learning {
-        background: color-mix(in oklch, var(--warning) 18%, transparent);
-        color: var(--warning);
-    }
-    .state-review {
-        background: color-mix(in oklch, var(--success) 15%, transparent);
-        color: var(--success);
-    }
-    .state-suspended {
-        background: var(--bg-subtle);
-        color: var(--text-subtle);
+    .empty-action:hover {
+        color: var(--accent-hover);
     }
 
     /* Editor */
@@ -643,6 +569,14 @@
         display: flex;
         flex-wrap: wrap;
         gap: var(--space-2);
+    }
+    .tag {
+        font-family: var(--font-mono);
+        font-size: 0.7rem;
+        color: var(--text-subtle);
+        background: var(--bg-subtle);
+        padding: 1px 6px;
+        border-radius: var(--radius-sm);
     }
     .add-tag {
         font-size: var(--text-xs);
