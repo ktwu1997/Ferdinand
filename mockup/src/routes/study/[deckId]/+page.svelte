@@ -394,13 +394,30 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        background: #ffffff;
         border: 1px solid var(--border);
         border-radius: var(--radius-lg);
+        width: 100%;
+        transition:
+            box-shadow var(--duration-base) var(--ease),
+            background var(--duration-base) var(--ease);
+        /* background, padding, shadow, min-height are face-specific below. */
+    }
+    .card-face.front {
+        background: #ffffff;
         box-shadow: var(--shadow-md);
         padding: clamp(2.5rem, 7vw, 4.5rem) clamp(1.75rem, 5vw, 3.5rem);
         min-height: clamp(280px, 38vh, 420px);
-        width: 100%;
+    }
+    .card-face.back {
+        /* Warmer surface + tighter frame: a notetype's 20px sans body text
+           looks thin on stark white, but holds its weight on cream (light)
+           or the themed elevated surface (dark). The back face is a
+           continuation of the prompt, not a peer — so shadow and vertical
+           presence are softened. */
+        background: var(--bg-elevated);
+        box-shadow: var(--shadow-sm);
+        padding: clamp(2rem, 5vw, 3.5rem) clamp(1.5rem, 4vw, 3rem);
+        min-height: clamp(200px, 28vh, 320px);
     }
     .divider {
         position: relative;
@@ -416,11 +433,11 @@
     .divider span {
         position: relative;
         background: var(--bg);
-        padding: 0 var(--space-4);
-        font-size: 0.65rem;
-        letter-spacing: 0.2em;
-        color: var(--text-subtle);
-        font-weight: 500;
+        padding: 0 var(--space-3);
+        font-size: 0.7rem;
+        letter-spacing: 0.22em;
+        color: var(--text-muted);
+        font-weight: 600;
     }
 
     footer {
