@@ -1,8 +1,9 @@
 import { defineConfig } from "vitest/config";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
+import { svelteTesting } from "@testing-library/svelte/vite";
 
 export default defineConfig({
-    plugins: [svelte({ hot: false })],
+    plugins: [svelte({ hot: false }), svelteTesting()],
     test: {
         environment: "jsdom",
         include: ["src/**/*.{test,spec}.ts"],
@@ -10,6 +11,10 @@ export default defineConfig({
     resolve: {
         alias: {
             $lib: new URL("./src/lib", import.meta.url).pathname,
+            "$app/environment": new URL(
+                "./src/test/stubs/app-environment.ts",
+                import.meta.url,
+            ).pathname,
         },
     },
 });
