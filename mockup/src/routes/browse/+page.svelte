@@ -536,6 +536,9 @@
         display: inline-flex;
         align-items: center;
         justify-content: center;
+        transition:
+            color var(--duration-fast) var(--ease),
+            background var(--duration-fast) var(--ease);
     }
     .icon-btn:hover {
         background: var(--bg-hover);
@@ -559,14 +562,22 @@
         padding: var(--space-3);
         border: 1px solid var(--border);
         border-radius: var(--radius-md);
+        background: #ffffff;
         font-family: var(--font-serif);
         font-size: var(--text-base);
         color: var(--text);
         white-space: pre-wrap;
         outline: none;
+        transition:
+            border-color var(--duration-fast) var(--ease),
+            box-shadow var(--duration-fast) var(--ease);
+    }
+    :global([data-theme="dark"]) .field-value {
+        background: var(--bg-elevated);
     }
     .field-value:focus {
         border-color: var(--accent);
+        box-shadow: var(--shadow-sm);
     }
 
     .meta {
@@ -601,6 +612,13 @@
         width: fit-content;
         font-size: var(--text-xs);
         color: var(--text);
+        transition:
+            background var(--duration-fast) var(--ease),
+            border-color var(--duration-fast) var(--ease);
+    }
+    .pill-sel:hover {
+        background: var(--bg-hover);
+        border-color: var(--border-strong);
     }
     .tag-edit {
         display: flex;
@@ -621,6 +639,9 @@
         padding: 1px 6px;
         border: 1px dashed var(--border);
         border-radius: var(--radius-sm);
+        transition:
+            color var(--duration-fast) var(--ease),
+            border-color var(--duration-fast) var(--ease);
     }
     .add-tag:hover {
         color: var(--accent);
@@ -640,6 +661,10 @@
         color: var(--text-muted);
         border: 1px solid var(--border);
         border-radius: var(--radius-sm);
+        transition:
+            color var(--duration-fast) var(--ease),
+            background var(--duration-fast) var(--ease),
+            border-color var(--duration-fast) var(--ease);
     }
     .ghost-btn:hover {
         color: var(--text);
