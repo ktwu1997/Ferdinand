@@ -63,6 +63,11 @@ export function apiBase(): string {
     return qp ?? (import.meta.env.VITE_ANKI_API as string | undefined) ?? DEFAULT_BASE;
 }
 
+/** Base URL (with trailing slash) for collection media served by anki_server. */
+export function mediaBase(): string {
+    return `${apiBase()}/media/`;
+}
+
 async function getJson<T>(path: string, init?: RequestInit): Promise<T> {
     const res = await fetch(`${apiBase()}${path}`, {
         headers: { accept: "application/json" },
