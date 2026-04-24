@@ -15,6 +15,12 @@
     --border: oklch(88% 0.015 80);
     --border-strong: oklch(78% 0.02 80);
 
+    /* Reviewer card paper — front=stage canvas, back=warmer continuation.
+       Both tokens must be theme-responsive or dark-mode kills the
+       front/back differentiation. */
+    --bg-card-front: oklch(100% 0 0);
+    --bg-card-back: var(--bg-elevated);
+
     /* Text */
     --text: oklch(22% 0.012 60);
     --text-muted: oklch(50% 0.008 60);
@@ -60,6 +66,11 @@
 
     --border: oklch(26% 0.015 75);
     --border-strong: oklch(36% 0.02 75);
+
+    /* Dark-mode reviewer paper — front lifted above bg-elevated so the
+       back face (on bg-elevated) reads as a softer continuation. */
+    --bg-card-front: oklch(22% 0.012 75);
+    --bg-card-back: var(--bg-elevated);
 
     --text: oklch(94% 0.01 75);
     --text-muted: oklch(68% 0.01 70);

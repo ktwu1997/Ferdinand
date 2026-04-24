@@ -403,7 +403,7 @@
         /* background, padding, shadow, min-height are face-specific below. */
     }
     .card-face.front {
-        background: #ffffff;
+        background: var(--bg-card-front);
         box-shadow: var(--shadow-md);
         padding: clamp(2.5rem, 7vw, 4.5rem) clamp(1.75rem, 5vw, 3.5rem);
         min-height: clamp(280px, 38vh, 420px);
@@ -414,7 +414,7 @@
            or the themed elevated surface (dark). The back face is a
            continuation of the prompt, not a peer — so shadow and vertical
            presence are softened. */
-        background: var(--bg-elevated);
+        background: var(--bg-card-back);
         box-shadow: var(--shadow-sm);
         padding: clamp(2rem, 5vw, 3.5rem) clamp(1.5rem, 4vw, 3rem);
         min-height: clamp(200px, 28vh, 320px);
