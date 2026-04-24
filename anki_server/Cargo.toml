@@ -18,6 +18,7 @@ anki = { path = "../rslib", features = ["rustls"] }
 anki_proto = { path = "../rslib/proto" }
 anyhow.workspace = true
 axum = { workspace = true }
+mime_guess = "2"
 regex.workspace = true
 serde = { workspace = true }
 serde_json.workspace = true

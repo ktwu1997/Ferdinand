@@ -1,5 +1,6 @@
 pub mod cards;
 pub mod decks;
+pub mod media;
 pub mod study;
 
 use axum::routing::{get, post};
@@ -16,6 +17,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/cards/{id}", get(cards::get_card))
         .route("/api/study/queue", get(study::get_queue))
         .route("/api/study/answer", post(study::post_answer))
+        // Static media (images, audio) served from <collection-stem>.media/.
+        // Not under /api/ so shadow-DOM <base href="/media/"> stays clean and
+        // the path reads as a static resource root.
+        .route("/media/{filename}", get(media::get_media))
 }
 
 #[derive(Serialize, utoipa::ToSchema)]

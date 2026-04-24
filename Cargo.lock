@@ -248,6 +248,7 @@ dependencies = [
  "anki_proto",
  "anyhow",
  "axum",
+ "mime_guess",
  "regex",
  "serde",
  "serde_json",
