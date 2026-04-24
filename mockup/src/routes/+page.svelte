@@ -191,6 +191,21 @@
         justify-content: space-between;
         gap: var(--space-8);
         flex-wrap: wrap;
+        padding: var(--space-4);
+        background: #ffffff;
+        border-radius: var(--radius-md);
+        transition:
+            background var(--duration-fast) var(--ease),
+            box-shadow var(--duration-fast) var(--ease);
+    }
+    :global([data-theme="dark"]) .resume {
+        background: var(--bg-elevated);
+    }
+    .resume:hover {
+        box-shadow: var(--shadow-sm);
+    }
+    .resume:focus-within {
+        box-shadow: var(--shadow-sm);
     }
     .resume-meta {
         display: flex;
@@ -270,6 +285,12 @@
         background: var(--bg-subtle);
         border-radius: var(--radius-sm);
         flex-shrink: 0;
+        transition:
+            background var(--duration-fast) var(--ease),
+            color var(--duration-fast) var(--ease);
+    }
+    .deck-row:hover .deck-emoji {
+        background: var(--bg-hover);
     }
     .deck-body {
         flex: 1;
@@ -279,6 +300,10 @@
         font-size: var(--text-base);
         font-weight: 500;
         color: var(--text);
+        transition: color var(--duration-fast) var(--ease);
+    }
+    .deck-row:hover .deck-name {
+        color: var(--accent);
     }
     .deck-sub {
         font-size: var(--text-xs);
@@ -293,6 +318,10 @@
         font-size: var(--text-lg);
         font-weight: 600;
         color: var(--text);
+        transition: color var(--duration-fast) var(--ease);
+    }
+    .deck-row:hover .deck-due.has-due .due-count {
+        color: var(--accent);
     }
     .deck-due.has-due .due-label {
         display: block;
