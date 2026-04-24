@@ -289,6 +289,9 @@
         display: inline-flex;
         align-items: center;
         justify-content: center;
+        transition:
+            color var(--duration-fast) var(--ease),
+            background var(--duration-fast) var(--ease);
     }
     .plus:hover {
         background: var(--bg-hover);
@@ -308,6 +311,7 @@
         color: var(--text-muted);
         width: 100%;
         text-align: left;
+        transition: color var(--duration-fast) var(--ease);
     }
     .section-title:hover {
         color: var(--text);
@@ -336,6 +340,9 @@
         border-radius: var(--radius-sm);
         text-align: left;
         width: 100%;
+        transition:
+            color var(--duration-fast) var(--ease),
+            background var(--duration-fast) var(--ease);
     }
     .item:hover {
         background: var(--bg-hover);
@@ -348,6 +355,7 @@
         margin-left: auto;
         color: var(--text-subtle);
         font-size: 0.7rem;
+        font-family: var(--font-mono);
         font-variant-numeric: tabular-nums;
     }
     .tag-item .hash {
