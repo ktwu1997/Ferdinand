@@ -1,18 +1,21 @@
 <script lang="ts">
     import { onMount, tick } from "svelte";
-    import { cards as fakeCards, decks, savedSearches, tags } from "$lib/data";
+    import { cards as fakeCards, decks as fakeDecks, savedSearches, tags } from "$lib/data";
     import Kbd from "$lib/components/Kbd.svelte";
     import {
         fetchCards,
+        fetchDecks,
         patchDeckName,
         postCardSuspend,
         type ApiCardSummary,
+        type ApiDeckSummary,
     } from "$lib/api";
     import BrowseRow from "$lib/browse/BrowseRow.svelte";
     import BrowseRowSkeleton from "$lib/browse/BrowseRowSkeleton.svelte";
     import { stripHtmlToSnippet } from "$lib/browse/media";
 
     let liveCards = $state<ApiCardSummary[] | null>(null);
+    let liveDecks = $state<ApiDeckSummary[] | null>(null);
     let loading = $state(true);
     let query = $state("");
     let openSection = $state<Record<string, boolean>>({ decks: true, tags: true, saved: true });
@@ -28,15 +31,35 @@
     let isMutatingSuspend = $state(false);
     let deckInput = $state<HTMLInputElement | null>(null);
 
-    onMount(async () => {
-        try {
-            const res = await fetchCards("", 100);
-            liveCards = res.cards;
-        } catch {
-            // fall back to fake data
-        } finally {
-            loading = false;
-        }
+    // Phase 9-S: tree-sidebar inline rename. Per-row edit state (only one row
+    // at a time). Available only when liveDecks is loaded — fake-data mode
+    // refuses rename so we never lie to the user about a successful edit.
+    let treeEditingDeckId = $state<number | null>(null);
+    let treeDeckDraft = $state("");
+    let isMutatingTreeDeck = $state(false);
+    let treeDeckInput = $state<HTMLInputElement | null>(null);
+
+    onMount(() => {
+        // Cards drive the main `loading` flag (skeleton rows). Decks are
+        // supplementary navigation — fire-and-forget so the row list never
+        // waits on tree data. Both fall back silently to fake data on
+        // failure; editor mutations are gated by liveDecks/liveCards being
+        // non-null at call time.
+        fetchCards("", 100).then(
+            (res) => {
+                liveCards = res.cards;
+                loading = false;
+            },
+            () => {
+                loading = false;
+            },
+        );
+        fetchDecks().then(
+            (res) => {
+                liveDecks = res.decks.filter((d) => d.id !== 0 && d.level >= 1);
+            },
+            () => undefined,
+        );
     });
 
     type Row = {
@@ -75,8 +98,8 @@
                   tags: c.tags,
                   due: c.due,
                   state: c.state,
-                  deckName: decks.find((d) => d.id === c.deckId)?.name ?? "",
-                  deckEmoji: decks.find((d) => d.id === c.deckId)?.emoji ?? "📚",
+                  deckName: fakeDecks.find((d) => d.id === c.deckId)?.name ?? "",
+                  deckEmoji: fakeDecks.find((d) => d.id === c.deckId)?.emoji ?? "📚",
               })),
     );
 
@@ -151,6 +174,81 @@
         }
     }
 
+    // Tree rows normalized to a common shape so the each-block does not
+    // branch on data source. `id` stays `number | string` because fake decks
+    // use string ids; rename gates on numeric ids (live only).
+    type TreeRow = {
+        id: number | string;
+        name: string;
+        emoji: string;
+        totalCards: number;
+    };
+    let treeRows: TreeRow[] = $derived(
+        liveDecks
+            ? liveDecks.map((d) => ({
+                  id: d.id,
+                  name: d.name,
+                  emoji: "📚",
+                  totalCards: d.total_in_deck,
+              }))
+            : fakeDecks.map((d) => ({
+                  id: d.id,
+                  name: d.name,
+                  emoji: d.emoji,
+                  totalCards: d.totalCards,
+              })),
+    );
+
+    async function startEditTreeDeck(deckId: number | string, name: string) {
+        if (typeof deckId !== "number") {
+            errorBanner = "Deck rename unavailable on fake data";
+            return;
+        }
+        treeEditingDeckId = deckId;
+        treeDeckDraft = name;
+        errorBanner = null;
+        await tick();
+        treeDeckInput?.focus();
+        treeDeckInput?.select();
+    }
+
+    function cancelEditTreeDeck() {
+        treeEditingDeckId = null;
+        treeDeckDraft = "";
+    }
+
+    async function commitEditTreeDeck() {
+        if (treeEditingDeckId === null || !liveDecks) return;
+        const targetId = treeEditingDeckId;
+        const original = liveDecks.find((d) => d.id === targetId);
+        const trimmed = treeDeckDraft.trim();
+        if (!original || trimmed === "" || trimmed === original.name) {
+            cancelEditTreeDeck();
+            return;
+        }
+        isMutatingTreeDeck = true;
+        errorBanner = null;
+        try {
+            const res = await patchDeckName(targetId, trimmed);
+            liveDecks = liveDecks.map((d) =>
+                d.id === res.id ? { ...d, name: res.name } : d,
+            );
+            // Propagate to liveCards too so the editor pill + row deckName
+            // stay consistent with the tree (single canonical UI store).
+            if (liveCards) {
+                liveCards = liveCards.map((c) =>
+                    c.deck_id === res.id ? { ...c, deck_name: res.name } : c,
+                );
+            }
+            treeEditingDeckId = null;
+            treeDeckDraft = "";
+        } catch (e) {
+            errorBanner = e instanceof Error ? e.message : "Rename failed";
+        } finally {
+            isMutatingTreeDeck = false;
+        }
+    }
+
     async function toggleSuspend() {
         if (!selected || !liveCards) return;
         const targetCard = liveCards.find((c) => String(c.id) === selected.id);
@@ -191,12 +289,34 @@
             </button>
             {#if openSection.decks}
                 <div class="section-items">
-                    {#each decks as d (d.id)}
-                        <button class="item">
-                            <span class="emoji">{d.emoji}</span>
-                            <span>{d.name}</span>
-                            <span class="count">{d.totalCards}</span>
-                        </button>
+                    {#each treeRows as d (d.id)}
+                        {#if treeEditingDeckId === d.id}
+                            <div class="item item-edit">
+                                <span class="emoji">{d.emoji}</span>
+                                <input
+                                    bind:this={treeDeckInput}
+                                    bind:value={treeDeckDraft}
+                                    class="tree-rename"
+                                    aria-label="Rename deck"
+                                    disabled={isMutatingTreeDeck}
+                                    onkeydown={(e) => {
+                                        if (e.key === "Enter") commitEditTreeDeck();
+                                        else if (e.key === "Escape") cancelEditTreeDeck();
+                                    }}
+                                    onblur={commitEditTreeDeck}
+                                />
+                                <span class="count">{d.totalCards}</span>
+                            </div>
+                        {:else}
+                            <button
+                                class="item"
+                                ondblclick={() => startEditTreeDeck(d.id, d.name)}
+                            >
+                                <span class="emoji">{d.emoji}</span>
+                                <span>{d.name}</span>
+                                <span class="count">{d.totalCards}</span>
+                            </button>
+                        {/if}
                     {/each}
                 </div>
             {/if}
@@ -466,6 +586,23 @@
     .item:hover {
         background: var(--bg-hover);
         color: var(--text);
+    }
+    .item-edit {
+        background: var(--bg-hover);
+    }
+    .tree-rename {
+        flex: 1;
+        min-width: 0;
+        background: var(--bg);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        padding: 0 var(--space-1);
+        font: inherit;
+    }
+    .tree-rename:focus {
+        outline: none;
+        border-color: var(--text-muted);
     }
     .emoji {
         font-size: 0.9rem;
