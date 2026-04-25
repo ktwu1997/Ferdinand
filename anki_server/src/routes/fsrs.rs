@@ -35,6 +35,14 @@ pub struct FsrsOptimizeResponse {
     pub params: Vec<f32>,
 }
 
+/// Returns true when newly trained params match the persisted ones — the
+/// optimize run produced no improvement and persisting would be a no-op
+/// reschedule. FSRS upstream behavior: `compute_params` keeps current params
+/// when log-loss does not improve (rslib/src/scheduler/fsrs/params.rs).
+fn params_unchanged(trained: &[f32], current: &[f32]) -> bool {
+    trained == current
+}
+
 /// Read the collection-level FSRS toggle (`BoolKey::Fsrs`). Unlike the
 /// deck-options preset values, this flag is global to the collection.
 #[utoipa::path(
@@ -69,6 +77,17 @@ pub async fn put_enabled(
     Json(req): Json<FsrsToggle>,
 ) -> ApiResult<Json<FsrsEnabled>> {
     let mut col = state.col.lock().await;
+
+    // Skip the update_deck_configs round-trip (which forces a full reschedule)
+    // when the requested state already matches. Reschedule is expensive on
+    // large collections; idempotent toggles must not pay that cost.
+    let current_enabled = col.get_config_bool(BoolKey::Fsrs);
+    if req.enabled == current_enabled {
+        return Ok(Json(FsrsEnabled {
+            enabled: current_enabled,
+        }));
+    }
+
     let conf = col
         .get_deck_config(DEFAULT_PRESET_ID, true)?
         .ok_or_else(|| ServerError::from(anyhow!("default deck config missing")))?;
@@ -115,9 +134,7 @@ pub async fn put_enabled(
         (status = 400, body = crate::error::ApiError)
     )
 )]
-pub async fn post_optimize(
-    State(state): State<AppState>,
-) -> ApiResult<Json<FsrsOptimizeResponse>> {
+pub async fn post_optimize(State(state): State<AppState>) -> ApiResult<Json<FsrsOptimizeResponse>> {
     let mut col = state.col.lock().await;
 
     if !col.get_config_bool(BoolKey::Fsrs) {
@@ -153,6 +170,16 @@ pub async fn post_optimize(
         }));
     }
 
+    // Trained but no improvement: FSRS keeps `current_params` when log-loss
+    // does not beat the previous params. Persisting and rescheduling under
+    // identical params is wasted work — return the response unchanged.
+    if params_unchanged(&response.params, &current_params) {
+        return Ok(Json(FsrsOptimizeResponse {
+            fsrs_items: response.fsrs_items,
+            params: response.params,
+        }));
+    }
+
     conf.inner.fsrs_params_6 = response.params.clone();
 
     let fsrs_health_check = col.get_config_bool(BoolKey::FsrsHealthCheck);
@@ -178,4 +205,31 @@ pub async fn post_optimize(
         fsrs_items: response.fsrs_items,
         params: response.params,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn params_unchanged_treats_empty_pair_as_match() {
+        assert!(params_unchanged(&[], &[]));
+    }
+
+    #[test]
+    fn params_unchanged_detects_identical_trained_params() {
+        let p = vec![0.4, 0.6, 2.4, 5.8];
+        assert!(params_unchanged(&p, &p));
+    }
+
+    #[test]
+    fn params_unchanged_rejects_value_drift() {
+        assert!(!params_unchanged(&[0.4, 0.6], &[0.4, 0.61]));
+    }
+
+    #[test]
+    fn params_unchanged_rejects_length_mismatch() {
+        assert!(!params_unchanged(&[], &[0.5]));
+        assert!(!params_unchanged(&[0.5], &[0.5, 0.6]));
+    }
 }
