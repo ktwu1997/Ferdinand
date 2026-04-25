@@ -6,19 +6,22 @@ import { resetPageStub } from "../../test/stubs/app-stores";
 import { cards as fakeCards } from "$lib/data";
 import type { ApiCardListResponse, ApiCardSummary } from "$lib/api";
 
-// Phase 8-E: contract tests for the browse route. Mock only fetchCards —
-// mediaBase stays real so BrowseRow's image src resolution continues to
-// work under jsdom (the same 8-A/8-C rationale). No LiveIndicator on
-// this route, so fetchHealth stays untouched.
+// Phase 8-E + 9-P: contract tests for the browse route. Mock fetchCards
+// (mount-time hydrate) plus patchDeckName / postCardSuspend (editor-panel
+// mutations). mediaBase stays real so BrowseRow's image src resolution
+// continues to work under jsdom (the same 8-A/8-C rationale). No
+// LiveIndicator on this route, so fetchHealth stays untouched.
 vi.mock("$lib/api", async (importOriginal) => {
     const actual = await importOriginal<typeof import("$lib/api")>();
     return {
         ...actual,
         fetchCards: vi.fn(),
+        patchDeckName: vi.fn(),
+        postCardSuspend: vi.fn(),
     };
 });
 
-import { fetchCards } from "$lib/api";
+import { fetchCards, patchDeckName, postCardSuspend } from "$lib/api";
 
 function card(id: number, front: string, back: string): ApiCardSummary {
     return {
@@ -238,5 +241,162 @@ describe("BrowsePage contract", () => {
         } finally {
             unmount(instance);
         }
+    });
+
+    describe("Phase 9-P editor mutations", () => {
+        async function openDeckRename(root: HTMLElement): Promise<HTMLInputElement> {
+            const pill = root.querySelector<HTMLButtonElement>(
+                ".editor .deck-pill-btn",
+            );
+            if (!pill) throw new Error(".deck-pill-btn missing");
+            pill.click();
+            await settle();
+            const input = root.querySelector<HTMLInputElement>(
+                ".editor .deck-rename",
+            );
+            if (!input) throw new Error(".deck-rename input missing");
+            return input;
+        }
+
+        function suspendBtn(root: HTMLElement): HTMLButtonElement {
+            const btns = Array.from(
+                root.querySelectorAll<HTMLButtonElement>(
+                    ".editor .editor-footer .ghost-btn",
+                ),
+            );
+            // Suspend is the middle button (Preview / Suspend|Unsuspend / Delete).
+            const btn = btns.find(
+                (b) => b.textContent?.trim() === "Suspend"
+                    || b.textContent?.trim() === "Unsuspend",
+            );
+            if (!btn) throw new Error("Suspend button missing");
+            return btn;
+        }
+
+        test("rename success: PATCH called with selected deck id, all matching rows re-render with new name", async () => {
+            vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+            vi.mocked(patchDeckName).mockResolvedValueOnce({
+                id: 42,
+                name: "Spanish (renamed)",
+            });
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const input = await openDeckRename(container);
+                input.value = "Spanish (renamed)";
+                input.dispatchEvent(new Event("input", { bubbles: true }));
+                input.dispatchEvent(
+                    new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+                );
+                await settle();
+
+                expect(vi.mocked(patchDeckName)).toHaveBeenCalledTimes(1);
+                expect(vi.mocked(patchDeckName)).toHaveBeenCalledWith(
+                    42,
+                    "Spanish (renamed)",
+                );
+
+                // Editor pill reflects new name; all 3 rows in this deck do too.
+                expect(
+                    container
+                        .querySelector(".editor .deck-pill-btn")
+                        ?.textContent?.trim(),
+                ).toContain("Spanish (renamed)");
+                expect(container.querySelector(".error-banner")).toBeNull();
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("rename 400 (empty name): error-banner surfaces server message; pill name unchanged", async () => {
+            vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+            vi.mocked(patchDeckName).mockRejectedValueOnce(
+                new Error("400 name must not be empty"),
+            );
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const input = await openDeckRename(container);
+                // Non-empty draft so the cancel-fast-path doesn't short-circuit;
+                // the 400 here represents the server's view of "empty after
+                // server-side trim" (whitespace-only) for fixture purposes.
+                input.value = "anything";
+                input.dispatchEvent(new Event("input", { bubbles: true }));
+                input.dispatchEvent(
+                    new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+                );
+                await settle();
+
+                expect(vi.mocked(patchDeckName)).toHaveBeenCalledTimes(1);
+                expect(
+                    container.querySelector(".error-banner")?.textContent,
+                ).toContain("name must not be empty");
+                // Original name preserved on the editor pill (component falls
+                // back to selected.deckName from liveCards which never updated).
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("suspend success: POST called, footer button flips to Unsuspend, no error banner", async () => {
+            vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+            vi.mocked(postCardSuspend).mockResolvedValueOnce({
+                id: 101,
+                state: "suspended",
+            });
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const btn = suspendBtn(container);
+                expect(btn.textContent?.trim()).toBe("Suspend");
+
+                btn.click();
+                await settle();
+
+                expect(vi.mocked(postCardSuspend)).toHaveBeenCalledTimes(1);
+                expect(vi.mocked(postCardSuspend)).toHaveBeenCalledWith(
+                    101,
+                    true,
+                );
+                expect(suspendBtn(container).textContent?.trim()).toBe(
+                    "Unsuspend",
+                );
+                expect(container.querySelector(".error-banner")).toBeNull();
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("suspend 404 (card disappeared): error-banner surfaces server message; button stays in Suspend state", async () => {
+            vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+            vi.mocked(postCardSuspend).mockRejectedValueOnce(
+                new Error("404 card 101 not found"),
+            );
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const btn = suspendBtn(container);
+                btn.click();
+                await settle();
+
+                expect(vi.mocked(postCardSuspend)).toHaveBeenCalledTimes(1);
+                expect(
+                    container.querySelector(".error-banner")?.textContent,
+                ).toContain("card 101 not found");
+                expect(suspendBtn(container).textContent?.trim()).toBe(
+                    "Suspend",
+                );
+            } finally {
+                unmount(instance);
+            }
+        });
     });
 });
