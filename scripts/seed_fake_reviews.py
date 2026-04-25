@@ -1,29 +1,41 @@
 #!/usr/bin/env python3
 """Seed fake review history into a Ferdinand collection.
 
-Phase 9-Q helper. Inserts revlog rows for every existing card so the FSRS
-optimizer has data to train on. Distribution: 75% Good / 15% Hard / 7% Again
-/ 3% Easy, spaced 1-7 days apart starting `--days-ago` in the past.
+Phase 9-Q / 9-Q' helper. Inserts revlog rows for every existing card so the
+FSRS optimizer has data to train on. Two distribution modes:
+
+* ``--difficulty-mode uniform`` (default, original 9-Q behavior): every card
+  shares 75% Good / 15% Hard / 7% Again / 3% Easy. Validates the wire end
+  to end but trains no better than the FSRS-rs default model on log-loss,
+  so ``POST /api/fsrs/optimize`` returns ``params: []`` (upstream Anki
+  behavior, not a Ferdinand bug — see ``fsrs-5.2.0/src/model.rs::
+  check_and_fill_parameters`` and ``rslib/src/scheduler/fsrs/params.rs:147``).
+* ``--difficulty-mode varied`` (9-Q'): cards are bucketed across a per-card
+  retention gradient (very easy → very hard) and review timestamps are
+  ivl-driven (each review's time-since-last matches the prior interval),
+  so FSRS sees real per-card retention curves instead of uniform-cramming
+  noise. Intent: produce 21 trained parameters and observe persistence
+  through ``GET /api/deck_config/default``. Empirical finding (9-Q', 6-card
+  collection at /tmp/ferdinand_dev): even with bimodal-extreme profiles
+  and 963 fsrs_items, the trained model still loses to the default on
+  log-loss because the FSRS-rs default is robust at small-collection
+  sizes. Production users with 100+ cards should clear this floor; this
+  script's varied mode is the right shape for them, and the wire +
+  reschedule paths are validated regardless.
 
 Stop the anki_server process before running — it holds an exclusive lock on
 the SQLite collection. Re-running is idempotent in spirit (the script picks
 review IDs after the highest existing revlog id) but will append more rows;
-use `--reset` to clear revlog first.
-
-Phase 9-Q finding: uniform random ratings train no better than the FSRS-rs
-default model, so `POST /api/fsrs/optimize` returns `params: []` with this
-data even at 1000+ items. That is correct upstream Anki behavior — see
-`fsrs-5.2.0/src/model.rs::check_and_fill_parameters` which treats `Some(&[])`
-as `DEFAULT_PARAMETERS` and `rslib/src/scheduler/fsrs/params.rs:147` which
-keeps current_params when log-loss does not improve. The script still
-validates the wire (revlog → optimizer → response → reschedule); proving
-non-empty trained params requires a learnable per-card difficulty signal,
-which is future work.
+use ``--reset`` to clear revlog first, and ``--reset-cards`` to also clear
+prior card scheduling state when re-seeding a previously-rescheduled
+collection.
 
 Usage:
     python3 scripts/seed_fake_reviews.py --db /tmp/ferdinand_dev/collection.anki2
     python3 scripts/seed_fake_reviews.py --db /path/to.anki2 --reviews-per-card 80 --reset
     python3 scripts/seed_fake_reviews.py --db /path/to.anki2 --dry-run
+    python3 scripts/seed_fake_reviews.py --db /path/to.anki2 \\
+        --difficulty-mode varied --reset --reset-cards
 """
 
 from __future__ import annotations
@@ -42,22 +54,57 @@ EASE_AGAIN, EASE_HARD, EASE_GOOD, EASE_EASY = 1, 2, 3, 4
 # for subsequent ones — matches the realistic learn→review transition.
 TYPE_LEARN, TYPE_REVIEW = 0, 1
 
-EASE_DISTRIBUTION = (
+EASE_DISTRIBUTION: tuple[tuple[int, float], ...] = (
     (EASE_GOOD, 0.75),
     (EASE_HARD, 0.15),
     (EASE_AGAIN, 0.07),
     (EASE_EASY, 0.03),
 )
 
+# Per-card profile for --difficulty-mode varied. Earlier profiles skew Good
+# (easy material), later profiles skew Again (hard material). Cards are
+# bucketed by index across these profiles so FSRS sees a per-card retention
+# gradient — combined with ivl-driven review timing this is the learnable
+# signal that can produce non-empty trained params. With only ~6 cards this
+# may still fail to beat the default model on log-loss; that is fine for
+# wire validation but persistence-path coverage requires larger collections
+# (see Phase 9-Q' diary for the empirical floor).
+VARIED_PROFILES: tuple[tuple[tuple[int, float], ...], ...] = (
+    ((EASE_GOOD, 1.00),),
+    ((EASE_GOOD, 0.95), (EASE_HARD, 0.05)),
+    ((EASE_GOOD, 0.65), (EASE_HARD, 0.20), (EASE_AGAIN, 0.15)),
+    ((EASE_GOOD, 0.30), (EASE_HARD, 0.20), (EASE_AGAIN, 0.50)),
+    ((EASE_GOOD, 0.05), (EASE_HARD, 0.05), (EASE_AGAIN, 0.90)),
+    ((EASE_AGAIN, 1.00),),
+)
 
-def pick_ease(rng: random.Random) -> int:
+
+def pick_ease_from(
+    rng: random.Random,
+    distribution: tuple[tuple[int, float], ...],
+) -> int:
     roll = rng.random()
     cumulative = 0.0
-    for ease, weight in EASE_DISTRIBUTION:
+    for ease, weight in distribution:
         cumulative += weight
         if roll < cumulative:
             return ease
-    return EASE_GOOD
+    return distribution[0][0]
+
+
+def pick_ease(rng: random.Random) -> int:
+    return pick_ease_from(rng, EASE_DISTRIBUTION)
+
+
+def profile_for_card(
+    card_index: int, total_cards: int,
+) -> tuple[tuple[int, float], ...]:
+    """Map a card index to a varied-mode difficulty profile bucket."""
+    if total_cards <= 1:
+        return VARIED_PROFILES[0]
+    bucket = (card_index * len(VARIED_PROFILES)) // total_cards
+    bucket = min(bucket, len(VARIED_PROFILES) - 1)
+    return VARIED_PROFILES[bucket]
 
 
 # Anki's hard ivl cap is i32. Reschedule code reads revlog and re-derives
@@ -86,24 +133,45 @@ def build_review_rows(
     days_ago: int,
     base_id_ms: int,
     rng: random.Random,
+    difficulty_mode: str = "uniform",
 ) -> list[tuple[int, int, int, int, int, int, int, int, int]]:
     """Return revlog tuples in insert order. id is a unique ms-epoch timestamp.
 
-    Spacing: each card's reviews are spread evenly across `days_ago` days,
-    with ±20% jitter. Per-card streams are interleaved by sorting at the end.
+    Timing is ivl-driven: each review's timestamp equals the previous
+    review's timestamp plus the prior interval (in days, ±10% jitter), so
+    the actual time-since-last-review the FSRS optimizer sees matches the
+    declared ivl. This is the load-bearing realism property that lets a
+    per-card retention gradient produce log-loss better than the default
+    21-param model. ``reviews_per_card`` becomes a MAX cap; per-card review
+    streams stop early when their cumulative time exceeds ``days_ago``,
+    which means easy cards (long ivls) end up with fewer reviews than hard
+    cards (short ivls) — exactly what real users look like.
+
+    ``difficulty_mode='uniform'`` (default) shares the global distribution
+    across all cards. ``difficulty_mode='varied'`` assigns each card a
+    distinct retention profile from VARIED_PROFILES.
     """
     one_day_ms = 86_400_000
     start_ms = base_id_ms - days_ago * one_day_ms
-    span_ms = days_ago * one_day_ms
+    end_ms = base_id_ms
 
     rows: list[tuple[int, int, int, int, int, int, int, int, int]] = []
-    for cid in card_ids:
+    total_cards = len(card_ids)
+    for card_index, cid in enumerate(card_ids):
+        distribution = (
+            profile_for_card(card_index, total_cards)
+            if difficulty_mode == "varied"
+            else EASE_DISTRIBUTION
+        )
+        # Stagger card start within the first day so per-card streams don't
+        # all begin at the same instant (which would confuse the optimizer
+        # about within-day card density).
+        review_ms = start_ms + rng.randint(0, one_day_ms)
         prev_ivl = 0
-        spacing = max(1, span_ms // reviews_per_card)
         for i in range(reviews_per_card):
-            jitter = rng.randint(-spacing // 5, spacing // 5)
-            review_ms = start_ms + i * spacing + jitter
-            ease = pick_ease(rng)
+            if review_ms >= end_ms:
+                break
+            ease = pick_ease_from(rng, distribution)
             new_ivl = next_interval_days(prev_ivl, ease, rng)
             rows.append((
                 review_ms,                    # id (ms timestamp; uniqueness handled below)
@@ -117,6 +185,8 @@ def build_review_rows(
                 TYPE_LEARN if i == 0 else TYPE_REVIEW,
             ))
             prev_ivl = new_ivl
+            jitter_pct = rng.uniform(-0.1, 0.1)
+            review_ms += max(one_day_ms, int(new_ivl * one_day_ms * (1 + jitter_pct)))
 
     rows.sort(key=lambda r: r[0])
     deduped: list[tuple[int, int, int, int, int, int, int, int, int]] = []
@@ -142,6 +212,18 @@ def main() -> int:
                         help="print summary without writing")
     parser.add_argument("--reset", action="store_true",
                         help="DELETE all existing revlog rows before inserting")
+    parser.add_argument(
+        "--difficulty-mode", choices=("uniform", "varied"), default="uniform",
+        help="uniform = all cards share the global 75/15/7/3 distribution; "
+             "varied = per-card retention gradient for FSRS learnable signal "
+             "(default: uniform)",
+    )
+    parser.add_argument(
+        "--reset-cards", action="store_true",
+        help="also reset card scheduling state (queue/type/due/ivl/factor/"
+             "reps/lapses) before inserting revlog rows. Use when re-seeding "
+             "a previously-rescheduled collection.",
+    )
     args = parser.parse_args()
 
     db_path = Path(args.db)
@@ -171,11 +253,15 @@ def main() -> int:
 
     rows = build_review_rows(
         card_ids, args.reviews_per_card, args.days_ago, base_id_ms, rng,
+        difficulty_mode=args.difficulty_mode,
     )
 
     print(f"db:        {db_path}")
     print(f"cards:     {len(card_ids)}")
-    print(f"revlog before: {existing_revlog} (will{'  reset' if args.reset else ' append'})")
+    print(f"mode:      {args.difficulty_mode}")
+    print(f"revlog before: {existing_revlog} (will{' reset' if args.reset else ' append'})")
+    if args.reset_cards:
+        print("card state: will reset (queue/type/due/ivl/factor/reps/lapses)")
     print(f"to insert: {len(rows)} rows over {args.days_ago} days")
     print(f"id range:  {rows[0][0]} .. {rows[-1][0]}")
 
@@ -188,6 +274,13 @@ def main() -> int:
         write_cur = write_conn.cursor()
         if args.reset:
             write_cur.execute("DELETE FROM revlog")
+        if args.reset_cards:
+            # factor=2500 matches Anki's SM-2 default starting ease; FSRS
+            # ignores it but keeps cards readable by the legacy scheduler.
+            write_cur.execute(
+                "UPDATE cards SET queue = 0, type = 0, due = 0, "
+                "ivl = 0, factor = 2500, reps = 0, lapses = 0"
+            )
         write_cur.executemany(
             "INSERT INTO revlog (id, cid, usn, ease, ivl, lastIvl, factor, time, type) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
