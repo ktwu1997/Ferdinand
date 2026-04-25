@@ -5,6 +5,7 @@
         fetchDeckConfigDefault,
         fetchFsrsEnabled,
         patchDeckConfigDefault,
+        postFsrsOptimize,
         putFsrsEnabled,
     } from "$lib/api";
 
@@ -19,9 +20,7 @@
 
     let active = $state("fsrs");
 
-    let fsrsWeights = Array.from({ length: 19 }, (_, i) => (0.2 + i * 0.15).toFixed(3));
-
-    // FSRS settings wired to anki_server (Phase 9-N2).
+    // FSRS settings wired to anki_server (Phase 9-N2; optimize/reschedule 9-O2).
     // Server stores desired_retention as a 0.70..=0.97 float; UI works in
     // integer percent and converts at the boundary. Persistence fires on
     // change/blur (not input/keystroke) so a slider drag is one PATCH.
@@ -36,6 +35,14 @@
     let errorRetention: string | null = $state(null);
     let errorMaxInterval: string | null = $state(null);
     let errorFsrs: string | null = $state(null);
+
+    // Optimize state. Params are not loaded on mount — there's no GET
+    // endpoint for them yet, so the grid stays empty until the user clicks
+    // Re-optimize at least once this session.
+    let optimizing = $state(false);
+    let errorOptimize: string | null = $state(null);
+    let optimizeFsrsItems: number | null = $state(null);
+    let optimizedParams: number[] = $state([]);
 
     onMount(async () => {
         try {
@@ -104,6 +111,22 @@
             savingFsrs = false;
         }
     }
+
+    async function runOptimize(): Promise<void> {
+        if (disabledControls() || optimizing) return;
+        optimizing = true;
+        errorOptimize = null;
+        try {
+            const res = await postFsrsOptimize();
+            optimizeFsrsItems = res.fsrs_items;
+            optimizedParams = res.params;
+        } catch (e) {
+            errorOptimize =
+                e instanceof Error ? e.message : "Failed to optimize FSRS params";
+        } finally {
+            optimizing = false;
+        }
+    }
 </script>
 
 <svelte:head><title>Settings — Anki</title></svelte:head>
@@ -150,13 +173,14 @@
                         <div>
                             <label for="fsrs-enabled">Enable FSRS</label>
                             <p class="hint">
-                                Use the FSRS v5 scheduler. Toggling does not
-                                reschedule existing cards (Phase 9-O).
+                                Use the FSRS v5 scheduler. Toggling reschedules
+                                existing cards under current params — this may
+                                take a few seconds on large collections.
                             </p>
                         </div>
                         <div class="toggle-cell">
                             {#if savingFsrs}
-                                <span class="saving">Saving…</span>
+                                <span class="saving">Rescheduling…</span>
                             {/if}
                             <input
                                 id="fsrs-enabled"
@@ -231,19 +255,39 @@
             <Card padding="lg">
                 <div class="card-head">
                     <h3>Optimized weights</h3>
-                    <button class="re-optimize">Re-optimize</button>
+                    <button
+                        class="re-optimize"
+                        onclick={() => runOptimize()}
+                        disabled={disabledControls() || optimizing}
+                    >
+                        {optimizing ? "Optimizing…" : "Re-optimize"}
+                    </button>
                 </div>
                 <p class="hint">
-                    Last optimized on 2026-04-14 · log loss 0.187 · RMSE(bins) 0.043
+                    {#if optimizeFsrsItems === null}
+                        Click Re-optimize to fit FSRS parameters from your
+                        review history.
+                    {:else if optimizeFsrsItems === 0}
+                        No reviews available yet — log some reviews first, then
+                        re-optimize.
+                    {:else}
+                        Trained on {optimizeFsrsItems.toLocaleString()} reviews
+                        · params updated.
+                    {/if}
                 </p>
-                <div class="weights">
-                    {#each fsrsWeights as w, i (i)}
-                        <div class="w-cell">
-                            <div class="w-i">w<sub>{i}</sub></div>
-                            <div class="w-v">{w}</div>
-                        </div>
-                    {/each}
-                </div>
+                {#if errorOptimize}
+                    <p class="field-error">{errorOptimize}</p>
+                {/if}
+                {#if optimizedParams.length > 0}
+                    <div class="weights">
+                        {#each optimizedParams as w, i (i)}
+                            <div class="w-cell">
+                                <div class="w-i">w<sub>{i}</sub></div>
+                                <div class="w-v">{w.toFixed(3)}</div>
+                            </div>
+                        {/each}
+                    </div>
+                {/if}
             </Card>
         {:else if active === "appearance"}
             <Card padding="lg">
@@ -477,9 +521,13 @@
         color: var(--text-muted);
         border: 1px solid var(--border);
     }
-    .re-optimize:hover {
+    .re-optimize:hover:not(:disabled) {
         color: var(--accent);
         border-color: var(--accent);
+    }
+    .re-optimize:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
     }
 
     .weights {

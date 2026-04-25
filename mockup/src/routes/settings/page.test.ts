@@ -70,7 +70,7 @@ describe("SettingsPage contract", () => {
         flushSync();
     }
 
-    test("initial render: active=fsrs — h1, subtitle, 19 weights, active nav", () => {
+    test("initial render: active=fsrs — h1, subtitle, active nav (weights empty until optimize)", () => {
         const instance = mount(Page, { target: container, props: {} });
         try {
             flushSync();
@@ -82,7 +82,10 @@ describe("SettingsPage contract", () => {
                 container.querySelector(".subtitle")?.textContent,
             ).toContain("FSRS v5");
 
-            expect(container.querySelectorAll(".w-cell").length).toBe(19);
+            // Phase 9-O2 removed the 19 fake placeholder weights. Real
+            // params arrive only after a successful optimize call —
+            // covered in the 9-O3 wiring tests below.
+            expect(container.querySelectorAll(".w-cell").length).toBe(0);
 
             expect(
                 container

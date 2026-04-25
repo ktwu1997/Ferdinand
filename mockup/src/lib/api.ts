@@ -73,6 +73,13 @@ export interface ApiFsrsEnabled {
     enabled: boolean;
 }
 
+export interface ApiFsrsOptimizeResponse {
+    /** Number of training reviews after revlog filtering. 0 means no data. */
+    fsrs_items: number;
+    /** Newly fitted (or echoed, if fsrs_items==0) FSRS-6 parameters. */
+    params: number[];
+}
+
 const DEFAULT_BASE = "http://localhost:40001";
 
 export function apiBase(): string {
@@ -99,7 +106,7 @@ async function getJson<T>(path: string, init?: RequestInit): Promise<T> {
 // so 400-class messages from anki_server (e.g. validation copy) surface inline.
 async function jsonRequest<T>(
     path: string,
-    method: "PATCH" | "PUT",
+    method: "PATCH" | "PUT" | "POST",
     body: unknown,
 ): Promise<T> {
     const res = await fetch(`${apiBase()}${path}`, {
@@ -129,6 +136,10 @@ async function patchJson<T>(path: string, body: unknown): Promise<T> {
 
 async function putJson<T>(path: string, body: unknown): Promise<T> {
     return jsonRequest<T>(path, "PUT", body);
+}
+
+async function postJson<T>(path: string, body: unknown): Promise<T> {
+    return jsonRequest<T>(path, "POST", body);
 }
 
 export async function fetchHealth(): Promise<ApiHealth> {
@@ -187,4 +198,8 @@ export async function fetchFsrsEnabled(): Promise<ApiFsrsEnabled> {
 
 export async function putFsrsEnabled(req: ApiFsrsEnabled): Promise<ApiFsrsEnabled> {
     return putJson<ApiFsrsEnabled>("/api/fsrs/enabled", req);
+}
+
+export async function postFsrsOptimize(): Promise<ApiFsrsOptimizeResponse> {
+    return postJson<ApiFsrsOptimizeResponse>("/api/fsrs/optimize", {});
 }
