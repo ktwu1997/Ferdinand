@@ -209,3 +209,39 @@ export async function putFsrsEnabled(req: ApiFsrsEnabled): Promise<ApiFsrsEnable
 export async function postFsrsOptimize(): Promise<ApiFsrsOptimizeResponse> {
     return postJson<ApiFsrsOptimizeResponse>("/api/fsrs/optimize", {});
 }
+
+export interface ApiDeckRenameResponse {
+    id: number;
+    name: string;
+}
+
+/**
+ * Rename a deck by id. Server validates name (empty/whitespace → 400) and
+ * existence (missing → 404); both surface as Error("400 ...") /
+ * Error("404 ...") via jsonRequest's {message} parsing.
+ */
+export async function patchDeckName(
+    id: number,
+    name: string,
+): Promise<ApiDeckRenameResponse> {
+    return patchJson<ApiDeckRenameResponse>(`/api/decks/${id}`, { name });
+}
+
+export interface ApiSuspendResponse {
+    id: number;
+    state: ApiCardSummary["state"];
+}
+
+/**
+ * Suspend or unsuspend a card by id. POST with `{suspended: true}` (or
+ * default body) suspends; `{suspended: false}` unsuspends. Idempotent
+ * server-side; missing card → 404 surfaced via jsonRequest.
+ */
+export async function postCardSuspend(
+    id: number,
+    suspended: boolean,
+): Promise<ApiSuspendResponse> {
+    return postJson<ApiSuspendResponse>(`/api/cards/${id}/suspend`, {
+        suspended,
+    });
+}

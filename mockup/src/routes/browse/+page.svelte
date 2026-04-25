@@ -1,8 +1,13 @@
 <script lang="ts">
-    import { onMount } from "svelte";
+    import { onMount, tick } from "svelte";
     import { cards as fakeCards, decks, savedSearches, tags } from "$lib/data";
     import Kbd from "$lib/components/Kbd.svelte";
-    import { fetchCards, type ApiCardSummary } from "$lib/api";
+    import {
+        fetchCards,
+        patchDeckName,
+        postCardSuspend,
+        type ApiCardSummary,
+    } from "$lib/api";
     import BrowseRow from "$lib/browse/BrowseRow.svelte";
     import BrowseRowSkeleton from "$lib/browse/BrowseRowSkeleton.svelte";
     import { stripHtmlToSnippet } from "$lib/browse/media";
@@ -12,6 +17,16 @@
     let query = $state("");
     let openSection = $state<Record<string, boolean>>({ decks: true, tags: true, saved: true });
     let selectedIdx = $state(0);
+
+    // Phase 9-P: editor-panel mutations against anki_server. Stateful page,
+    // so errors surface as an explicit banner (per 9-N3 design_pattern_proven)
+    // — silent fallback would drop the user's edit without acknowledgement.
+    let errorBanner = $state<string | null>(null);
+    let isEditingDeck = $state(false);
+    let deckNameDraft = $state("");
+    let isMutatingDeck = $state(false);
+    let isMutatingSuspend = $state(false);
+    let deckInput = $state<HTMLInputElement | null>(null);
 
     onMount(async () => {
         try {
@@ -80,9 +95,82 @@
     }
     function selectRow(i: number) {
         selectedIdx = i;
+        // Cancel any in-flight rename mode when switching cards — the
+        // draft was for the previous selection's deck.
+        isEditingDeck = false;
+        errorBanner = null;
     }
     function clearQuery() {
         query = "";
+    }
+
+    async function startEditDeck() {
+        if (!selected || !liveCards) return;
+        deckNameDraft = selected.deckName;
+        isEditingDeck = true;
+        errorBanner = null;
+        await tick();
+        deckInput?.focus();
+        deckInput?.select();
+    }
+
+    function cancelEditDeck() {
+        isEditingDeck = false;
+        deckNameDraft = "";
+        errorBanner = null;
+    }
+
+    async function commitEditDeck() {
+        if (!selected || !liveCards) return;
+        const trimmed = deckNameDraft.trim();
+        if (trimmed === "" || trimmed === selected.deckName) {
+            cancelEditDeck();
+            return;
+        }
+        const targetDeckId = liveCards.find(
+            (c) => String(c.id) === selected.id,
+        )?.deck_id;
+        if (targetDeckId === undefined) {
+            errorBanner = "Deck rename unavailable on fake data";
+            return;
+        }
+        isMutatingDeck = true;
+        errorBanner = null;
+        try {
+            const res = await patchDeckName(targetDeckId, trimmed);
+            // Propagate new name to every card in this deck — mockup state
+            // is the only canonical UI store right now.
+            liveCards = liveCards.map((c) =>
+                c.deck_id === res.id ? { ...c, deck_name: res.name } : c,
+            );
+            isEditingDeck = false;
+        } catch (e) {
+            errorBanner = e instanceof Error ? e.message : "Rename failed";
+        } finally {
+            isMutatingDeck = false;
+        }
+    }
+
+    async function toggleSuspend() {
+        if (!selected || !liveCards) return;
+        const targetCard = liveCards.find((c) => String(c.id) === selected.id);
+        if (!targetCard) {
+            errorBanner = "Suspend unavailable on fake data";
+            return;
+        }
+        const nextSuspended = targetCard.state !== "suspended";
+        isMutatingSuspend = true;
+        errorBanner = null;
+        try {
+            const res = await postCardSuspend(targetCard.id, nextSuspended);
+            liveCards = liveCards.map((c) =>
+                c.id === res.id ? { ...c, state: res.state } : c,
+            );
+        } catch (e) {
+            errorBanner = e instanceof Error ? e.message : "Suspend failed";
+        } finally {
+            isMutatingSuspend = false;
+        }
     }
 </script>
 
@@ -205,6 +293,9 @@
 
     <!-- editor panel -->
     <aside class="editor">
+        {#if errorBanner}
+            <div class="error-banner" role="alert">{errorBanner}</div>
+        {/if}
         <div class="editor-head">
             <div class="eyebrow">Note · {selected?.deckEmoji} {selected?.deckName}</div>
             <div class="head-actions">
@@ -224,7 +315,27 @@
         <div class="meta">
             <div class="meta-row">
                 <span class="meta-key">Deck</span>
-                <span class="pill-sel">{selected?.deckEmoji} {selected?.deckName}</span>
+                {#if isEditingDeck}
+                    <input
+                        bind:this={deckInput}
+                        class="deck-rename"
+                        type="text"
+                        bind:value={deckNameDraft}
+                        disabled={isMutatingDeck}
+                        aria-label="Rename deck"
+                        onkeydown={(e) => {
+                            if (e.key === "Enter") commitEditDeck();
+                            else if (e.key === "Escape") cancelEditDeck();
+                        }}
+                        onblur={commitEditDeck}
+                    />
+                {:else}
+                    <button
+                        class="pill-sel deck-pill-btn"
+                        onclick={startEditDeck}
+                        aria-label="Edit deck name"
+                    >{selected?.deckEmoji} {selected?.deckName}</button>
+                {/if}
             </div>
             <div class="meta-row">
                 <span class="meta-key">Tags</span>
@@ -247,6 +358,14 @@
 
         <div class="editor-footer">
             <button class="ghost-btn">Preview</button>
+            <button
+                class="ghost-btn"
+                class:active={selected?.state === "suspended"}
+                disabled={isMutatingSuspend}
+                onclick={toggleSuspend}
+            >
+                {selected?.state === "suspended" ? "Unsuspend" : "Suspend"}
+            </button>
             <button class="ghost-btn danger">Delete</button>
         </div>
     </aside>
@@ -681,5 +800,50 @@
     .ghost-btn.danger:hover {
         color: var(--danger);
         border-color: var(--danger);
+    }
+    .ghost-btn.active {
+        color: var(--text);
+        background: var(--bg-hover);
+        border-color: var(--border-strong);
+    }
+    .ghost-btn:disabled {
+        opacity: 0.55;
+        cursor: progress;
+    }
+
+    /* Phase 9-P: deck rename + suspend mutations have explicit error
+       feedback because dropping a user edit silently is the worst
+       possible behavior for a stateful page (per 9-N3). */
+    .error-banner {
+        font-size: var(--text-xs);
+        color: var(--danger);
+        background: color-mix(in oklch, var(--danger) 10%, transparent);
+        border: 1px solid color-mix(in oklch, var(--danger) 30%, transparent);
+        border-radius: var(--radius-sm);
+        padding: 0.4rem 0.6rem;
+        margin-bottom: var(--space-3);
+    }
+    .deck-pill-btn {
+        cursor: pointer;
+        font-family: inherit;
+    }
+    .deck-rename {
+        font-size: var(--text-xs);
+        font-family: inherit;
+        color: var(--text);
+        padding: 3px 10px;
+        border: 1px solid var(--accent);
+        border-radius: var(--radius-full);
+        outline: none;
+        background: #ffffff;
+        width: fit-content;
+        max-width: 220px;
+    }
+    :global([data-theme="dark"]) .deck-rename {
+        background: var(--bg-elevated);
+    }
+    .deck-rename:disabled {
+        opacity: 0.6;
+        cursor: progress;
     }
 </style>

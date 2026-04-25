@@ -25,6 +25,16 @@ impl ServerError {
             status: StatusCode::BAD_REQUEST,
         }
     }
+
+    /// Mark this error as 404. Used when a path-addressed resource (deck,
+    /// card, note) does not exist; without this, the missing-row branch
+    /// would surface as 500 via the blanket anyhow conversion.
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self {
+            source: anyhow::anyhow!(message.into()),
+            status: StatusCode::NOT_FOUND,
+        }
+    }
 }
 
 impl<E: Into<anyhow::Error>> From<E> for ServerError {

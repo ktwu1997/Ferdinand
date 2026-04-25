@@ -5,7 +5,7 @@ pub mod fsrs;
 pub mod media;
 pub mod study;
 
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
 use axum::Router;
 use serde::Serialize;
 
@@ -15,8 +15,10 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/health", get(health))
         .route("/api/decks", get(decks::list_decks))
+        .route("/api/decks/{id}", patch(decks::patch_deck))
         .route("/api/cards", get(cards::list_cards))
         .route("/api/cards/{id}", get(cards::get_card))
+        .route("/api/cards/{id}/suspend", post(cards::post_suspend))
         .route("/api/study/queue", get(study::get_queue))
         .route("/api/study/answer", post(study::post_answer))
         .route(

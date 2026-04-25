@@ -4,12 +4,14 @@ use anki::card::{Card, CardQueueNumber};
 use anki::prelude::*;
 use anki::search::SortMode;
 use anki::template::RenderedNode;
+use anki_proto::scheduler::bury_or_suspend_cards_request::Mode as BuryOrSuspendMode;
+use anyhow::anyhow;
 use axum::extract::{Path, Query, State};
 use axum::Json;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::error::ApiResult;
+use crate::error::{ApiResult, ServerError};
 use crate::state::AppState;
 
 // Anki's default Basic template renders the answer as
@@ -155,4 +157,71 @@ fn card_state_label(card: &Card) -> &'static str {
         CardQueueNumber::Review => "review",
         CardQueueNumber::Invalid => "suspended",
     }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SuspendRequest {
+    /// If true (or absent), suspend the card; if false, unsuspend it. The
+    /// underlying rslib calls (`bury_or_suspend_cards` / `unbury_or_unsuspend_cards`)
+    /// are idempotent, so re-sending the same value is a safe no-op.
+    #[serde(default = "default_suspended")]
+    pub suspended: bool,
+}
+
+fn default_suspended() -> bool {
+    true
+}
+
+impl Default for SuspendRequest {
+    fn default() -> Self {
+        Self { suspended: true }
+    }
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct SuspendResponse {
+    pub id: i64,
+    /// Post-action state label, matching `CardSummary.state` ("new" |
+    /// "learning" | "review" | "suspended"). Lets the UI update its row
+    /// without re-fetching.
+    pub state: &'static str,
+}
+
+/// Suspend or unsuspend a single card. POSTing with no body or `{}`
+/// suspends; POST with `{"suspended": false}` unsuspends. Missing card →
+/// 404. Idempotent under repeated calls with the same target state.
+#[utoipa::path(
+    post,
+    path = "/api/cards/{id}/suspend",
+    request_body = inline(serde_json::Value),
+    responses(
+        (status = 200, body = SuspendResponse),
+        (status = 404, body = crate::error::ApiError),
+    ),
+    params(("id" = i64, Path, description = "Card id"))
+)]
+pub async fn post_suspend(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    body: Option<Json<SuspendRequest>>,
+) -> ApiResult<Json<SuspendResponse>> {
+    let req = body.map(|j| j.0).unwrap_or_default();
+    let mut col = state.col.lock().await;
+    let cid = CardId(id);
+    if col.storage.get_card(cid)?.is_none() {
+        return Err(ServerError::not_found(format!("card {id} not found")));
+    }
+    if req.suspended {
+        col.bury_or_suspend_cards(&[cid], BuryOrSuspendMode::Suspend)?;
+    } else {
+        col.unbury_or_unsuspend_cards(&[cid])?;
+    }
+    let card = col
+        .storage
+        .get_card(cid)?
+        .ok_or_else(|| ServerError::from(anyhow!("card {id} disappeared post-suspend")))?;
+    Ok(Json(SuspendResponse {
+        id: cid.0,
+        state: card_state_label(&card),
+    }))
 }
