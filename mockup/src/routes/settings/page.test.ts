@@ -34,6 +34,7 @@ const defaultConf: ApiDeckConfigDefault = {
     name: "Default",
     desired_retention: 0.9,
     maximum_review_interval: 36500,
+    fsrs_params: [],
 };
 
 const fsrsOff: ApiFsrsEnabled = { enabled: false };
@@ -248,6 +249,7 @@ describe("SettingsPage FSRS wiring contract (Phase 9-N3)", () => {
             name: "Default",
             desired_retention: 0.85,
             maximum_review_interval: 365,
+            fsrs_params: [],
         });
         vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce({ enabled: true });
 
@@ -622,6 +624,83 @@ describe("SettingsPage FSRS optimize wiring contract (Phase 9-O3)", () => {
 
             expect(btn.textContent?.trim()).toBe("Re-optimize");
             expect(btn.disabled).toBe(false);
+        } finally {
+            unmount(instance);
+        }
+    });
+});
+
+// Phase 9-O': contract tests for hydrating optimizedParams from the new
+// fsrs_params field on GET /api/deck_config/default. Closes the 9-O2 tail
+// where the weights grid disappeared on every reload.
+describe("SettingsPage FSRS params hydration contract (Phase 9-O')", () => {
+    let container: HTMLDivElement;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        container = document.createElement("div");
+        document.body.appendChild(container);
+    });
+
+    afterEach(() => {
+        container.remove();
+    });
+
+    test("non-empty fsrs_params on mount renders one .w-cell per param", async () => {
+        const params = Array.from({ length: 19 }, (_, i) => 0.2 + i * 0.03);
+        vi.mocked(fetchDeckConfigDefault).mockResolvedValueOnce({
+            ...defaultConf,
+            fsrs_params: params,
+        });
+        vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce({ enabled: true });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            // No optimize click yet — weights come purely from the GET response.
+            expect(vi.mocked(postFsrsOptimize)).not.toHaveBeenCalled();
+            expect(container.querySelectorAll(".w-cell").length).toBe(19);
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("non-empty fsrs_params on mount shows 'Loaded · N params' hint (distinct from post-optimize)", async () => {
+        const params = Array.from({ length: 19 }, () => 0.5);
+        vi.mocked(fetchDeckConfigDefault).mockResolvedValueOnce({
+            ...defaultConf,
+            fsrs_params: params,
+        });
+        vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce({ enabled: true });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            const hint = container.querySelector(".card-head + .hint");
+            expect(hint?.textContent).toMatch(/Loaded.*19\s+params/);
+            // Must not lie that we just trained — that copy belongs to runOptimize.
+            expect(hint?.textContent).not.toContain("Trained on");
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("empty fsrs_params on mount keeps 'Click Re-optimize' placeholder hint and no weights", async () => {
+        vi.mocked(fetchDeckConfigDefault).mockResolvedValueOnce({
+            ...defaultConf,
+            fsrs_params: [],
+        });
+        vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce({ enabled: false });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            const hint = container.querySelector(".card-head + .hint");
+            expect(hint?.textContent).toContain("Click Re-optimize");
+            expect(container.querySelectorAll(".w-cell").length).toBe(0);
         } finally {
             unmount(instance);
         }

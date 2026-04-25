@@ -36,13 +36,15 @@
     let errorMaxInterval: string | null = $state(null);
     let errorFsrs: string | null = $state(null);
 
-    // Optimize state. Params are not loaded on mount — there's no GET
-    // endpoint for them yet, so the grid stays empty until the user clicks
-    // Re-optimize at least once this session.
+    // Optimize state. Phase 9-O' hydrates params from GET response so the
+    // weights grid survives page reload. paramsSource distinguishes "loaded
+    // from disk" hint copy from "trained this run" — the two share UI but
+    // mean different things to the user.
     let optimizing = $state(false);
     let errorOptimize: string | null = $state(null);
     let optimizeFsrsItems: number | null = $state(null);
     let optimizedParams: number[] = $state([]);
+    let paramsSource: "disk" | "fresh" | null = $state(null);
 
     onMount(async () => {
         try {
@@ -53,6 +55,10 @@
             retentionPct = Math.round(conf.desired_retention * 100);
             maxInterval = conf.maximum_review_interval;
             fsrsEnabled = fsrs.enabled;
+            if (conf.fsrs_params.length > 0) {
+                optimizedParams = conf.fsrs_params;
+                paramsSource = "disk";
+            }
         } catch (e) {
             loadError = e instanceof Error ? e.message : "Failed to load settings";
         } finally {
@@ -120,6 +126,7 @@
             const res = await postFsrsOptimize();
             optimizeFsrsItems = res.fsrs_items;
             optimizedParams = res.params;
+            paramsSource = "fresh";
         } catch (e) {
             errorOptimize =
                 e instanceof Error ? e.message : "Failed to optimize FSRS params";
@@ -264,7 +271,10 @@
                     </button>
                 </div>
                 <p class="hint">
-                    {#if optimizeFsrsItems === null}
+                    {#if paramsSource === "disk"}
+                        Loaded {optimizedParams.length} params from disk · click
+                        Re-optimize to retrain on the latest review history.
+                    {:else if optimizeFsrsItems === null}
                         Click Re-optimize to fit FSRS parameters from your
                         review history.
                     {:else if optimizeFsrsItems === 0}

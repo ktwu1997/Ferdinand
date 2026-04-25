@@ -62,6 +62,12 @@ export interface ApiDeckConfigDefault {
     desired_retention: number;
     /** Maximum review interval in days (1..=36500). */
     maximum_review_interval: number;
+    /**
+     * Persisted FSRS-6 parameters. Empty when the preset has never been
+     * optimized. Phase 9-O' lets the weights grid hydrate on mount instead
+     * of waiting for a Re-optimize click each session.
+     */
+    fsrs_params: number[];
 }
 
 export interface ApiDeckConfigDefaultPatch {

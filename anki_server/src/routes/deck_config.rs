@@ -11,8 +11,9 @@ use anyhow::anyhow;
 use crate::state::AppState;
 
 /// Subset of `DeckConfig` we expose in v1. Phase 9-N wires the three
-/// highest-frequency knobs; FSRS weights, optimizer state, and per-deck
-/// overrides are deferred (see Phase 9-O).
+/// highest-frequency knobs; Phase 9-O' adds the FSRS-6 params so the
+/// settings page can hydrate the weights grid on mount instead of waiting
+/// for a Re-optimize click each session. Per-deck overrides remain deferred.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DeckConfigDefault {
     pub id: i64,
@@ -21,6 +22,9 @@ pub struct DeckConfigDefault {
     pub desired_retention: f32,
     /// Maximum review interval in days (1..=36500).
     pub maximum_review_interval: u32,
+    /// Persisted FSRS-6 parameters. Empty when the preset has never been
+    /// optimized; populated by Phase 9-O `POST /api/fsrs/optimize`.
+    pub fsrs_params: Vec<f32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -125,5 +129,6 @@ fn to_response(c: &DeckConfig) -> DeckConfigDefault {
         name: c.name.clone(),
         desired_retention: c.inner.desired_retention,
         maximum_review_interval: c.inner.maximum_review_interval,
+        fsrs_params: c.inner.fsrs_params_6.clone(),
     }
 }
