@@ -1,5 +1,12 @@
 <script lang="ts">
+    import { onMount } from "svelte";
     import Card from "$lib/components/Card.svelte";
+    import {
+        fetchDeckConfigDefault,
+        fetchFsrsEnabled,
+        patchDeckConfigDefault,
+        putFsrsEnabled,
+    } from "$lib/api";
 
     let sections = [
         { id: "profile", label: "Profile" },
@@ -13,6 +20,90 @@
     let active = $state("fsrs");
 
     let fsrsWeights = Array.from({ length: 19 }, (_, i) => (0.2 + i * 0.15).toFixed(3));
+
+    // FSRS settings wired to anki_server (Phase 9-N2).
+    // Server stores desired_retention as a 0.70..=0.97 float; UI works in
+    // integer percent and converts at the boundary. Persistence fires on
+    // change/blur (not input/keystroke) so a slider drag is one PATCH.
+    let loading = $state(true);
+    let loadError: string | null = $state(null);
+    let retentionPct = $state(90);
+    let maxInterval = $state(36500);
+    let fsrsEnabled = $state(false);
+    let savingRetention = $state(false);
+    let savingMaxInterval = $state(false);
+    let savingFsrs = $state(false);
+    let errorRetention: string | null = $state(null);
+    let errorMaxInterval: string | null = $state(null);
+    let errorFsrs: string | null = $state(null);
+
+    onMount(async () => {
+        try {
+            const [conf, fsrs] = await Promise.all([
+                fetchDeckConfigDefault(),
+                fetchFsrsEnabled(),
+            ]);
+            retentionPct = Math.round(conf.desired_retention * 100);
+            maxInterval = conf.maximum_review_interval;
+            fsrsEnabled = fsrs.enabled;
+        } catch (e) {
+            loadError = e instanceof Error ? e.message : "Failed to load settings";
+        } finally {
+            loading = false;
+        }
+    });
+
+    function disabledControls(): boolean {
+        return loading || loadError !== null;
+    }
+
+    async function persistRetention(): Promise<void> {
+        if (disabledControls()) return;
+        savingRetention = true;
+        errorRetention = null;
+        try {
+            const next = await patchDeckConfigDefault({
+                desired_retention: retentionPct / 100,
+            });
+            retentionPct = Math.round(next.desired_retention * 100);
+        } catch (e) {
+            errorRetention =
+                e instanceof Error ? e.message : "Failed to save retention";
+        } finally {
+            savingRetention = false;
+        }
+    }
+
+    async function persistMaxInterval(): Promise<void> {
+        if (disabledControls()) return;
+        savingMaxInterval = true;
+        errorMaxInterval = null;
+        try {
+            const next = await patchDeckConfigDefault({
+                maximum_review_interval: maxInterval,
+            });
+            maxInterval = next.maximum_review_interval;
+        } catch (e) {
+            errorMaxInterval =
+                e instanceof Error ? e.message : "Failed to save interval";
+        } finally {
+            savingMaxInterval = false;
+        }
+    }
+
+    async function persistFsrs(): Promise<void> {
+        if (disabledControls()) return;
+        savingFsrs = true;
+        errorFsrs = null;
+        try {
+            const next = await putFsrsEnabled({ enabled: fsrsEnabled });
+            fsrsEnabled = next.enabled;
+        } catch (e) {
+            errorFsrs = e instanceof Error ? e.message : "Failed to save FSRS toggle";
+        } finally {
+            savingFsrs = false;
+        }
+    }
 </script>
 
 <svelte:head><title>Settings — Anki</title></svelte:head>
@@ -43,31 +134,97 @@
         </header>
 
         {#if active === "fsrs"}
+            {#if loadError}
+                <div class="error-banner" role="alert">
+                    <strong>Couldn't reach Anki server.</strong>
+                    Settings shown are unsaved defaults — changes won't persist
+                    until reconnected.
+                </div>
+            {/if}
+            <p class="disclaimer">
+                Editing the Default preset. Per-deck overrides come in a later release.
+            </p>
             <Card padding="lg">
+                <div class="field">
+                    <div class="field-head">
+                        <div>
+                            <label for="fsrs-enabled">Enable FSRS</label>
+                            <p class="hint">
+                                Use the FSRS v5 scheduler. Toggling does not
+                                reschedule existing cards (Phase 9-O).
+                            </p>
+                        </div>
+                        <div class="toggle-cell">
+                            {#if savingFsrs}
+                                <span class="saving">Saving…</span>
+                            {/if}
+                            <input
+                                id="fsrs-enabled"
+                                type="checkbox"
+                                bind:checked={fsrsEnabled}
+                                onchange={() => persistFsrs()}
+                                disabled={disabledControls()}
+                            />
+                        </div>
+                    </div>
+                    {#if errorFsrs}
+                        <p class="field-error">{errorFsrs}</p>
+                    {/if}
+                </div>
+
                 <div class="field">
                     <div class="field-head">
                         <div>
                             <label for="desired-retention">Desired retention</label>
                             <p class="hint">Target probability of recalling a card when due.</p>
                         </div>
-                        <div class="value-pill">90%</div>
+                        <div class="value-pill">{retentionPct}%</div>
                     </div>
-                    <input id="desired-retention" type="range" min="70" max="97" value="90" />
+                    <input
+                        id="desired-retention"
+                        type="range"
+                        min="70"
+                        max="97"
+                        bind:value={retentionPct}
+                        onchange={() => persistRetention()}
+                        disabled={disabledControls()}
+                    />
                     <div class="scale">
                         <span>70%</span>
                         <span>85%</span>
                         <span>97%</span>
                     </div>
+                    {#if savingRetention}
+                        <span class="saving">Saving…</span>
+                    {/if}
+                    {#if errorRetention}
+                        <p class="field-error">{errorRetention}</p>
+                    {/if}
                 </div>
 
                 <div class="field">
                     <div class="field-head">
                         <div>
-                            <span class="field-label">Maximum interval</span>
+                            <label for="max-interval">Maximum interval</label>
                             <p class="hint">Cap in days. Longer = fewer reviews but slower learning.</p>
                         </div>
-                        <div class="value-pill">36,500 d</div>
+                        <input
+                            id="max-interval"
+                            class="num-input"
+                            type="number"
+                            min="1"
+                            max="36500"
+                            bind:value={maxInterval}
+                            onblur={() => persistMaxInterval()}
+                            disabled={disabledControls()}
+                        />
                     </div>
+                    {#if savingMaxInterval}
+                        <span class="saving">Saving…</span>
+                    {/if}
+                    {#if errorMaxInterval}
+                        <p class="field-error">{errorMaxInterval}</p>
+                    {/if}
                 </div>
             </Card>
 
@@ -229,6 +386,67 @@
         border: 1px solid var(--accent-border);
         border-radius: var(--radius-full);
         font-size: var(--text-sm);
+    }
+
+    .disclaimer {
+        font-size: var(--text-xs);
+        color: var(--text-subtle);
+        font-style: italic;
+        margin-bottom: calc(var(--space-2) * -1);
+    }
+
+    .error-banner {
+        padding: var(--space-3) var(--space-4);
+        border: 1px solid var(--danger, #c44);
+        border-radius: var(--radius-sm);
+        background: color-mix(in oklch, var(--danger, #c44) 8%, transparent);
+        color: var(--text);
+        font-size: var(--text-sm);
+        line-height: 1.45;
+    }
+    .error-banner strong {
+        font-weight: 600;
+        margin-right: 0.25rem;
+    }
+
+    .toggle-cell {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+    }
+
+    .num-input {
+        width: 7rem;
+        padding: 0.3rem 0.5rem;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        background: var(--bg);
+        color: var(--text);
+        font-size: var(--text-sm);
+        font-variant-numeric: tabular-nums;
+        text-align: right;
+    }
+    .num-input:focus {
+        outline: none;
+        border-color: var(--accent);
+    }
+    .num-input:disabled,
+    input[type="range"]:disabled,
+    input[type="checkbox"]:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+    }
+
+    .saving {
+        font-size: var(--text-xs);
+        color: var(--text-subtle);
+        font-style: italic;
+    }
+
+    .field-error {
+        font-size: var(--text-xs);
+        color: var(--danger, #c44);
+        margin-top: var(--space-1);
     }
 
     input[type="range"] {

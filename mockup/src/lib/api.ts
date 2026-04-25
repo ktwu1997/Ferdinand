@@ -55,6 +55,24 @@ export interface ApiQueueResponse {
     cards: ApiCardSummary[];
 }
 
+export interface ApiDeckConfigDefault {
+    id: number;
+    name: string;
+    /** FSRS desired retention as a 0.70..=0.97 float. UI converts to percent at the boundary. */
+    desired_retention: number;
+    /** Maximum review interval in days (1..=36500). */
+    maximum_review_interval: number;
+}
+
+export interface ApiDeckConfigDefaultPatch {
+    desired_retention?: number;
+    maximum_review_interval?: number;
+}
+
+export interface ApiFsrsEnabled {
+    enabled: boolean;
+}
+
 const DEFAULT_BASE = "http://localhost:40001";
 
 export function apiBase(): string {
@@ -75,6 +93,42 @@ async function getJson<T>(path: string, init?: RequestInit): Promise<T> {
     });
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return (await res.json()) as T;
+}
+
+// Mutating helpers parse the server's JSON error envelope ({status, message})
+// so 400-class messages from anki_server (e.g. validation copy) surface inline.
+async function jsonRequest<T>(
+    path: string,
+    method: "PATCH" | "PUT",
+    body: unknown,
+): Promise<T> {
+    const res = await fetch(`${apiBase()}${path}`, {
+        method,
+        headers: {
+            "content-type": "application/json",
+            accept: "application/json",
+        },
+        body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+        let detail = res.statusText;
+        try {
+            const parsed = (await res.json()) as { message?: string };
+            if (parsed?.message) detail = parsed.message;
+        } catch {
+            // body wasn't JSON — fall through with statusText
+        }
+        throw new Error(`${res.status} ${detail}`);
+    }
+    return (await res.json()) as T;
+}
+
+async function patchJson<T>(path: string, body: unknown): Promise<T> {
+    return jsonRequest<T>(path, "PATCH", body);
+}
+
+async function putJson<T>(path: string, body: unknown): Promise<T> {
+    return jsonRequest<T>(path, "PUT", body);
 }
 
 export async function fetchHealth(): Promise<ApiHealth> {
@@ -115,4 +169,22 @@ export async function postAnswer(req: AnswerRequest): Promise<ApiQueueResponse> 
         headers: { "content-type": "application/json", accept: "application/json" },
         body: JSON.stringify(req),
     });
+}
+
+export async function fetchDeckConfigDefault(): Promise<ApiDeckConfigDefault> {
+    return getJson<ApiDeckConfigDefault>("/api/deck_config/default");
+}
+
+export async function patchDeckConfigDefault(
+    patch: ApiDeckConfigDefaultPatch,
+): Promise<ApiDeckConfigDefault> {
+    return patchJson<ApiDeckConfigDefault>("/api/deck_config/default", patch);
+}
+
+export async function fetchFsrsEnabled(): Promise<ApiFsrsEnabled> {
+    return getJson<ApiFsrsEnabled>("/api/fsrs/enabled");
+}
+
+export async function putFsrsEnabled(req: ApiFsrsEnabled): Promise<ApiFsrsEnabled> {
+    return putJson<ApiFsrsEnabled>("/api/fsrs/enabled", req);
 }
