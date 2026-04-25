@@ -3,25 +3,54 @@ import { flushSync, mount, unmount } from "svelte";
 
 import Page from "./+page.svelte";
 import { resetPageStub } from "../../test/stubs/app-stores";
-import { cards as fakeCards } from "$lib/data";
-import type { ApiCardListResponse, ApiCardSummary } from "$lib/api";
+import { cards as fakeCards, decks as fakeDecks } from "$lib/data";
+import type {
+    ApiCardListResponse,
+    ApiCardSummary,
+    ApiDeckListResponse,
+    ApiDeckSummary,
+} from "$lib/api";
 
-// Phase 8-E + 9-P: contract tests for the browse route. Mock fetchCards
-// (mount-time hydrate) plus patchDeckName / postCardSuspend (editor-panel
-// mutations). mediaBase stays real so BrowseRow's image src resolution
-// continues to work under jsdom (the same 8-A/8-C rationale). No
-// LiveIndicator on this route, so fetchHealth stays untouched.
+// Phase 8-E + 9-P + 9-S: contract tests for the browse route. Mock
+// fetchCards + fetchDecks (mount-time hydrate, parallel) plus patchDeckName
+// / postCardSuspend (editor + tree mutations). mediaBase stays real so
+// BrowseRow's image src resolution continues to work under jsdom (the same
+// 8-A/8-C rationale). No LiveIndicator on this route, so fetchHealth stays
+// untouched.
 vi.mock("$lib/api", async (importOriginal) => {
     const actual = await importOriginal<typeof import("$lib/api")>();
     return {
         ...actual,
         fetchCards: vi.fn(),
+        fetchDecks: vi.fn(),
         patchDeckName: vi.fn(),
         postCardSuspend: vi.fn(),
     };
 });
 
-import { fetchCards, patchDeckName, postCardSuspend } from "$lib/api";
+import { fetchCards, fetchDecks, patchDeckName, postCardSuspend } from "$lib/api";
+
+const emptyDecks: ApiDeckListResponse = { decks: [] };
+
+function deck(
+    id: number,
+    name: string,
+    overrides: Partial<ApiDeckSummary> = {},
+): ApiDeckSummary {
+    return {
+        id,
+        name,
+        level: 1,
+        new_count: 0,
+        learn_count: 0,
+        review_count: 0,
+        total_in_deck: 0,
+        filtered: false,
+        collapsed: false,
+        children: [],
+        ...overrides,
+    };
+}
 
 function card(id: number, front: string, back: string): ApiCardSummary {
     return {
@@ -71,6 +100,11 @@ describe("BrowsePage contract", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         resetPageStub();
+        // Default: fetchDecks fails so liveDecks stays null and the tree
+        // falls back to fakeDecks — matches pre-9-S behavior so existing
+        // assertions don't have to know about the new fetch. Tree-specific
+        // tests override with mockResolvedValueOnce.
+        vi.mocked(fetchDecks).mockRejectedValue(new Error("decks unreachable"));
         container = document.createElement("div");
         document.body.appendChild(container);
     });
@@ -394,6 +428,105 @@ describe("BrowsePage contract", () => {
                 expect(suspendBtn(container).textContent?.trim()).toBe(
                     "Suspend",
                 );
+            } finally {
+                unmount(instance);
+            }
+        });
+    });
+
+    describe("Phase 9-S tree sidebar", () => {
+        function treeDeckButtons(root: HTMLElement): HTMLButtonElement[] {
+            const decksTitle = Array.from(
+                root.querySelectorAll<HTMLButtonElement>(".tree .section-title"),
+            ).find((t) => t.textContent?.includes("Decks"));
+            if (!decksTitle) throw new Error("Decks section-title not found");
+            const section = decksTitle.closest(".section");
+            if (!section) throw new Error("Decks section container missing");
+            return Array.from(
+                section.querySelectorAll<HTMLButtonElement>(".section-items .item"),
+            );
+        }
+
+        test("fetchDecks success: tree renders live deck names + counts (fakeDecks NOT used)", async () => {
+            vi.mocked(fetchCards).mockResolvedValueOnce({
+                total: 0,
+                cards: [],
+            });
+            vi.mocked(fetchDecks).mockResolvedValueOnce({
+                decks: [
+                    deck(101, "日本語", { total_in_deck: 137 }),
+                    deck(202, "Português", { total_in_deck: 42 }),
+                ],
+            });
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const items = treeDeckButtons(container);
+                expect(items.length).toBe(2);
+                expect(items[0]?.textContent).toContain("日本語");
+                expect(items[0]?.textContent).toContain("137");
+                expect(items[1]?.textContent).toContain("Português");
+                expect(items[1]?.textContent).toContain("42");
+
+                // Sanity: a fakeDecks name (e.g. "日文 N2") is NOT in the tree.
+                const fakeFirstName = fakeDecks[0]?.name;
+                expect(fakeFirstName).toBeTruthy();
+                const treeText = items.map((i) => i.textContent ?? "").join(" ");
+                expect(treeText).not.toContain(fakeFirstName as string);
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("tree rename success: dblclick → input → Enter → PATCH called, row reflects new name", async () => {
+            vi.mocked(fetchCards).mockResolvedValueOnce({
+                total: 0,
+                cards: [],
+            });
+            vi.mocked(fetchDecks).mockResolvedValueOnce({
+                decks: [deck(101, "日本語", { total_in_deck: 137 })],
+            });
+            vi.mocked(patchDeckName).mockResolvedValueOnce({
+                id: 101,
+                name: "日本語 N2",
+            });
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const items = treeDeckButtons(container);
+                expect(items.length).toBe(1);
+                items[0]!.dispatchEvent(
+                    new MouseEvent("dblclick", { bubbles: true }),
+                );
+                await settle();
+
+                const input = container.querySelector<HTMLInputElement>(
+                    ".tree .tree-rename",
+                );
+                if (!input) throw new Error(".tree-rename input missing");
+                input.value = "日本語 N2";
+                input.dispatchEvent(new Event("input", { bubbles: true }));
+                input.dispatchEvent(
+                    new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+                );
+                await settle();
+
+                expect(vi.mocked(patchDeckName)).toHaveBeenCalledTimes(1);
+                expect(vi.mocked(patchDeckName)).toHaveBeenCalledWith(
+                    101,
+                    "日本語 N2",
+                );
+
+                // Tree row reflects new name; input gone (commit closed editor).
+                const after = treeDeckButtons(container);
+                expect(after.length).toBe(1);
+                expect(after[0]?.textContent).toContain("日本語 N2");
+                expect(container.querySelector(".tree .tree-rename")).toBeNull();
+                expect(container.querySelector(".error-banner")).toBeNull();
             } finally {
                 unmount(instance);
             }
