@@ -27,6 +27,7 @@ pub fn router() -> Router<AppState> {
             "/api/fsrs/enabled",
             get(fsrs::get_enabled).put(fsrs::put_enabled),
         )
+        .route("/api/fsrs/optimize", post(fsrs::post_optimize))
         // Static media (images, audio) served from <collection-stem>.media/.
         // Not under /api/ so shadow-DOM <base href="/media/"> stays clean and
         // the path reads as a static resource root.
