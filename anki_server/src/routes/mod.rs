@@ -1,5 +1,7 @@
 pub mod cards;
+pub mod deck_config;
 pub mod decks;
+pub mod fsrs;
 pub mod media;
 pub mod study;
 
@@ -17,6 +19,14 @@ pub fn router() -> Router<AppState> {
         .route("/api/cards/{id}", get(cards::get_card))
         .route("/api/study/queue", get(study::get_queue))
         .route("/api/study/answer", post(study::post_answer))
+        .route(
+            "/api/deck_config/default",
+            get(deck_config::get_default).patch(deck_config::patch_default),
+        )
+        .route(
+            "/api/fsrs/enabled",
+            get(fsrs::get_enabled).put(fsrs::put_enabled),
+        )
         // Static media (images, audio) served from <collection-stem>.media/.
         // Not under /api/ so shadow-DOM <base href="/media/"> stays clean and
         // the path reads as a static resource root.
