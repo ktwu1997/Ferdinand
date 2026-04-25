@@ -14,6 +14,7 @@ vi.mock("$lib/api", async (importOriginal) => {
         fetchFsrsEnabled: vi.fn(),
         patchDeckConfigDefault: vi.fn(),
         putFsrsEnabled: vi.fn(),
+        postFsrsOptimize: vi.fn(),
     };
 });
 
@@ -22,6 +23,7 @@ import {
     fetchDeckConfigDefault,
     fetchFsrsEnabled,
     patchDeckConfigDefault,
+    postFsrsOptimize,
     putFsrsEnabled,
     type ApiDeckConfigDefault,
     type ApiFsrsEnabled,
@@ -460,6 +462,166 @@ describe("SettingsPage FSRS wiring contract (Phase 9-N3)", () => {
             expect(err?.textContent).toContain(
                 "desired_retention must be between 0.70 and 0.97",
             );
+        } finally {
+            unmount(instance);
+        }
+    });
+});
+
+// Phase 9-O3: contract tests for the FSRS optimize wiring. These exercise
+// the postFsrsOptimize hook (button click), the success/empty/error UI
+// paths, and the in-flight disabled state. The reschedule-on-toggle path
+// is already covered by the 9-N3 putFsrsEnabled tests above (the
+// reschedule happens server-side; the contract from the page is
+// unchanged: PUT /api/fsrs/enabled).
+describe("SettingsPage FSRS optimize wiring contract (Phase 9-O3)", () => {
+    let container: HTMLDivElement;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        container = document.createElement("div");
+        document.body.appendChild(container);
+    });
+
+    afterEach(() => {
+        container.remove();
+    });
+
+    function clickReoptimize(): void {
+        const btn = container.querySelector(
+            ".re-optimize",
+        ) as HTMLButtonElement | null;
+        if (!btn) throw new Error("re-optimize button not found");
+        btn.click();
+        flushSync();
+    }
+
+    test("clicking Re-optimize calls postFsrsOptimize exactly once", async () => {
+        vi.mocked(fetchDeckConfigDefault).mockResolvedValueOnce(defaultConf);
+        vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce({ enabled: true });
+        vi.mocked(postFsrsOptimize).mockResolvedValueOnce({
+            fsrs_items: 0,
+            params: [],
+        });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            clickReoptimize();
+            await settle();
+
+            expect(vi.mocked(postFsrsOptimize)).toHaveBeenCalledTimes(1);
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("successful optimize renders one .w-cell per param and 'Trained on N reviews'", async () => {
+        vi.mocked(fetchDeckConfigDefault).mockResolvedValueOnce(defaultConf);
+        vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce({ enabled: true });
+        const params = Array.from({ length: 19 }, (_, i) => 0.1 + i * 0.05);
+        vi.mocked(postFsrsOptimize).mockResolvedValueOnce({
+            fsrs_items: 1234,
+            params,
+        });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            clickReoptimize();
+            await settle();
+
+            expect(container.querySelectorAll(".w-cell").length).toBe(19);
+            const hint = container.querySelector(".card-head + .hint");
+            expect(hint?.textContent).toMatch(/Trained on\s+1,234 reviews/);
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("optimize with fsrs_items=0 shows 'No reviews available yet' and renders no weights", async () => {
+        vi.mocked(fetchDeckConfigDefault).mockResolvedValueOnce(defaultConf);
+        vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce({ enabled: true });
+        vi.mocked(postFsrsOptimize).mockResolvedValueOnce({
+            fsrs_items: 0,
+            params: [],
+        });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            clickReoptimize();
+            await settle();
+
+            const hint = container.querySelector(".card-head + .hint");
+            expect(hint?.textContent).toContain(
+                "No reviews available yet",
+            );
+            expect(container.querySelectorAll(".w-cell").length).toBe(0);
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("optimize 400 reject surfaces server message into .field-error", async () => {
+        vi.mocked(fetchDeckConfigDefault).mockResolvedValueOnce(defaultConf);
+        vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce(fsrsOff);
+        vi.mocked(postFsrsOptimize).mockRejectedValueOnce(
+            new Error("400 FSRS must be enabled before optimizing"),
+        );
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            clickReoptimize();
+            await settle();
+
+            const err = container.querySelector(".field-error");
+            expect(err).not.toBeNull();
+            expect(err?.textContent).toContain(
+                "FSRS must be enabled before optimizing",
+            );
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("button shows 'Optimizing…' and is disabled while the request is in flight", async () => {
+        vi.mocked(fetchDeckConfigDefault).mockResolvedValueOnce(defaultConf);
+        vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce({ enabled: true });
+
+        // Manual deferred so we can observe the in-flight UI before the
+        // promise resolves.
+        let resolveOptimize: (v: { fsrs_items: number; params: number[] }) => void;
+        const pending = new Promise<{ fsrs_items: number; params: number[] }>(
+            (r) => {
+                resolveOptimize = r;
+            },
+        );
+        vi.mocked(postFsrsOptimize).mockReturnValueOnce(pending);
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            const btn = container.querySelector(
+                ".re-optimize",
+            ) as HTMLButtonElement;
+            btn.click();
+            flushSync();
+
+            expect(btn.textContent?.trim()).toBe("Optimizing…");
+            expect(btn.disabled).toBe(true);
+
+            resolveOptimize!({ fsrs_items: 1, params: [0.5] });
+            await settle();
+
+            expect(btn.textContent?.trim()).toBe("Re-optimize");
+            expect(btn.disabled).toBe(false);
         } finally {
             unmount(instance);
         }
