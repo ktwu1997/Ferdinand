@@ -173,6 +173,26 @@ export async function fetchTags(): Promise<ApiTagListResponse> {
     return getJson<ApiTagListResponse>("/api/tags");
 }
 
+/**
+ * Phase 11-B: recent review activity grouped by server-local calendar day.
+ * Server pre-pads zero-review days so the array always has exactly `days`
+ * entries, oldest first — sparkline rendering doesn't have to gap-fill.
+ */
+export interface ApiDayCount {
+    date: string;
+    reviews: number;
+}
+
+export interface ApiStatsRecent {
+    days: number;
+    history: ApiDayCount[];
+}
+
+export async function fetchStatsRecent(days = 30): Promise<ApiStatsRecent> {
+    const query = new URLSearchParams({ days: String(days) });
+    return getJson<ApiStatsRecent>(`/api/stats/recent?${query}`);
+}
+
 export async function fetchCards(q = "", limit = 50): Promise<ApiCardListResponse> {
     const query = new URLSearchParams();
     if (q) query.set("q", q);
