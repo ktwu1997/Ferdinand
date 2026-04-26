@@ -156,6 +156,14 @@ export async function fetchDecks(): Promise<ApiDeckListResponse> {
     return getJson<ApiDeckListResponse>("/api/decks");
 }
 
+export interface ApiTagListResponse {
+    tags: string[];
+}
+
+export async function fetchTags(): Promise<ApiTagListResponse> {
+    return getJson<ApiTagListResponse>("/api/tags");
+}
+
 export async function fetchCards(q = "", limit = 50): Promise<ApiCardListResponse> {
     const query = new URLSearchParams();
     if (q) query.set("q", q);

@@ -23,12 +23,13 @@ vi.mock("$lib/api", async (importOriginal) => {
         ...actual,
         fetchCards: vi.fn(),
         fetchDecks: vi.fn(),
+        fetchTags: vi.fn(),
         patchDeckName: vi.fn(),
         postCardSuspend: vi.fn(),
     };
 });
 
-import { fetchCards, fetchDecks, patchDeckName, postCardSuspend } from "$lib/api";
+import { fetchCards, fetchDecks, fetchTags, patchDeckName, postCardSuspend } from "$lib/api";
 
 const emptyDecks: ApiDeckListResponse = { decks: [] };
 
@@ -105,6 +106,10 @@ describe("BrowsePage contract", () => {
         // assertions don't have to know about the new fetch. Tree-specific
         // tests override with mockResolvedValueOnce.
         vi.mocked(fetchDecks).mockRejectedValue(new Error("decks unreachable"));
+        // Phase 10-A: tags ditto. Default reject preserves fakeTags rendering
+        // for tests that don't care about live tags; tag-specific tests
+        // override with mockResolvedValueOnce.
+        vi.mocked(fetchTags).mockRejectedValue(new Error("tags unreachable"));
         container = document.createElement("div");
         document.body.appendChild(container);
     });
@@ -527,6 +532,68 @@ describe("BrowsePage contract", () => {
                 expect(after[0]?.textContent).toContain("日本語 N2");
                 expect(container.querySelector(".tree .tree-rename")).toBeNull();
                 expect(container.querySelector(".error-banner")).toBeNull();
+            } finally {
+                unmount(instance);
+            }
+        });
+    });
+
+    describe("Phase 10-A tags sidebar", () => {
+        function tagItems(root: HTMLElement): HTMLButtonElement[] {
+            const tagsTitle = Array.from(
+                root.querySelectorAll<HTMLButtonElement>(".tree .section-title"),
+            ).find((t) => t.textContent?.includes("Tags"));
+            if (!tagsTitle) throw new Error("Tags section-title not found");
+            const section = tagsTitle.closest(".section");
+            if (!section) throw new Error("Tags section container missing");
+            return Array.from(
+                section.querySelectorAll<HTMLButtonElement>(".section-items .tag-item"),
+            );
+        }
+
+        test("fetchTags success: sidebar renders live tag names (fakeTags NOT used)", async () => {
+            vi.mocked(fetchCards).mockResolvedValueOnce({
+                total: 0,
+                cards: [],
+            });
+            vi.mocked(fetchTags).mockResolvedValueOnce({
+                tags: ["aaa-live", "bbb-live", "ccc-live"],
+            });
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const items = tagItems(container);
+                expect(items.length).toBe(3);
+                const text = items.map((i) => i.textContent ?? "").join(" ");
+                expect(text).toContain("aaa-live");
+                expect(text).toContain("bbb-live");
+                expect(text).toContain("ccc-live");
+                // Sanity: a fake tag is NOT in the sidebar.
+                // (fakeTags from $lib/data has names like "leech", "verb", etc.)
+                expect(text).not.toContain("leech");
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("fetchTags rejects: silent fallback to fakeTags, no error banner", async () => {
+            vi.mocked(fetchCards).mockResolvedValueOnce({
+                total: 0,
+                cards: [],
+            });
+            // beforeEach default already rejects fetchTags, so no override needed.
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                expect(container.querySelector(".error-banner")).toBeNull();
+                // fakeTags slice(0, 8) renders — at least one item should be present.
+                const items = tagItems(container);
+                expect(items.length).toBeGreaterThan(0);
+                expect(items.length).toBeLessThanOrEqual(8);
             } finally {
                 unmount(instance);
             }

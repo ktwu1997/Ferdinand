@@ -1,10 +1,11 @@
 <script lang="ts">
     import { onMount, tick } from "svelte";
-    import { cards as fakeCards, decks as fakeDecks, savedSearches, tags } from "$lib/data";
+    import { cards as fakeCards, decks as fakeDecks, savedSearches, tags as fakeTags } from "$lib/data";
     import Kbd from "$lib/components/Kbd.svelte";
     import {
         fetchCards,
         fetchDecks,
+        fetchTags,
         patchDeckName,
         postCardSuspend,
         type ApiCardSummary,
@@ -16,6 +17,7 @@
 
     let liveCards = $state<ApiCardSummary[] | null>(null);
     let liveDecks = $state<ApiDeckSummary[] | null>(null);
+    let liveTags = $state<string[] | null>(null);
     let loading = $state(true);
     let query = $state("");
     let openSection = $state<Record<string, boolean>>({ decks: true, tags: true, saved: true });
@@ -60,7 +62,18 @@
             },
             () => undefined,
         );
+        fetchTags().then(
+            (res) => {
+                liveTags = res.tags;
+            },
+            () => undefined,
+        );
     });
+
+    // Tree sidebar tags. Live when present, fake otherwise — supplementary
+    // nav, so silent-degrade matches 9-S decks-tree pattern (read-only,
+    // no edits to lose).
+    let sidebarTags = $derived<string[]>(liveTags ?? fakeTags);
 
     type Row = {
         id: string;
@@ -329,7 +342,7 @@
             </button>
             {#if openSection.tags}
                 <div class="section-items">
-                    {#each tags.slice(0, 8) as t (t)}
+                    {#each sidebarTags.slice(0, 8) as t (t)}
                         <button class="item tag-item">
                             <span class="hash">#</span>
                             <span>{t}</span>
