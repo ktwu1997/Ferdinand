@@ -4,6 +4,7 @@ pub mod decks;
 pub mod fsrs;
 pub mod media;
 pub mod notes;
+pub mod notetypes;
 pub mod stats;
 pub mod study;
 pub mod tags;
@@ -25,6 +26,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/cards/{id}/suspend", post(cards::post_suspend))
         .route("/api/notes", post(notes::post_create))
         .route("/api/notes/{id}", delete(notes::delete_by_id))
+        .route("/api/notetypes", get(notetypes::list_notetypes))
         .route("/api/study/queue", get(study::get_queue))
         .route("/api/study/answer", post(study::post_answer))
         .route(
