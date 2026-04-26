@@ -16,6 +16,7 @@ vi.mock("$lib/api", async (importOriginal) => {
         fetchDeckConfigById: vi.fn(),
         fetchFsrsEnabled: vi.fn(),
         patchDeckConfigById: vi.fn(),
+        postDeckConfig: vi.fn(),
         putFsrsEnabled: vi.fn(),
         postFsrsOptimize: vi.fn(),
     };
@@ -27,6 +28,7 @@ import {
     fetchDeckConfigs,
     fetchFsrsEnabled,
     patchDeckConfigById,
+    postDeckConfig,
     postFsrsOptimize,
     putFsrsEnabled,
     type ApiDeckConfigDefault,
@@ -1012,5 +1014,180 @@ describe("SettingsPage FSRS params hydration contract (Phase 9-O')", () => {
                 unmount(instance);
             }
         });
+    });
+});
+
+// Phase 12-B: contract tests for "+ New preset" inline create flow.
+// Default state (creatingPreset=false) hides the input row; clicking the
+// new-preset button reveals it; saving fires postDeckConfig + appends the
+// returned row + auto-switches to it via fetchDeckConfigById; server
+// failure surfaces inline without dropping the user out of the form.
+describe("SettingsPage create-preset flow (Phase 12-B)", () => {
+    let container: HTMLDivElement;
+
+    beforeEach(() => {
+        vi.resetAllMocks();
+        vi.mocked(fetchDeckConfigs).mockResolvedValue(onlyDefaultList);
+        vi.mocked(fetchDeckConfigById).mockResolvedValue(defaultConf);
+        vi.mocked(fetchFsrsEnabled).mockResolvedValue(fsrsOff);
+        container = document.createElement("div");
+        document.body.appendChild(container);
+    });
+
+    afterEach(() => {
+        container.remove();
+    });
+
+    test("clicking '+ New preset' reveals inline name input + Save/Cancel", async () => {
+        // The button only appears once onMount has resolved presets, so
+        // we wait for the initial settle before exercising it.
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            // Pre-state: input must not exist before opt-in.
+            expect(container.querySelector("#new-preset-name")).toBeNull();
+
+            const newBtn = container.querySelector(
+                ".new-preset-button",
+            ) as HTMLButtonElement | null;
+            expect(newBtn).not.toBeNull();
+            newBtn?.click();
+            flushSync();
+
+            // Post-state: input + Save + Cancel + (no error yet).
+            const input = container.querySelector(
+                "#new-preset-name",
+            ) as HTMLInputElement | null;
+            expect(input).not.toBeNull();
+            const save = container.querySelector(
+                ".save-preset-button",
+            ) as HTMLButtonElement | null;
+            const cancel = container.querySelector(
+                ".cancel-preset-button",
+            ) as HTMLButtonElement | null;
+            expect(save).not.toBeNull();
+            expect(cancel).not.toBeNull();
+            // Save is disabled until the user types something.
+            expect(save?.disabled).toBe(true);
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("save button calls postDeckConfig with trimmed name and switches to new preset", async () => {
+        vi.mocked(postDeckConfig).mockResolvedValueOnce({
+            id: 1777214900905,
+            name: "Languages",
+        });
+        // Second fetchDeckConfigById fires from switchPreset(newId) right
+        // after a successful create — return distinguishable values so we
+        // can assert which preset the editor is showing.
+        vi.mocked(fetchDeckConfigById)
+            .mockResolvedValueOnce(defaultConf)
+            .mockResolvedValueOnce(
+                makeConf({
+                    id: 1777214900905,
+                    name: "Languages",
+                    desired_retention: 0.85,
+                }),
+            );
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            (
+                container.querySelector(
+                    ".new-preset-button",
+                ) as HTMLButtonElement
+            ).click();
+            flushSync();
+
+            const input = container.querySelector(
+                "#new-preset-name",
+            ) as HTMLInputElement;
+            // Whitespace padding to confirm the trimmed name reaches the
+            // server (matches the server's own trim+blank-check guard).
+            input.value = "  Languages  ";
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            flushSync();
+
+            (
+                container.querySelector(
+                    ".save-preset-button",
+                ) as HTMLButtonElement
+            ).click();
+            await settle();
+
+            expect(vi.mocked(postDeckConfig)).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(postDeckConfig)).toHaveBeenCalledWith({
+                name: "Languages",
+            });
+            // After create, the page hydrates the editor for the new preset
+            // (second fetchDeckConfigById call) — verify the slider picked
+            // up the new preset's retention.
+            expect(vi.mocked(fetchDeckConfigById)).toHaveBeenCalledTimes(2);
+            expect(vi.mocked(fetchDeckConfigById)).toHaveBeenLastCalledWith(
+                1777214900905,
+            );
+            const slider = container.querySelector(
+                "#desired-retention",
+            ) as HTMLInputElement;
+            expect(slider.value).toBe("85");
+
+            // Form collapses back to button-only state.
+            expect(container.querySelector("#new-preset-name")).toBeNull();
+            expect(
+                container.querySelector(".new-preset-button"),
+            ).not.toBeNull();
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("server 400 (duplicate name) surfaces inline without leaving the form", async () => {
+        vi.mocked(postDeckConfig).mockRejectedValueOnce(
+            new Error("400 preset name already exists"),
+        );
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            (
+                container.querySelector(
+                    ".new-preset-button",
+                ) as HTMLButtonElement
+            ).click();
+            flushSync();
+
+            const input = container.querySelector(
+                "#new-preset-name",
+            ) as HTMLInputElement;
+            input.value = "Default";
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            flushSync();
+
+            (
+                container.querySelector(
+                    ".save-preset-button",
+                ) as HTMLButtonElement
+            ).click();
+            await settle();
+
+            // Form stays open; error surfaces in field-error.
+            expect(container.querySelector("#new-preset-name")).not.toBeNull();
+            const errors = Array.from(
+                container.querySelectorAll(".field-error"),
+            ).map((e) => e.textContent ?? "");
+            expect(
+                errors.some((t) => t.includes("preset name already exists")),
+            ).toBe(true);
+            // No phantom switch to a preset id we never received.
+            expect(vi.mocked(fetchDeckConfigById)).toHaveBeenCalledTimes(1);
+        } finally {
+            unmount(instance);
+        }
     });
 });

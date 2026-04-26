@@ -24,7 +24,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/cards/{id}/suspend", post(cards::post_suspend))
         .route("/api/study/queue", get(study::get_queue))
         .route("/api/study/answer", post(study::post_answer))
-        .route("/api/deck_config", get(deck_config::list_deck_configs))
+        .route(
+            "/api/deck_config",
+            get(deck_config::list_deck_configs).post(deck_config::post_create),
+        )
         .route(
             "/api/deck_config/default",
             get(deck_config::get_default).patch(deck_config::patch_default),
