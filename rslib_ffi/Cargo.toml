@@ -13,6 +13,11 @@ description = "C ABI bridge from rslib to native Ferdinand clients (iOS/macOS fi
 crate-type = ["staticlib", "cdylib"]
 
 [dependencies]
+# Phase 11-D: real collection access (open / close / deck_count).
+# rustls feature mirrors anki_server so the two binaries share a TLS
+# stack and we don't end up with a second copy of native-tls in the
+# dependency tree.
+anki = { path = "../rslib", features = ["rustls"] }
 
 [build-dependencies]
 cbindgen = "0.27"
