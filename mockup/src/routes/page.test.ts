@@ -39,6 +39,7 @@ const decksOk: ApiDeckListResponse = {
             total_in_deck: 10,
             filtered: false,
             collapsed: false,
+            preset_id: 1,
             children: [],
         },
     ],

@@ -23,13 +23,23 @@ vi.mock("$lib/api", async (importOriginal) => {
         ...actual,
         fetchCards: vi.fn(),
         fetchDecks: vi.fn(),
+        fetchDeckConfigs: vi.fn(),
         fetchTags: vi.fn(),
         patchDeckName: vi.fn(),
+        patchDeckPreset: vi.fn(),
         postCardSuspend: vi.fn(),
     };
 });
 
-import { fetchCards, fetchDecks, fetchTags, patchDeckName, postCardSuspend } from "$lib/api";
+import {
+    fetchCards,
+    fetchDecks,
+    fetchDeckConfigs,
+    fetchTags,
+    patchDeckName,
+    patchDeckPreset,
+    postCardSuspend,
+} from "$lib/api";
 
 const emptyDecks: ApiDeckListResponse = { decks: [] };
 
@@ -48,6 +58,7 @@ function deck(
         total_in_deck: 0,
         filtered: false,
         collapsed: false,
+        preset_id: 1,
         children: [],
         ...overrides,
     };
@@ -110,6 +121,11 @@ describe("BrowsePage contract", () => {
         // for tests that don't care about live tags; tag-specific tests
         // override with mockResolvedValueOnce.
         vi.mocked(fetchTags).mockRejectedValue(new Error("tags unreachable"));
+        // Phase 11-A: presets ditto. Default reject means the editor shows
+        // "Offline — preset locked" placeholder for unrelated tests.
+        vi.mocked(fetchDeckConfigs).mockRejectedValue(
+            new Error("preset list unreachable"),
+        );
         container = document.createElement("div");
         document.body.appendChild(container);
     });
@@ -594,6 +610,137 @@ describe("BrowsePage contract", () => {
                 const items = tagItems(container);
                 expect(items.length).toBeGreaterThan(0);
                 expect(items.length).toBeLessThanOrEqual(8);
+            } finally {
+                unmount(instance);
+            }
+        });
+    });
+
+    describe("Phase 11-A preset assignment", () => {
+        const twoPresets = {
+            configs: [
+                { id: 1, name: "Default" },
+                { id: 555, name: "Aggressive" },
+            ],
+        };
+
+        test("fetchDeckConfigs success + live deck: editor renders <select> with current preset selected", async () => {
+            vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+            vi.mocked(fetchDecks).mockResolvedValueOnce({
+                decks: [deck(42, "Spanish", { preset_id: 555 })],
+            });
+            vi.mocked(fetchDeckConfigs).mockResolvedValueOnce(twoPresets);
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const select =
+                    container.querySelector<HTMLSelectElement>(".preset-sel");
+                expect(select).not.toBeNull();
+                // Both options rendered.
+                const options = Array.from(
+                    select!.querySelectorAll("option"),
+                );
+                expect(options.map((o) => o.value)).toEqual(["1", "555"]);
+                // Selected value mirrors the deck's current preset_id.
+                expect(select!.value).toBe("555");
+                // Aria-label scopes the change to the deck name.
+                expect(select!.getAttribute("aria-label")).toContain(
+                    "Spanish",
+                );
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("onchange success: patchDeckPreset called with deck_id + new preset_id; liveDecks mirror reflects new value", async () => {
+            vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+            vi.mocked(fetchDecks).mockResolvedValueOnce({
+                decks: [deck(42, "Spanish", { preset_id: 1 })],
+            });
+            vi.mocked(fetchDeckConfigs).mockResolvedValueOnce(twoPresets);
+            vi.mocked(patchDeckPreset).mockResolvedValueOnce({
+                id: 42,
+                preset_id: 555,
+                preset_name: "Aggressive",
+            });
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const select =
+                    container.querySelector<HTMLSelectElement>(".preset-sel");
+                expect(select).not.toBeNull();
+                expect(select!.value).toBe("1");
+
+                // Simulate user picking "Aggressive".
+                select!.value = "555";
+                select!.dispatchEvent(new Event("change", { bubbles: true }));
+                await settle();
+
+                expect(vi.mocked(patchDeckPreset)).toHaveBeenCalledTimes(1);
+                expect(vi.mocked(patchDeckPreset)).toHaveBeenCalledWith(
+                    42,
+                    555,
+                );
+
+                // After the mirror update, the select should still be on 555
+                // (no revert-on-error path).
+                expect(select!.value).toBe("555");
+                // No error banner on success.
+                expect(container.querySelector(".error-banner")).toBeNull();
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("onchange rejects: errorBanner surfaces server message; patchDeckPreset called once", async () => {
+            vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+            vi.mocked(fetchDecks).mockResolvedValueOnce({
+                decks: [deck(42, "Spanish", { preset_id: 1 })],
+            });
+            vi.mocked(fetchDeckConfigs).mockResolvedValueOnce(twoPresets);
+            vi.mocked(patchDeckPreset).mockRejectedValueOnce(
+                new Error("404 preset 555 not found"),
+            );
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const select =
+                    container.querySelector<HTMLSelectElement>(".preset-sel");
+                select!.value = "555";
+                select!.dispatchEvent(new Event("change", { bubbles: true }));
+                await settle();
+
+                expect(vi.mocked(patchDeckPreset)).toHaveBeenCalledTimes(1);
+                const banner = container.querySelector(".error-banner");
+                expect(banner).not.toBeNull();
+                expect(banner?.textContent).toContain("404 preset 555 not found");
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("fake-data mode (fetchDecks rejected): editor shows 'Offline — preset locked' placeholder", async () => {
+            vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+            // fetchDecks defaults to reject in beforeEach → liveDecks stays null.
+            vi.mocked(fetchDeckConfigs).mockResolvedValueOnce(twoPresets);
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                expect(container.querySelector(".preset-sel")).toBeNull();
+                const placeholder = Array.from(
+                    container.querySelectorAll(".meta-row"),
+                ).find((r) => r.textContent?.includes("Preset"));
+                expect(placeholder?.textContent).toContain(
+                    "Offline — preset locked",
+                );
             } finally {
                 unmount(instance);
             }

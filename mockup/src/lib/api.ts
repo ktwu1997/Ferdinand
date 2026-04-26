@@ -15,6 +15,11 @@ export interface ApiDeckSummary {
     total_in_deck: number;
     filtered: boolean;
     collapsed: boolean;
+    /**
+     * Phase 11-A: assigned preset (deck config) id. `null` for filtered
+     * decks (which have no preset by design).
+     */
+    preset_id: number | null;
     children: ApiDeckSummary[];
 }
 
@@ -305,5 +310,27 @@ export async function postCardSuspend(
 ): Promise<ApiSuspendResponse> {
     return postJson<ApiSuspendResponse>(`/api/cards/${id}/suspend`, {
         suspended,
+    });
+}
+
+/** Phase 11-A: per-deck preset assignment. */
+export interface ApiDeckPresetResponse {
+    id: number;
+    preset_id: number;
+    preset_name: string;
+}
+
+/**
+ * Assign a preset (deck config) to a deck. Server validates preset_id
+ * (non-positive → 400) and existence (missing deck or preset → 404);
+ * filtered decks reject with 400. Affects ALL cards in the deck — caller
+ * UI should make this scope clear to the user.
+ */
+export async function patchDeckPreset(
+    deckId: number,
+    presetId: number,
+): Promise<ApiDeckPresetResponse> {
+    return patchJson<ApiDeckPresetResponse>(`/api/decks/${deckId}/preset`, {
+        preset_id: presetId,
     });
 }
