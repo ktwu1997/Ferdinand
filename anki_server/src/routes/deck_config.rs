@@ -56,6 +56,12 @@ pub struct DeckConfigListResponse {
     pub configs: Vec<DeckConfigListItem>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct DeckConfigCreateRequest {
+    /// Human-readable preset name. Trimmed before storage; max 100 chars.
+    pub name: String,
+}
+
 const DEFAULT_PRESET_ID: DeckConfigId = DeckConfigId(1);
 
 /// List all deck configs (presets) sorted by name. Used by Phase 9-O'' to
@@ -222,6 +228,115 @@ pub async fn patch_by_id(
     Ok(Json(to_response(&updated)))
 }
 
+/// Phase 12-B: create a new preset by name. The new config inherits all
+/// per-preset defaults (`DeckConfig::default()`); subsequent
+/// `PATCH /api/deck_config/{id}` calls dial in the editable knobs.
+///
+/// Persistence path: `Collection::update_deck_configs` with
+/// `target_deck_id=DeckId(0)`. Passing a non-existent deck id keeps the
+/// upstream "selected deck reassign" branch from firing for any real
+/// deck — the new preset is added to storage but no existing deck has
+/// its `config_id` silently flipped. (Phase 9-T `bug_caught` lesson:
+/// don't let create endpoints have hidden reassignment side effects.)
+///
+/// After the write, the new id (epoch-ms, assigned inside
+/// `add_deck_config_inner`) is recovered by finding the config with the
+/// just-written name. Names are pre-validated unique so the lookup is
+/// unambiguous.
+#[utoipa::path(
+    post,
+    path = "/api/deck_config",
+    request_body = inline(serde_json::Value),
+    responses(
+        (status = 200, body = DeckConfigListItem),
+        (status = 400, body = crate::error::ApiError),
+    )
+)]
+pub async fn post_create(
+    State(state): State<AppState>,
+    Json(req): Json<DeckConfigCreateRequest>,
+) -> ApiResult<Json<DeckConfigListItem>> {
+    let name = validate_create_name(&req.name)
+        .map_err(ServerError::bad_request)?
+        .to_string();
+
+    let mut col = state.col.lock().await;
+
+    // Duplicate-name check against the live preset list. Anki's storage
+    // layer would happily accept a duplicate-named preset (id-keyed
+    // primary key), so this guard lives at the API boundary.
+    let existing = col.get_deck_configs_for_update(DeckId(1))?;
+    if existing
+        .all_config
+        .iter()
+        .filter_map(|cwe| cwe.config.as_ref())
+        .any(|c| c.name == name)
+    {
+        return Err(ServerError::bad_request("preset name already exists"));
+    }
+
+    // id=0 triggers the upstream add path
+    // (`Collection::add_or_update_deck_config` -> `add_deck_config_inner`),
+    // which assigns a fresh epoch-ms id during update_deck_configs.
+    let mut new_config = DeckConfig::default();
+    new_config.name = name.clone();
+
+    let fsrs = col.get_config_bool(BoolKey::Fsrs);
+    let fsrs_health_check = col.get_config_bool(BoolKey::FsrsHealthCheck);
+    let new_cards_ignore_review_limit = col.get_config_bool(BoolKey::NewCardsIgnoreReviewLimit);
+    let apply_all_parent_limits = col.get_config_bool(BoolKey::ApplyAllParentLimits);
+
+    let request = UpdateDeckConfigsRequest {
+        // DeckId(0) does not match any real deck, so the rslib loop that
+        // reassigns selected decks' config_id (update.rs:233) never fires
+        // and no deck is silently retargeted to the new preset.
+        target_deck_id: DeckId(0),
+        configs: vec![new_config],
+        removed_config_ids: vec![],
+        mode: UpdateDeckConfigsMode::Normal,
+        card_state_customizer: String::new(),
+        limits: Limits::default(),
+        new_cards_ignore_review_limit,
+        apply_all_parent_limits,
+        fsrs,
+        fsrs_reschedule: false,
+        fsrs_health_check,
+    };
+    col.update_deck_configs(request)?;
+
+    // Recover the assigned id by name. The pre-write duplicate check
+    // guarantees exactly one match.
+    let bundle = col.get_deck_configs_for_update(DeckId(1))?;
+    let created = bundle
+        .all_config
+        .into_iter()
+        .filter_map(|cwe| cwe.config)
+        .find(|c| c.name == name)
+        .ok_or_else(|| ServerError::from(anyhow!("created preset {name} disappeared post-write")))?;
+
+    Ok(Json(DeckConfigListItem {
+        id: created.id,
+        name: created.name,
+    }))
+}
+
+/// Range-validate a `DeckConfigCreateRequest`'s name. Extracted so the
+/// rules unit-test without a Collection — same `&'static str` extract
+/// pattern as `validate_patch` and `validate_preset_id`.
+///
+/// `name` is trimmed before length-check so trailing whitespace doesn't
+/// inflate the cap. Returns the trimmed slice on success.
+fn validate_create_name(name: &str) -> Result<&str, &'static str> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("name must not be empty");
+    }
+    if trimmed.chars().count() > 100 {
+        return Err("name must be 100 characters or fewer");
+    }
+    Ok(trimmed)
+}
+
 /// Range-validate a DeckConfigPatch in isolation. Extracted so the rules
 /// can be unit-tested without a Collection. Returns the same human-readable
 /// strings the handler used to format inline.
@@ -357,6 +472,56 @@ mod tests {
             validate_patch(&p).unwrap_err(),
             "cap_answer_time_secs must be between 1 and 600"
         );
+    }
+
+    #[test]
+    fn validate_create_name_rejects_empty_and_whitespace() {
+        assert_eq!(
+            validate_create_name("").unwrap_err(),
+            "name must not be empty"
+        );
+        assert_eq!(
+            validate_create_name("   ").unwrap_err(),
+            "name must not be empty"
+        );
+        assert_eq!(
+            validate_create_name("\t\n  ").unwrap_err(),
+            "name must not be empty"
+        );
+    }
+
+    #[test]
+    fn validate_create_name_caps_at_100_chars_after_trim() {
+        // Trailing whitespace shouldn't push a 100-char name over the cap.
+        let ok_padded = format!("{}{}", "a".repeat(100), "   ");
+        assert_eq!(validate_create_name(&ok_padded).unwrap(), "a".repeat(100));
+
+        let too_long = "a".repeat(101);
+        assert_eq!(
+            validate_create_name(&too_long).unwrap_err(),
+            "name must be 100 characters or fewer"
+        );
+    }
+
+    #[test]
+    fn validate_create_name_counts_unicode_chars_not_bytes() {
+        // 100 CJK chars (300 UTF-8 bytes) must succeed; the cap is on
+        // grapheme-ish chars (Anki desktop is consistent here). Use a
+        // distinct character so the test would surface a byte-count
+        // mistake immediately.
+        let cjk = "字".repeat(100);
+        assert!(validate_create_name(&cjk).is_ok());
+
+        let cjk_over = "字".repeat(101);
+        assert!(validate_create_name(&cjk_over).is_err());
+    }
+
+    #[test]
+    fn validate_create_name_returns_trimmed_slice() {
+        // Caller stores the trimmed value, not the raw user input — keeps
+        // the duplicate check stable across "hello" vs "hello   ".
+        assert_eq!(validate_create_name("  hello  ").unwrap(), "hello");
+        assert_eq!(validate_create_name("\nfoo\t").unwrap(), "foo");
     }
 
     #[test]

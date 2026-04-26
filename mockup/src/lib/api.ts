@@ -265,6 +265,21 @@ export async function fetchDeckConfigs(): Promise<ApiDeckConfigListResponse> {
     return getJson<ApiDeckConfigListResponse>("/api/deck_config");
 }
 
+export interface ApiDeckConfigCreateRequest {
+    name: string;
+}
+
+/**
+ * Phase 12-B: create a new preset by name. Server validates non-empty
+ * (400) and uniqueness (400) before persisting via update_deck_configs.
+ * The returned id is epoch-ms, assigned by Anki's add_deck_config_inner.
+ */
+export async function postDeckConfig(
+    req: ApiDeckConfigCreateRequest,
+): Promise<ApiDeckConfigListItem> {
+    return postJson<ApiDeckConfigListItem>("/api/deck_config", req);
+}
+
 export async function fetchDeckConfigById(id: number): Promise<ApiDeckConfigDefault> {
     return getJson<ApiDeckConfigDefault>(`/api/deck_config/${id}`);
 }

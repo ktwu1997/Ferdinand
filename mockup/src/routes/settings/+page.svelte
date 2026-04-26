@@ -6,6 +6,7 @@
         fetchDeckConfigs,
         fetchFsrsEnabled,
         patchDeckConfigById,
+        postDeckConfig,
         postFsrsOptimize,
         putFsrsEnabled,
         type ApiDeckConfigListItem,
@@ -65,6 +66,13 @@
     let optimizedParams: number[] = $state([]);
     let paramsSource: "disk" | "fresh" | null = $state(null);
 
+    // Phase 12-B: create-new-preset inline form. Hidden until user opts in
+    // so the default settings layout stays the same; cancel restores it.
+    let creatingPreset = $state(false);
+    let newPresetName = $state("");
+    let savingCreatePreset = $state(false);
+    let errorCreatePreset: string | null = $state(null);
+
     function applyPresetSnapshot(
         conf: {
             desired_retention: number;
@@ -121,6 +129,45 @@
 
     function disabledControls(): boolean {
         return loading || loadError !== null || selectedPresetId === null;
+    }
+
+    async function createPreset(): Promise<void> {
+        // Defensive trim+blank-check matches the server's first 400 path —
+        // surface inline before the request, but keep the server-side
+        // duplicate / 500 handling generic via the catch below.
+        const name = newPresetName.trim();
+        if (name === "") {
+            errorCreatePreset = "name must not be empty";
+            return;
+        }
+        savingCreatePreset = true;
+        errorCreatePreset = null;
+        try {
+            const created = await postDeckConfig({ name });
+            // Append the new preset and switch to it so the editor below
+            // shows its (default) state immediately. We don't refetch the
+            // whole list — server returns the canonical row, and the
+            // duplicate-name guard means the local append can't drift.
+            presets = [...presets, { id: created.id, name: created.name }];
+            // switchPreset short-circuits if nextId === selectedPresetId,
+            // so freshly-created presets — whose ids never collide with
+            // the current selection (epoch-ms vs default=1) — always
+            // hydrate via fetchDeckConfigById here.
+            await switchPreset(created.id);
+            creatingPreset = false;
+            newPresetName = "";
+        } catch (e) {
+            errorCreatePreset =
+                e instanceof Error ? e.message : "Failed to create preset";
+        } finally {
+            savingCreatePreset = false;
+        }
+    }
+
+    function cancelCreatePreset(): void {
+        creatingPreset = false;
+        newPresetName = "";
+        errorCreatePreset = null;
     }
 
     async function switchPreset(nextId: number): Promise<void> {
@@ -319,7 +366,60 @@
                     {#if switchingPreset}
                         <span class="saving">Loading…</span>
                     {/if}
+                    {#if !creatingPreset}
+                        <button
+                            type="button"
+                            class="new-preset-button"
+                            onclick={() => {
+                                creatingPreset = true;
+                                newPresetName = "";
+                                errorCreatePreset = null;
+                            }}
+                            disabled={disabledControls() || switchingPreset}
+                        >
+                            + New preset
+                        </button>
+                    {/if}
                 </div>
+                {#if creatingPreset}
+                    <div class="create-preset-row">
+                        <label for="new-preset-name">New preset name</label>
+                        <input
+                            id="new-preset-name"
+                            type="text"
+                            class="new-preset-input"
+                            bind:value={newPresetName}
+                            disabled={savingCreatePreset}
+                            maxlength="100"
+                            placeholder="e.g. Languages"
+                        />
+                        <button
+                            type="button"
+                            class="save-preset-button"
+                            onclick={createPreset}
+                            disabled={savingCreatePreset ||
+                                newPresetName.trim() === ""}
+                        >
+                            Save
+                        </button>
+                        <button
+                            type="button"
+                            class="cancel-preset-button"
+                            onclick={cancelCreatePreset}
+                            disabled={savingCreatePreset}
+                        >
+                            Cancel
+                        </button>
+                        {#if savingCreatePreset}
+                            <span class="saving">Creating…</span>
+                        {/if}
+                        {#if errorCreatePreset}
+                            <span class="field-error" role="alert"
+                                >{errorCreatePreset}</span
+                            >
+                        {/if}
+                    </div>
+                {/if}
             {/if}
             <Card padding="lg">
                 <div class="field">
@@ -693,6 +793,62 @@
     .preset-select:focus {
         outline: none;
         border-color: var(--text-muted);
+    }
+    .new-preset-button,
+    .save-preset-button,
+    .cancel-preset-button {
+        background: var(--bg);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        padding: var(--space-1) var(--space-3);
+        font-size: var(--text-sm);
+        cursor: pointer;
+    }
+    .new-preset-button:hover:not(:disabled),
+    .save-preset-button:hover:not(:disabled),
+    .cancel-preset-button:hover:not(:disabled) {
+        border-color: var(--text-muted);
+    }
+    .new-preset-button:disabled,
+    .save-preset-button:disabled,
+    .cancel-preset-button:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+    }
+    .save-preset-button {
+        background: var(--accent, #c0c);
+        color: var(--bg);
+        border-color: transparent;
+    }
+    .create-preset-row {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+        flex-wrap: wrap;
+        margin: 0 0 var(--space-3) 0;
+    }
+    .create-preset-row label {
+        font-size: var(--text-sm);
+        color: var(--text-muted);
+    }
+    .new-preset-input {
+        flex: 1 1 16rem;
+        min-width: 12rem;
+        padding: 0.3rem 0.5rem;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        background: var(--bg);
+        color: var(--text);
+        font: inherit;
+    }
+    .new-preset-input:focus {
+        outline: none;
+        border-color: var(--accent);
+    }
+    .new-preset-input:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
     }
 
     .error-banner {
