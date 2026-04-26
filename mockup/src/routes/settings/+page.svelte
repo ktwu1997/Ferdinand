@@ -340,10 +340,17 @@
 
     async function runOptimize(): Promise<void> {
         if (disabledControls() || optimizing) return;
+        if (selectedPresetId === null) return;
         optimizing = true;
         errorOptimize = null;
         try {
-            const res = await postFsrsOptimize();
+            // Phase 14-B: pass the active preset id so server trains
+            // only on cards in decks assigned to that preset. Default
+            // preset (id=1) still has implicit-inheritance fallback,
+            // but we send its id explicitly so the per-preset path is
+            // exercised uniformly — server preflight will surface a
+            // useful 400 if a fresh non-Default preset has no decks.
+            const res = await postFsrsOptimize(selectedPresetId);
             optimizeFsrsItems = res.fsrs_items;
             optimizedParams = res.params;
             paramsSource = "fresh";
@@ -678,7 +685,8 @@
                         re-optimize.
                     {:else}
                         Trained on {optimizeFsrsItems.toLocaleString()} reviews
-                        · params updated.
+                        on {presets.find((p) => p.id === selectedPresetId)
+                            ?.name ?? "this preset"} · params updated.
                     {/if}
                 </p>
                 {#if errorOptimize}
