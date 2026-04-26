@@ -514,6 +514,46 @@ export async function fetchFsrsHealthCheck(): Promise<ApiFsrsHealthCheck> {
     return getJson<ApiFsrsHealthCheck>("/api/fsrs/health_check");
 }
 
+/**
+ * Phase 15-C: response shape for POST /media. `filename` is the
+ * server-canonical name after dedupe — differs from the upload name
+ * when an existing collision was resolved via " (N)" suffix. The
+ * client renders `<img src="/media/${filename}">` from this value
+ * (NOT the original File.name) so the rendered HTML always points
+ * at the actually persisted byte stream.
+ */
+export interface ApiMediaUploadResponse {
+    filename: string;
+    size_bytes: number;
+}
+
+/**
+ * Phase 15-C: upload an image into <collection-stem>.media/. Server
+ * accepts multipart with a single `file` field, validates filename
+ * (≤200 chars, no separators, must include extension, no leading dot)
+ * and MIME (image/png|jpeg|webp|gif allow-list), caps size at 10 MiB,
+ * dedup'es the filename via " (N)" suffix mirroring desktop Anki.
+ */
+export async function postMedia(file: File): Promise<ApiMediaUploadResponse> {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    const res = await fetch(`${apiBase()}/media`, {
+        method: "POST",
+        body: form,
+    });
+    if (!res.ok) {
+        let detail = res.statusText;
+        try {
+            const parsed = (await res.json()) as { message?: string };
+            if (parsed?.message) detail = parsed.message;
+        } catch {
+            // body wasn't JSON — fall through with statusText
+        }
+        throw new Error(`${res.status} ${detail}`);
+    }
+    return (await res.json()) as ApiMediaUploadResponse;
+}
+
 export async function putFsrsHealthCheck(
     req: ApiFsrsHealthCheck,
 ): Promise<ApiFsrsHealthCheck> {

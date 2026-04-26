@@ -65,7 +65,9 @@ pub fn router() -> Router<AppState> {
         .route("/api/tags", get(tags::list_tags))
         // Static media (images, audio) served from <collection-stem>.media/.
         // Not under /api/ so shadow-DOM <base href="/media/"> stays clean and
-        // the path reads as a static resource root.
+        // the path reads as a static resource root. Phase 15-C: POST /media
+        // accepts multipart uploads for the /notes/new drag-drop surface.
+        .route("/media", post(media::post_upload))
         .route("/media/{filename}", get(media::get_media))
 }
 
