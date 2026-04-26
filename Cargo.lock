@@ -5573,6 +5573,7 @@ name = "rslib_ffi"
 version = "0.0.0"
 dependencies = [
  "anki",
+ "anki_proto",
  "cbindgen",
  "serde",
  "serde_json",

@@ -18,6 +18,10 @@ crate-type = ["staticlib", "cdylib"]
 # stack and we don't end up with a second copy of native-tls in the
 # dependency tree.
 anki = { path = "../rslib", features = ["rustls"] }
+# Phase 13-D: deck_tree returns `anki_proto::decks::DeckTreeNode`; we
+# need direct access to that proto type to walk the tree without
+# converting through an opaque rslib wrapper.
+anki_proto = { path = "../rslib/proto" }
 # Phase 12-D: list_decks JSON round-trip across the FFI boundary so
 # native callers don't need their own struct-marshalling layer.
 serde = { workspace = true }

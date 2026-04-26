@@ -5,6 +5,12 @@
 //! `_open`, `_close`, and `_deck_count` for read-only collection access.
 //! v2 surface (Phase 12-D): `_list_decks_json` returns owned heap JSON
 //! that the caller MUST release via `ferdinand_free_string`.
+//! v3 surface (Phase 13-D): `_deck_tree_json` returns the same deck list
+//! as v2 plus today's due counts (new/learn/review) and `level` so
+//! native callers can render the desktop-style sidebar without a second
+//! API call. Returned JSON is a flat depth-first array — clients that
+//! need a tree can re-nest by `level` if desired, but the flat shape is
+//! cheaper for SwiftUI `List` rendering.
 //!
 //! ## Memory model
 //!
@@ -36,6 +42,7 @@ use std::ptr;
 use std::sync::OnceLock;
 
 use anki::collection::{Collection, CollectionBuilder};
+use anki::timestamp::TimestampSecs;
 use serde::Serialize;
 
 /// Return a pointer to a NUL-terminated UTF-8 string with this crate's
@@ -225,9 +232,104 @@ pub unsafe extern "C" fn ferdinand_list_decks_json(
     }
 }
 
+/// One row in the JSON returned by [`ferdinand_deck_tree_json`]. Mirrors
+/// the desktop sidebar's per-deck shape — id, name, depth (`level`), and
+/// today's three queue counts. `total_in_deck` is the bare card count
+/// without children or limits, useful for "X cards" labels next to
+/// nested decks. The shape is a strict superset of v2's `FfiDeck` minus
+/// `preset_id` (the deck-tree path doesn't surface config_id; clients
+/// that need it can still call [`ferdinand_list_decks_json`]).
+#[derive(Serialize)]
+struct FfiDeckTreeRow {
+    id: i64,
+    name: String,
+    /// 0-indexed depth in the tree. The implicit root container is not
+    /// emitted, so the topmost real decks have level 1.
+    level: u32,
+    new_count: u32,
+    learn_count: u32,
+    review_count: u32,
+    total_in_deck: u32,
+}
+
+fn flatten_deck_tree(node: &anki_proto::decks::DeckTreeNode, out: &mut Vec<FfiDeckTreeRow>) {
+    // Skip the implicit root (deck_id=0) so callers iterate only real
+    // decks. Mirrors anki_server::routes::decks::list_decks which also
+    // throws away the wrapper and walks the children directly.
+    if node.deck_id != 0 {
+        out.push(FfiDeckTreeRow {
+            id: node.deck_id,
+            name: node.name.clone(),
+            level: node.level,
+            new_count: node.new_count,
+            learn_count: node.learn_count,
+            review_count: node.review_count,
+            total_in_deck: node.total_in_deck,
+        });
+    }
+    for child in &node.children {
+        flatten_deck_tree(child, out);
+    }
+}
+
+/// Return a heap-allocated NUL-terminated JSON string with every deck
+/// in the collection plus today's due counts:
+/// `[{"id":..., "name":"...", "level":..., "new_count":..., "learn_count":...,
+///   "review_count":..., "total_in_deck":...}, ...]`.
+/// Returns NULL on a NULL handle or any underlying storage error.
+///
+/// The array is depth-first — a parent always precedes its children, and
+/// the implicit root container is skipped so the topmost real decks land
+/// at index 0+. Counts are computed against the current wall clock via
+/// `TimestampSecs::now()` so a rerender after midnight reflects the new
+/// day automatically.
+///
+/// Ownership: the returned pointer is heap-allocated and owned by the
+/// caller. Release with [`ferdinand_free_string`] exactly once — same
+/// contract as [`ferdinand_list_decks_json`].
+///
+/// # Safety
+/// - `handle` must be a non-NULL pointer returned by
+///   [`ferdinand_collection_open`] that has not been closed.
+/// - Must NOT be called concurrently with any other FFI call on the
+///   same handle from another thread.
+#[no_mangle]
+pub unsafe extern "C" fn ferdinand_deck_tree_json(
+    handle: *mut FerdinandCollection,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    // SAFETY: caller contract — `handle` is a valid open Collection and
+    // is not concurrently accessed from another thread. `deck_tree`
+    // takes `&mut self` to populate the per-deck cache while computing
+    // due counts.
+    let col = unsafe { &mut (*handle).inner };
+
+    let tree = match col.deck_tree(Some(TimestampSecs::now())) {
+        Ok(t) => t,
+        Err(_) => return ptr::null_mut(),
+    };
+
+    let mut rows = Vec::new();
+    flatten_deck_tree(&tree, &mut rows);
+
+    let json = match serde_json::to_string(&rows) {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+    // CString::new fails on interior NUL — same defensive mapping to the
+    // documented NULL-on-error sentinel as `ferdinand_list_decks_json`.
+    match CString::new(json) {
+        Ok(s) => s.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
 /// Release a heap C string previously returned by an `*_json` FFI
-/// function (currently only [`ferdinand_list_decks_json`]). NULL-safe so
-/// callers can defensively free after a NULL return without branching.
+/// function ([`ferdinand_list_decks_json`] or
+/// [`ferdinand_deck_tree_json`]). NULL-safe so callers can defensively
+/// free after a NULL return without branching.
 ///
 /// # Safety
 /// - `s` must be either NULL, or a pointer returned by an FFI function
@@ -412,5 +514,112 @@ mod tests {
         // SAFETY: `handle` was opened above and not yet closed.
         unsafe { ferdinand_collection_close(handle) };
         let _ = std::fs::remove_file(&tmpdir);
+    }
+
+    #[test]
+    fn deck_tree_json_returns_null_for_null_handle() {
+        // SAFETY: NULL is the documented sentinel for "no collection".
+        let p = unsafe { ferdinand_deck_tree_json(ptr::null_mut()) };
+        assert!(p.is_null());
+    }
+
+    #[test]
+    fn deck_tree_json_round_trip_against_real_collection() {
+        // Open a fresh collection, fetch the deck tree, parse the JSON,
+        // and verify the per-row shape. The root container has deck_id=0
+        // and must NOT appear; the implicit Default deck (id=1, level=1)
+        // is the only entry on a fresh collection.
+        let tmpdir = std::env::temp_dir().join(format!(
+            "ferdinand_ffi_deck_tree_test_{}_{}.anki2",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        ));
+        let cpath = CString::new(tmpdir.to_str().unwrap()).unwrap();
+
+        // SAFETY: `cpath` outlives the call.
+        let handle = unsafe { ferdinand_collection_open(cpath.as_ptr()) };
+        assert!(!handle.is_null(), "open should succeed for fresh path");
+
+        // SAFETY: `handle` is a freshly opened, single-threaded handle.
+        let json_ptr = unsafe { ferdinand_deck_tree_json(handle) };
+        assert!(!json_ptr.is_null(), "deck_tree should succeed for fresh col");
+
+        // SAFETY: produced by CString::into_raw above; not yet freed.
+        let json = unsafe { CStr::from_ptr(json_ptr) }
+            .to_str()
+            .expect("deck_tree_json must return valid UTF-8");
+        let rows: Vec<serde_json::Value> = serde_json::from_str(json)
+            .expect("deck_tree_json must return a valid JSON array");
+        assert!(!rows.is_empty(), "Default deck always present");
+        for r in &rows {
+            assert!(r["id"].is_i64());
+            assert!(r["name"].is_string());
+            assert!(r["level"].is_u64());
+            assert!(r["new_count"].is_u64());
+            assert!(r["learn_count"].is_u64());
+            assert!(r["review_count"].is_u64());
+            assert!(r["total_in_deck"].is_u64());
+            // Root container (deck_id=0) must never leak through.
+            assert_ne!(r["id"], 0, "implicit root must be skipped, got {r}");
+        }
+        // Default deck id=1 must appear.
+        assert!(
+            rows.iter().any(|r| r["id"] == 1),
+            "Default deck id=1 must appear in tree, got {rows:?}"
+        );
+
+        // SAFETY: produced by ferdinand_deck_tree_json; documented release path.
+        unsafe { ferdinand_free_string(json_ptr) };
+        // SAFETY: `handle` was opened above and not yet closed.
+        unsafe { ferdinand_collection_close(handle) };
+        let _ = std::fs::remove_file(&tmpdir);
+    }
+
+    #[test]
+    fn flatten_deck_tree_emits_depth_first_and_skips_root() {
+        // Pure unit test of the recursion rule — exercise without going
+        // through Collection so we can assert the exact ordering. Mirrors
+        // the anki_proto shape; field defaults fill the rest.
+        use anki_proto::decks::DeckTreeNode;
+        let tree = DeckTreeNode {
+            deck_id: 0,
+            name: String::new(),
+            level: 0,
+            children: vec![
+                DeckTreeNode {
+                    deck_id: 1,
+                    name: "Default".into(),
+                    level: 1,
+                    new_count: 5,
+                    children: vec![],
+                    ..Default::default()
+                },
+                DeckTreeNode {
+                    deck_id: 2,
+                    name: "Parent".into(),
+                    level: 1,
+                    children: vec![DeckTreeNode {
+                        deck_id: 3,
+                        name: "Parent::Child".into(),
+                        level: 2,
+                        review_count: 7,
+                        children: vec![],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let mut rows = Vec::new();
+        flatten_deck_tree(&tree, &mut rows);
+        let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
+        assert_eq!(ids, vec![1, 2, 3], "depth-first, root skipped");
+        assert_eq!(rows[0].new_count, 5);
+        assert_eq!(rows[2].review_count, 7);
+        assert_eq!(rows[2].level, 2, "nested deck must keep its depth");
     }
 }
