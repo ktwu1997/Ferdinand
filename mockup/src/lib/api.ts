@@ -386,6 +386,41 @@ export async function deleteNote(id: number): Promise<ApiNoteDeleteResponse> {
     return (await res.json()) as ApiNoteDeleteResponse;
 }
 
+export interface ApiNotePatchRequest {
+    /** New field values in template order. Length must match the
+     * underlying notetype's field count exactly. Omit to leave fields
+     * untouched. The first field is the sort field — non-empty after
+     * trim is enforced server-side. */
+    fields?: string[];
+    /** New tag list. Trimmed + blank-dropped server-side. Omit to
+     * leave tags untouched; an explicit empty array clears all tags. */
+    tags?: string[];
+}
+
+export interface ApiNotePatchResponse {
+    note_id: number;
+    /** Persisted field values after the patch (server-canonical). */
+    fields: string[];
+    /** Persisted tag list after the patch, post-trim/dedup. */
+    tags: string[];
+    /** Note modified timestamp (epoch seconds). */
+    modified: number;
+}
+
+/**
+ * Phase 14-A: partial-update a note's fields and/or tags. Server
+ * validates id positive (400), at-least-one-of-fields-or-tags (400),
+ * existence (404), and field-count match against the note's notetype
+ * (400). Note id is the `note_id` field on ApiCardSummary, NOT the
+ * card id.
+ */
+export async function patchNote(
+    id: number,
+    patch: ApiNotePatchRequest,
+): Promise<ApiNotePatchResponse> {
+    return patchJson<ApiNotePatchResponse>(`/api/notes/${id}`, patch);
+}
+
 export async function fetchDeckConfigById(id: number): Promise<ApiDeckConfigDefault> {
     return getJson<ApiDeckConfigDefault>(`/api/deck_config/${id}`);
 }

@@ -25,7 +25,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/cards/{id}", get(cards::get_card))
         .route("/api/cards/{id}/suspend", post(cards::post_suspend))
         .route("/api/notes", post(notes::post_create))
-        .route("/api/notes/{id}", delete(notes::delete_by_id))
+        .route(
+            "/api/notes/{id}",
+            delete(notes::delete_by_id).patch(notes::patch_by_id),
+        )
         .route("/api/notetypes", get(notetypes::list_notetypes))
         .route("/api/study/queue", get(study::get_queue))
         .route("/api/study/answer", post(study::post_answer))
