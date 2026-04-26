@@ -96,6 +96,12 @@ async function settle(): Promise<void> {
     flushSync();
 }
 
+// Mirror of the constant in +page.svelte. Tests depend on knowing how
+// long to advance fake timers; bumping the constant in one place
+// without touching the other would surface as a spurious timeout
+// failure here.
+const SEARCH_DEBOUNCE_MS = 200;
+
 function setSearch(root: HTMLElement, value: string): void {
     const input = root.querySelector<HTMLInputElement>(
         '.toolbar input[type="search"]',
@@ -925,5 +931,180 @@ describe("BrowsePage contract", () => {
                 unmount(instance);
             }
         });
+    });
+});
+
+// Phase 12-A: server-side search wiring. The toolbar `query` input now
+// drives a debounced fetchCards(q, ...) instead of only a local filter.
+// Local filter is preserved as the silent fallback when the server
+// search fails — typing should narrow rows even if the backend is down.
+describe("BrowsePage server search wiring (Phase 12-A)", () => {
+    let container: HTMLDivElement;
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.clearAllMocks();
+        resetPageStub();
+        vi.mocked(fetchDecks).mockRejectedValue(new Error("decks unreachable"));
+        vi.mocked(fetchTags).mockRejectedValue(new Error("tags unreachable"));
+        vi.mocked(fetchDeckConfigs).mockRejectedValue(
+            new Error("preset list unreachable"),
+        );
+        container = document.createElement("div");
+        document.body.appendChild(container);
+    });
+
+    afterEach(() => {
+        container.remove();
+        vi.useRealTimers();
+    });
+
+    // Fake-timer-aware settle: after a setTimeout fires synchronously
+    // via advanceTimersByTime, the inner fetchCards().then() callback is
+    // still a microtask away from running, so we drain microtasks too.
+    async function settleFake(): Promise<void> {
+        for (let i = 0; i < 10; i++) await Promise.resolve();
+        flushSync();
+    }
+
+    test("typing fires debounced server fetchCards with q after 200ms; resets pageOffset and selectedIdx", async () => {
+        const initialPage: ApiCardListResponse = {
+            total: 1000,
+            cards: [
+                card(1, "<p>hola</p>", "<p>hello</p>"),
+                card(2, "<p>gato</p>", "<p>cat</p>"),
+                card(3, "<p>perro</p>", "<p>dog</p>"),
+            ],
+        };
+        const searchPage: ApiCardListResponse = {
+            total: 7,
+            cards: [card(42, "<p>gato gato</p>", "<p>cat cat</p>")],
+        };
+        // Order matters: onMount fires fetchCards("", 50, 0) first; then
+        // the debounce $effect fires fetchCards("gato", 50, 0).
+        vi.mocked(fetchCards)
+            .mockResolvedValueOnce(initialPage)
+            .mockResolvedValueOnce(searchPage);
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settleFake();
+            // Sanity: initial empty-query fetch fired exactly once.
+            expect(vi.mocked(fetchCards)).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(fetchCards)).toHaveBeenNthCalledWith(1, "", 50, 0);
+
+            setSearch(container, "gato");
+            // Debounce hasn't elapsed yet — no extra request.
+            expect(vi.mocked(fetchCards)).toHaveBeenCalledTimes(1);
+
+            await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS);
+            await settleFake();
+
+            expect(vi.mocked(fetchCards)).toHaveBeenCalledTimes(2);
+            expect(vi.mocked(fetchCards)).toHaveBeenNthCalledWith(
+                2,
+                "gato",
+                50,
+                0,
+            );
+            // Server response replaced the page; count-tag falls into the
+            // "X-Y of Z" path because filter narrows nothing further on a
+            // single-row server result.
+            expect(
+                container.querySelector(".count-tag")?.textContent?.trim(),
+            ).toBe("1 of 1");
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("rapid typing collapses to a single debounced request with the latest q", async () => {
+        const initialPage: ApiCardListResponse = {
+            total: 3,
+            cards: [
+                card(1, "<p>hola</p>", "<p>hello</p>"),
+                card(2, "<p>gato</p>", "<p>cat</p>"),
+                card(3, "<p>perro</p>", "<p>dog</p>"),
+            ],
+        };
+        const searchFinal: ApiCardListResponse = {
+            total: 1,
+            cards: [card(99, "<p>gato</p>", "<p>cat</p>")],
+        };
+        vi.mocked(fetchCards)
+            .mockResolvedValueOnce(initialPage)
+            .mockResolvedValueOnce(searchFinal);
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settleFake();
+            expect(vi.mocked(fetchCards)).toHaveBeenCalledTimes(1);
+
+            // Type three characters quickly — only the last one's debounce
+            // window should make it to the server.
+            setSearch(container, "g");
+            await vi.advanceTimersByTimeAsync(50);
+            setSearch(container, "ga");
+            await vi.advanceTimersByTimeAsync(50);
+            setSearch(container, "gato");
+            await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS);
+            await settleFake();
+
+            // 1 initial + 1 debounced = 2 total. Critically NOT 4 (one per
+            // keystroke) — that would shower the server with intermediate
+            // queries the user never finished typing.
+            expect(vi.mocked(fetchCards)).toHaveBeenCalledTimes(2);
+            expect(vi.mocked(fetchCards)).toHaveBeenNthCalledWith(
+                2,
+                "gato",
+                50,
+                0,
+            );
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("server search rejection: silent fallback (no banner), local filter still narrows existing rows", async () => {
+        const initialPage: ApiCardListResponse = {
+            total: 3,
+            cards: [
+                card(1, "<p>hola</p>", "<p>hello</p>"),
+                card(2, "<p>gato</p>", "<p>cat</p>"),
+                card(3, "<p>perro</p>", "<p>dog</p>"),
+            ],
+        };
+        vi.mocked(fetchCards)
+            .mockResolvedValueOnce(initialPage)
+            .mockRejectedValueOnce(new Error("503 search unavailable"));
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settleFake();
+            expect(
+                container.querySelectorAll(".list button.row").length,
+            ).toBe(3);
+
+            setSearch(container, "gato");
+            await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS);
+            await settleFake();
+
+            // Server fetch happened and rejected — but no banner.
+            expect(vi.mocked(fetchCards)).toHaveBeenCalledTimes(2);
+            expect(container.querySelector(".error-banner")).toBeNull();
+
+            // Local fallback: liveCards untouched (still 3 rows server-side),
+            // local substring filter narrows display to "gato" only.
+            expect(
+                container.querySelectorAll(".list button.row").length,
+            ).toBe(1);
+            // Search-active count-tag flips to "F of L" form regardless
+            // of whether server returned — driven by query !== "".
+            expect(
+                container.querySelector(".count-tag")?.textContent?.trim(),
+            ).toBe("1 of 3");
+        } finally {
+            unmount(instance);
+        }
     });
 });

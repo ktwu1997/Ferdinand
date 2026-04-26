@@ -34,6 +34,21 @@
     let pageOffset = $state(0);
     let liveTotal = $state<number | null>(null);
 
+    // Phase 12-A: server-side search wiring. Typing in the toolbar input
+    // updates `query` synchronously so the local-filter $derived narrows
+    // immediately (zero-latency UX), and a debounced effect fires a
+    // server fetch shortly after the user stops typing. The 200 ms window
+    // is short enough that finishing a word feels live, long enough that
+    // mashing keys doesn't shower the server with requests. Server
+    // failures fall back silently — local `filtered` continues to
+    // substring-match on whatever liveCards contains.
+    const SEARCH_DEBOUNCE_MS = 200;
+    let initialLoadDone = $state(false);
+    // Plain JS — bookkeeping for stale-response discard and dedup. Not
+    // $state because nothing reactive needs to read these.
+    let searchSeq = 0;
+    let lastFetchedQ = "";
+
     // Phase 9-P: editor-panel mutations against anki_server. Stateful page,
     // so errors surface as an explicit banner (per 9-N3 design_pattern_proven)
     // — silent fallback would drop the user's edit without acknowledgement.
@@ -65,16 +80,21 @@
         // waits on tree data. Both fall back silently to fake data on
         // failure; editor mutations are gated by liveDecks/liveCards being
         // non-null at call time.
-        fetchCards("", PAGE_SIZE, 0).then(
-            (res) => {
-                liveCards = res.cards;
-                liveTotal = res.total;
+        fetchCards("", PAGE_SIZE, 0)
+            .then(
+                (res) => {
+                    liveCards = res.cards;
+                    liveTotal = res.total;
+                },
+                () => undefined,
+            )
+            .finally(() => {
                 loading = false;
-            },
-            () => {
-                loading = false;
-            },
-        );
+                // Gate the search-wire $effect: it must not re-fire the
+                // initial empty-query fetch, and it must not run before
+                // the first paint of skeleton/empty rows is committed.
+                initialLoadDone = true;
+            });
         fetchDecks().then(
             (res) => {
                 liveDecks = res.decks.filter((d) => d.id !== 0 && d.level >= 1);
@@ -304,24 +324,55 @@
 
     // Phase 11-C: jump to a server page. Clamps to [0, total) and skips
     // network calls for unchanged offsets so rapid Prev/Next mashing
-    // doesn't pile up duplicate requests.
+    // doesn't pile up duplicate requests. Phase 12-A: pagination respects
+    // the active server-side query so Next/Prev pages through search
+    // results, not the unfiltered collection.
     async function goPage(newOffset: number): Promise<void> {
         const clamped = Math.max(0, newOffset);
         if (clamped === pageOffset && liveCards !== null) return;
         loading = true;
         errorBanner = null;
         try {
-            const res = await fetchCards("", PAGE_SIZE, clamped);
+            const res = await fetchCards(query, PAGE_SIZE, clamped);
             liveCards = res.cards;
             liveTotal = res.total;
             pageOffset = clamped;
             selectedIdx = 0;
+            lastFetchedQ = query;
         } catch (e) {
             errorBanner = e instanceof Error ? e.message : "Couldn't load page";
         } finally {
             loading = false;
         }
     }
+
+    // Phase 12-A: debounced server-side search. Re-fires whenever `query`
+    // changes (after onMount has resolved the initial empty-query fetch)
+    // and discards stale responses via a monotonic seq counter so
+    // out-of-order completions can't clobber a more recent result. Server
+    // failures intentionally do NOT raise the error banner — the local
+    // `filtered` substring fallback keeps narrowing useful even if the
+    // backend hiccups, and a banner per keystroke would be noisy.
+    $effect(() => {
+        if (!initialLoadDone) return;
+        const currentQuery = query;
+        if (currentQuery === lastFetchedQ) return;
+        const id = setTimeout(() => {
+            const seq = ++searchSeq;
+            fetchCards(currentQuery, PAGE_SIZE, 0).then(
+                (res) => {
+                    if (seq !== searchSeq) return;
+                    liveCards = res.cards;
+                    liveTotal = res.total;
+                    pageOffset = 0;
+                    selectedIdx = 0;
+                    lastFetchedQ = currentQuery;
+                },
+                () => undefined,
+            );
+        }, SEARCH_DEBOUNCE_MS);
+        return () => clearTimeout(id);
+    });
 
     // 1-indexed range "X-Y of Z" for the toolbar. When liveTotal is null
     // (still loading or fake-data mode), the indicator falls back to the

@@ -114,7 +114,20 @@ pub async fn list_cards(
         validate_pagination(q.offset, q.limit).map_err(ServerError::bad_request)?;
     let mut col = state.col.lock().await;
     let search = q.q.as_deref().unwrap_or("").trim().to_string();
-    let ids = col.search_cards(search.as_str(), SortMode::NoOrder)?;
+    // Phase 12-A: a malformed Anki search expression (unclosed quote,
+    // misplaced operator, etc.) is user-input error, not server failure.
+    // Remap AnkiError::SearchError to 400 so the live-search effect on
+    // the client can fall back to local filtering without raising the
+    // page banner. Other errors (storage, IO) keep the default 500
+    // mapping via the blanket From<anyhow::Error> impl.
+    let ids = col.search_cards(search.as_str(), SortMode::NoOrder).map_err(
+        |e| match e {
+            AnkiError::SearchError { .. } => {
+                ServerError::bad_request(format!("invalid search query: {e}"))
+            }
+            other => ServerError::from(other),
+        },
+    )?;
     let total = ids.len();
     let cards = ids
         .into_iter()
