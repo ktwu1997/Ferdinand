@@ -27,6 +27,7 @@ vi.mock("$lib/api", async (importOriginal) => {
         fetchTags: vi.fn(),
         patchDeckName: vi.fn(),
         patchDeckPreset: vi.fn(),
+        patchNote: vi.fn(),
         postCardSuspend: vi.fn(),
         deleteNote: vi.fn(),
     };
@@ -40,6 +41,7 @@ import {
     fetchTags,
     patchDeckName,
     patchDeckPreset,
+    patchNote,
     postCardSuspend,
 } from "$lib/api";
 
@@ -929,6 +931,184 @@ describe("BrowsePage contract", () => {
                 expect(
                     container.querySelector(".count-tag")?.textContent?.trim(),
                 ).toBe("1–50 of 207");
+            } finally {
+                unmount(instance);
+            }
+        });
+    });
+
+    // Phase 14-A: live note editing wires Front/Back textareas + tag
+    // chips to PATCH /api/notes/{id}. Each test resets the mocks so
+    // unconsumed mockResolvedValueOnce calls don't leak across siblings
+    // (Phase 9-T `test_pattern_proven` lesson).
+    describe("Phase 14-A note editing", () => {
+        beforeEach(() => {
+            vi.resetAllMocks();
+            vi.mocked(fetchDecks).mockRejectedValue(
+                new Error("decks unreachable"),
+            );
+            vi.mocked(fetchTags).mockRejectedValue(
+                new Error("tags unreachable"),
+            );
+            vi.mocked(fetchDeckConfigs).mockRejectedValue(
+                new Error("preset list unreachable"),
+            );
+        });
+
+        test("Front textarea blur with dirty draft fires patchNote with [front, back]; refetches page", async () => {
+            vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+            vi.mocked(patchNote).mockResolvedValueOnce({
+                note_id: 101,
+                fields: ["hola edited", "hello"],
+                tags: ["vocab"],
+                modified: 1_777_000_000,
+            });
+            // Refetch after a successful patch — second fetchCards call
+            // returns the page with the updated front_html so the row
+            // preview matches the new field. Returning the same
+            // liveThree shape keeps the assertions on row count stable.
+            vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const front = container.querySelector<HTMLTextAreaElement>(
+                    "#field-front",
+                );
+                expect(front).not.toBeNull();
+                front!.value = "hola edited";
+                front!.dispatchEvent(new Event("input", { bubbles: true }));
+                front!.dispatchEvent(new Event("blur", { bubbles: true }));
+                await settle();
+
+                expect(vi.mocked(patchNote)).toHaveBeenCalledTimes(1);
+                expect(vi.mocked(patchNote)).toHaveBeenCalledWith(101, {
+                    fields: ["hola edited", "hello"],
+                });
+                // Refetch fired (initial mount + post-patch refresh).
+                expect(vi.mocked(fetchCards)).toHaveBeenCalledTimes(2);
+                expect(container.querySelector(".error-banner")).toBeNull();
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("Tag chip click (×) fires patchNote with the tag filtered out; mirrors into liveCards", async () => {
+            vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+            vi.mocked(patchNote).mockResolvedValueOnce({
+                note_id: 101,
+                fields: ["hola", "hello"],
+                tags: [],
+                modified: 1_777_000_000,
+            });
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                // Selected card is the first row (101) by default; its
+                // single tag is "vocab" per the card() factory.
+                const tagBtn = container.querySelector<HTMLButtonElement>(
+                    'button.tag-removable[aria-label="Remove tag vocab"]',
+                );
+                expect(tagBtn).not.toBeNull();
+                tagBtn!.click();
+                await settle();
+
+                expect(vi.mocked(patchNote)).toHaveBeenCalledTimes(1);
+                expect(vi.mocked(patchNote)).toHaveBeenCalledWith(101, {
+                    tags: [],
+                });
+                // No refetch on tag patches — server tags mirror locally.
+                expect(vi.mocked(fetchCards)).toHaveBeenCalledTimes(1);
+                // Removed chip should be gone after the mirror.
+                expect(
+                    container.querySelector(
+                        'button.tag-removable[aria-label="Remove tag vocab"]',
+                    ),
+                ).toBeNull();
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("+ Add tag → input → Enter commits patchNote with appended tag", async () => {
+            vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+            vi.mocked(patchNote).mockResolvedValueOnce({
+                note_id: 101,
+                fields: ["hola", "hello"],
+                tags: ["vocab", "leech"],
+                modified: 1_777_000_000,
+            });
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const addBtn = container.querySelector<HTMLButtonElement>(
+                    "button.add-tag",
+                );
+                expect(addBtn).not.toBeNull();
+                addBtn!.click();
+                await settle();
+
+                const input = container.querySelector<HTMLInputElement>(
+                    "input.tag-input",
+                );
+                expect(input).not.toBeNull();
+                input!.value = "leech";
+                input!.dispatchEvent(new Event("input", { bubbles: true }));
+                input!.dispatchEvent(
+                    new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+                );
+                await settle();
+
+                expect(vi.mocked(patchNote)).toHaveBeenCalledTimes(1);
+                expect(vi.mocked(patchNote)).toHaveBeenCalledWith(101, {
+                    tags: ["vocab", "leech"],
+                });
+                // Input collapses back to "+ Add" button after success.
+                expect(
+                    container.querySelector("input.tag-input"),
+                ).toBeNull();
+                expect(
+                    container.querySelector("button.add-tag"),
+                ).not.toBeNull();
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("Server 400 on field PATCH surfaces error banner; drafts roll back", async () => {
+            vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+            vi.mocked(patchNote).mockRejectedValueOnce(
+                new Error("400 expected 5 fields for notetype \"Image Occlusion\", got 2"),
+            );
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const front = container.querySelector<HTMLTextAreaElement>(
+                    "#field-front",
+                );
+                expect(front).not.toBeNull();
+                front!.value = "hola edited";
+                front!.dispatchEvent(new Event("input", { bubbles: true }));
+                front!.dispatchEvent(new Event("blur", { bubbles: true }));
+                await settle();
+
+                expect(vi.mocked(patchNote)).toHaveBeenCalledTimes(1);
+                const banner = container.querySelector(".error-banner");
+                expect(banner).not.toBeNull();
+                expect(banner?.textContent).toContain("expected 5 fields");
+                // Drafts must roll back so a re-blur won't re-fire.
+                expect(front!.value).toBe("hola");
+                // No refetch on failure — server's view of the row
+                // hasn't changed, so the local rendering must not be
+                // clobbered.
+                expect(vi.mocked(fetchCards)).toHaveBeenCalledTimes(1);
             } finally {
                 unmount(instance);
             }

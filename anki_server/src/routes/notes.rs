@@ -238,6 +238,153 @@ fn validate_delete_id(id: i64) -> Result<(), &'static str> {
     Ok(())
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub struct NotePatchRequest {
+    /// New field values in template order. When set, length must match
+    /// the underlying notetype's field count exactly (validated post
+    /// note lookup). The first field is the sort field — must be
+    /// non-empty after trim, mirroring the create handler's rule.
+    /// Omit to leave fields untouched.
+    #[serde(default)]
+    pub fields: Option<Vec<String>>,
+    /// New tag list. Trimmed + blank-dropped server-side so a stray
+    /// ", " in the input doesn't persist as a "" tag. Omit to leave
+    /// tags untouched. Empty array clears all tags (different from
+    /// "tags is None").
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct NotePatchResponse {
+    pub note_id: i64,
+    /// Persisted fields after the patch, in template order. Echoing
+    /// these back lets the client refresh its local copy without a
+    /// follow-up GET — matches the patch_deck / patch_deck_preset
+    /// shape elsewhere in the API.
+    pub fields: Vec<String>,
+    /// Persisted tags after the patch (already trimmed + blank-dropped).
+    pub tags: Vec<String>,
+    /// Note modified timestamp (epoch seconds). Useful for an
+    /// "updated 5s ago" footer label.
+    pub modified: i64,
+}
+
+/// Pure-shape validation for a PATCH request. The notetype field-count
+/// check needs Collection access, so it stays in the handler — same
+/// split as `validate_request` for create. Returning `&'static str`
+/// keeps the handler thin and lets unit tests exercise the boundary
+/// rules without mocking the Collection.
+fn validate_patch(req: &NotePatchRequest) -> Result<(), &'static str> {
+    if req.fields.is_none() && req.tags.is_none() {
+        return Err("at least one of fields or tags must be set");
+    }
+    if let Some(fields) = &req.fields {
+        if fields.is_empty() {
+            return Err("fields must contain at least one entry");
+        }
+        if fields[0].trim().is_empty() {
+            return Err("first field must not be empty");
+        }
+    }
+    Ok(())
+}
+
+/// Phase 14-A: partial-update a note's fields and/or tags.
+///
+/// Validation order (cheap → expensive, mirrors create + delete):
+///   1. id positive (400) — same boundary rule as `delete_by_id`.
+///   2. Request shape via `validate_patch` (extracted, no Collection).
+///   3. Existence via `col.storage.get_note(nid)` (404; same strict
+///      lookup as delete to dodge silent-zero sentinels).
+///   4. Notetype lookup + field-count match when `fields` is set
+///      (404 / 400). The check requires the note's notetype, so it
+///      lives post-lookup rather than in `validate_patch`.
+///   5. `Collection::update_note` — transactional update path that
+///      regenerates field-derived indexes (sort field, search index)
+///      and writes the new mtime.
+///
+/// Tags: when `tags` is set, the supplied list completely replaces
+/// the existing tags. Empty array clears all tags; omit the field to
+/// leave them untouched.
+#[utoipa::path(
+    patch,
+    path = "/api/notes/{id}",
+    request_body = inline(serde_json::Value),
+    responses(
+        (status = 200, body = NotePatchResponse),
+        (status = 400, body = crate::error::ApiError),
+        (status = 404, body = crate::error::ApiError),
+    ),
+    params(("id" = i64, Path, description = "Note id"))
+)]
+pub async fn patch_by_id(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(req): Json<NotePatchRequest>,
+) -> ApiResult<Json<NotePatchResponse>> {
+    if id <= 0 {
+        return Err(ServerError::bad_request("id must be a positive integer"));
+    }
+    validate_patch(&req).map_err(ServerError::bad_request)?;
+
+    let mut col = state.col.lock().await;
+    let nid = NoteId(id);
+
+    // Strict existence check first — same path-addressed 404 pattern as
+    // the delete handler. Going straight into update_note on a missing
+    // id would surface as a generic 500 from the inner storage layer.
+    let mut note = col
+        .storage
+        .get_note(nid)?
+        .ok_or_else(|| ServerError::not_found(format!("note {id} not found")))?;
+
+    if let Some(new_fields) = req.fields.as_ref() {
+        // Notetype lookup is needed only when fields is present — saves
+        // a cache read for tag-only patches.
+        let notetype = col.get_notetype(note.notetype_id)?.ok_or_else(|| {
+            ServerError::not_found(format!(
+                "notetype {} not found for note {id}",
+                note.notetype_id.0
+            ))
+        })?;
+        if new_fields.len() != notetype.fields.len() {
+            return Err(ServerError::bad_request(format!(
+                "expected {} fields for notetype {:?}, got {}",
+                notetype.fields.len(),
+                notetype.name,
+                new_fields.len()
+            )));
+        }
+        // Replace fields by index — mirrors the create handler so a
+        // reordered or partial-fill array can never silently drop
+        // values.
+        for (i, value) in new_fields.iter().enumerate() {
+            note.fields_mut()[i] = value.clone();
+        }
+    }
+
+    if let Some(new_tags) = req.tags.as_ref() {
+        // Trim + drop blanks so the persisted list is canonical (same
+        // hygiene as create). Empty input list intentionally clears all
+        // tags; tags=None leaves them untouched.
+        note.tags = new_tags
+            .iter()
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect();
+    }
+
+    col.update_note(&mut note)?;
+
+    Ok(Json(NotePatchResponse {
+        note_id: note.id.0,
+        fields: note.fields().clone(),
+        tags: note.tags.clone(),
+        modified: note.mtime.0,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -340,6 +487,80 @@ mod tests {
         assert!(validate_delete_id(1).is_ok());
         assert!(validate_delete_id(1_777_214_900_905).is_ok());
         assert!(validate_delete_id(i64::MAX).is_ok());
+    }
+
+    #[test]
+    fn validate_patch_rejects_when_neither_fields_nor_tags_set() {
+        // Both omitted is meaningless — there's nothing to update. Reject
+        // at the boundary so the user sees "at least one of fields or
+        // tags must be set" instead of a silent 200 with no work done.
+        let r = NotePatchRequest::default();
+        assert_eq!(
+            validate_patch(&r).unwrap_err(),
+            "at least one of fields or tags must be set"
+        );
+    }
+
+    #[test]
+    fn validate_patch_rejects_empty_fields_array() {
+        // Distinct from "fields omitted" — supplying [] is an attempt to
+        // set fields to nothing, which the notetype length match would
+        // catch later, but rejecting here yields a clearer message.
+        let r = NotePatchRequest {
+            fields: Some(vec![]),
+            tags: None,
+        };
+        assert_eq!(
+            validate_patch(&r).unwrap_err(),
+            "fields must contain at least one entry"
+        );
+    }
+
+    #[test]
+    fn validate_patch_rejects_blank_first_field() {
+        // First field is the sort field — same non-empty-after-trim rule
+        // as the create handler. Mirrored across blank flavours so
+        // subtle whitespace bugs surface.
+        for blank in ["", "   ", "\t\n"] {
+            let r = NotePatchRequest {
+                fields: Some(vec![blank.to_string(), "back".to_string()]),
+                tags: None,
+            };
+            assert_eq!(
+                validate_patch(&r).unwrap_err(),
+                "first field must not be empty",
+                "blank={blank:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_patch_accepts_tags_only_patch() {
+        // Tag-only patch is valid even with empty array — empty array is
+        // an explicit "clear all tags", different from "tags omitted".
+        let r = NotePatchRequest {
+            fields: None,
+            tags: Some(vec![]),
+        };
+        assert!(validate_patch(&r).is_ok());
+
+        let r2 = NotePatchRequest {
+            fields: None,
+            tags: Some(vec!["leech".to_string()]),
+        };
+        assert!(validate_patch(&r2).is_ok());
+    }
+
+    #[test]
+    fn validate_patch_accepts_fields_with_blank_back_field() {
+        // Same rule as create — only the FIRST field must be non-empty;
+        // subsequent fields can be blank (cloze cards bake answers into
+        // the front via {{c1::}}).
+        let r = NotePatchRequest {
+            fields: Some(vec!["forest".to_string(), "".to_string()]),
+            tags: None,
+        };
+        assert!(validate_patch(&r).is_ok());
     }
 
     #[test]

@@ -10,6 +10,7 @@
         fetchTags,
         patchDeckName,
         patchDeckPreset,
+        patchNote,
         postCardSuspend,
         type ApiCardSummary,
         type ApiDeckConfigListItem,
@@ -75,6 +76,27 @@
     // mode shows an "offline" placeholder so we never lie about persisting.
     let presets = $state<ApiDeckConfigListItem[] | null>(null);
     let isMutatingPreset = $state(false);
+
+    // Phase 14-A: live note editing. Front/Back drafts are seeded from
+    // the selected card's stripped snippets (the API returns rendered
+    // HTML, but the editor surface is plain-text-only for v1) and reset
+    // whenever selection changes. PATCH /api/notes/{id} on blur if the
+    // draft differs from the seed; on success the row list refetches so
+    // template-rendered front_html/back_html stays canonical. Tag chips
+    // are clickable to remove; "+ Add" reveals an inline input that
+    // commits on Enter. Plain-text-only is documented in the commit
+    // body — HTML formatting on existing notes is lost on the first
+    // save, so a user with `<b>` markup who edits the front loses the
+    // bold tags.
+    let frontDraft = $state("");
+    let backDraft = $state("");
+    let isAddingTag = $state(false);
+    let newTagDraft = $state("");
+    let isMutatingNote = $state(false);
+    let tagInput = $state<HTMLInputElement | null>(null);
+    // Tracks the currently-seeded card so the reset $effect only fires
+    // when selection actually changes — not on every reactive recompute.
+    let lastSelectedCardId: string | null = null;
 
     onMount(() => {
         // Cards drive the main `loading` flag (skeleton rows). Decks are
@@ -178,6 +200,21 @@
         ),
     );
     let selected = $derived(filtered[selectedIdx] ?? filtered[0] ?? rows[0]);
+
+    // Phase 14-A: seed Front/Back drafts when the user picks a different
+    // card. Comparing the card id (rather than re-running on every
+    // selected-derived recompute) keeps mid-edit drafts intact when an
+    // unrelated reactive update fires.
+    $effect(() => {
+        const cardId = selected?.id ?? null;
+        if (cardId !== lastSelectedCardId) {
+            lastSelectedCardId = cardId;
+            frontDraft = selected?.frontSnippet ?? "";
+            backDraft = selected?.backSnippet ?? "";
+            isAddingTag = false;
+            newTagDraft = "";
+        }
+    });
 
     // Phase 11-A: derive the selected card's current preset_id from the
     // live deck list. Null when offline / fake-data / deck not yet loaded
@@ -485,6 +522,127 @@
         }
     }
 
+    // Phase 14-A: commit the current Front/Back drafts as a fields
+    // PATCH. Skips the network call when neither draft is dirty so the
+    // textarea blur-on-Tab doesn't pile up no-op writes. On success the
+    // page refetches because front_html/back_html are template-rendered
+    // server-side — only a refetch guarantees the row preview matches
+    // what the new fields render to. On failure the drafts roll back to
+    // the seed snippets so a re-blur won't re-trigger the same call.
+    async function commitFields(): Promise<void> {
+        if (!selected || !liveCards) return;
+        const targetCard = liveCards.find((c) => String(c.id) === selected.id);
+        if (!targetCard) {
+            errorBanner = "Edit unavailable on fake data";
+            return;
+        }
+        const initialFront = selected.frontSnippet;
+        const initialBack = selected.backSnippet;
+        if (frontDraft === initialFront && backDraft === initialBack) return;
+        isMutatingNote = true;
+        errorBanner = null;
+        try {
+            await patchNote(targetCard.note_id, {
+                fields: [frontDraft, backDraft],
+            });
+            // Refetch the current page so row previews reflect the new
+            // template render. Tags-only mirroring would be enough for
+            // tag patches, but front/back go through {{Field}} on the
+            // server — there's no client-safe way to reproduce that.
+            const res = await fetchCards(query, PAGE_SIZE, pageOffset);
+            liveCards = res.cards;
+            liveTotal = res.total;
+        } catch (e) {
+            errorBanner = e instanceof Error ? e.message : "Edit failed";
+            frontDraft = initialFront;
+            backDraft = initialBack;
+        } finally {
+            isMutatingNote = false;
+        }
+    }
+
+    // Phase 14-A: remove a single tag chip via PATCH. Server returns
+    // the canonical (trimmed/blank-dropped) tags; mirror that into
+    // every card with the same note_id so sibling cards in the row
+    // list stay consistent.
+    async function removeTag(tag: string): Promise<void> {
+        if (!selected || !liveCards) return;
+        const targetCard = liveCards.find((c) => String(c.id) === selected.id);
+        if (!targetCard) {
+            errorBanner = "Tag edit unavailable on fake data";
+            return;
+        }
+        const newTags = targetCard.tags.filter((t) => t !== tag);
+        isMutatingNote = true;
+        errorBanner = null;
+        try {
+            const res = await patchNote(targetCard.note_id, { tags: newTags });
+            const noteId = targetCard.note_id;
+            liveCards = liveCards.map((c) =>
+                c.note_id === noteId ? { ...c, tags: res.tags } : c,
+            );
+        } catch (e) {
+            errorBanner = e instanceof Error ? e.message : "Tag edit failed";
+        } finally {
+            isMutatingNote = false;
+        }
+    }
+
+    async function startAddTag(): Promise<void> {
+        if (!selected || !liveCards) return;
+        isAddingTag = true;
+        newTagDraft = "";
+        errorBanner = null;
+        await tick();
+        tagInput?.focus();
+    }
+
+    function cancelAddTag(): void {
+        isAddingTag = false;
+        newTagDraft = "";
+    }
+
+    // Commit a new tag. Empty/dup inputs short-circuit to cancel so
+    // clicking + Add and immediately blurring doesn't fire a no-op
+    // patch. On success, mirror server tags into liveCards keyed by
+    // note_id so the chip rerenders without a refetch.
+    async function commitAddTag(): Promise<void> {
+        if (!selected || !liveCards) {
+            cancelAddTag();
+            return;
+        }
+        const trimmed = newTagDraft.trim();
+        if (trimmed === "") {
+            cancelAddTag();
+            return;
+        }
+        const targetCard = liveCards.find((c) => String(c.id) === selected.id);
+        if (!targetCard) {
+            errorBanner = "Tag edit unavailable on fake data";
+            cancelAddTag();
+            return;
+        }
+        if (targetCard.tags.includes(trimmed)) {
+            cancelAddTag();
+            return;
+        }
+        const newTags = [...targetCard.tags, trimmed];
+        isMutatingNote = true;
+        errorBanner = null;
+        try {
+            const res = await patchNote(targetCard.note_id, { tags: newTags });
+            const noteId = targetCard.note_id;
+            liveCards = liveCards.map((c) =>
+                c.note_id === noteId ? { ...c, tags: res.tags } : c,
+            );
+            cancelAddTag();
+        } catch (e) {
+            errorBanner = e instanceof Error ? e.message : "Tag add failed";
+        } finally {
+            isMutatingNote = false;
+        }
+    }
+
     async function toggleSuspend() {
         if (!selected || !liveCards) return;
         const targetCard = liveCards.find((c) => String(c.id) === selected.id);
@@ -675,11 +833,25 @@
 
         <div class="field">
             <label for="field-front">Front</label>
-            <div id="field-front" class="field-value" contenteditable="true" role="textbox" tabindex="0" aria-label="Front">{selected?.frontSnippet ?? ""}</div>
+            <textarea
+                id="field-front"
+                class="field-value"
+                bind:value={frontDraft}
+                disabled={isMutatingNote || !liveCards}
+                aria-label="Front"
+                onblur={commitFields}
+            ></textarea>
         </div>
         <div class="field">
             <label for="field-back">Back</label>
-            <div id="field-back" class="field-value" contenteditable="true" role="textbox" tabindex="0" aria-label="Back">{selected?.backSnippet ?? ""}</div>
+            <textarea
+                id="field-back"
+                class="field-value"
+                bind:value={backDraft}
+                disabled={isMutatingNote || !liveCards}
+                aria-label="Back"
+                onblur={commitFields}
+            ></textarea>
         </div>
 
         <div class="meta">
@@ -729,9 +901,35 @@
                 <span class="meta-key">Tags</span>
                 <div class="tag-edit">
                     {#each selected?.tags ?? [] as t (t)}
-                        <span class="tag">#{t}</span>
+                        <button
+                            type="button"
+                            class="tag tag-removable"
+                            disabled={isMutatingNote || !liveCards}
+                            onclick={() => removeTag(t)}
+                            aria-label="Remove tag {t}"
+                        >#{t}<span class="x" aria-hidden="true">×</span></button>
                     {/each}
-                    <button class="add-tag">+ Add</button>
+                    {#if isAddingTag}
+                        <input
+                            bind:this={tagInput}
+                            bind:value={newTagDraft}
+                            class="tag-input"
+                            disabled={isMutatingNote}
+                            aria-label="New tag"
+                            onkeydown={(e) => {
+                                if (e.key === "Enter") commitAddTag();
+                                else if (e.key === "Escape") cancelAddTag();
+                            }}
+                            onblur={cancelAddTag}
+                        />
+                    {:else}
+                        <button
+                            type="button"
+                            class="add-tag"
+                            disabled={isMutatingNote || !liveCards}
+                            onclick={startAddTag}
+                        >+ Add</button>
+                    {/if}
                 </div>
             </div>
             <div class="meta-row">
@@ -1106,6 +1304,13 @@
         color: var(--text);
         white-space: pre-wrap;
         outline: none;
+        /* Phase 14-A: textarea-specific tweaks so the editing affordance
+           still reads as a single-line-ish field at rest but expands as
+           the user types. resize:vertical lets long fields breathe; the
+           default `none` would make a back-of-paragraph note painful. */
+        width: 100%;
+        box-sizing: border-box;
+        resize: vertical;
         transition:
             border-color var(--duration-fast) var(--ease),
             box-shadow var(--duration-fast) var(--ease);
@@ -1116,6 +1321,10 @@
     .field-value:focus {
         border-color: var(--accent);
         box-shadow: var(--shadow-sm);
+    }
+    .field-value:disabled {
+        opacity: 0.65;
+        cursor: progress;
     }
 
     .meta {
@@ -1205,6 +1414,42 @@
         background: var(--bg-subtle);
         padding: 1px 6px;
         border-radius: var(--radius-sm);
+    }
+    /* Phase 14-A: tag chips render as <button> when removable so a
+       click commits a remove-tag PATCH. The × glyph is visual-only —
+       aria-label on the button carries the actionable text. */
+    .tag-removable {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        cursor: pointer;
+        transition:
+            color var(--duration-fast) var(--ease),
+            background var(--duration-fast) var(--ease);
+    }
+    .tag-removable:hover {
+        color: var(--accent);
+        background: var(--bg-hover);
+    }
+    .tag-removable:disabled {
+        opacity: 0.55;
+        cursor: progress;
+    }
+    .tag-removable .x {
+        font-size: 0.85rem;
+        line-height: 1;
+        opacity: 0.7;
+    }
+    .tag-input {
+        font-family: var(--font-mono);
+        font-size: 0.7rem;
+        padding: 1px 6px;
+        border: 1px solid var(--accent);
+        border-radius: var(--radius-sm);
+        background: transparent;
+        color: var(--text);
+        outline: none;
+        min-width: 80px;
     }
     .add-tag {
         font-size: var(--text-xs);
