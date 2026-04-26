@@ -22,10 +22,16 @@ vi.mock("$lib/api", async (importOriginal) => {
         fetchDecks: vi.fn(),
         fetchHealth: vi.fn(),
         fetchStatsRecent: vi.fn(),
+        postDeck: vi.fn(),
     };
 });
 
-import { fetchDecks, fetchHealth, fetchStatsRecent } from "$lib/api";
+import {
+    fetchDecks,
+    fetchHealth,
+    fetchStatsRecent,
+    postDeck,
+} from "$lib/api";
 
 const decksOk: ApiDeckListResponse = {
     decks: [
@@ -358,5 +364,149 @@ describe("Phase 11-B stats history", () => {
         } finally {
             unmount(instance);
         }
+    });
+
+    // Phase 14-C: + New deck inline form. Mocks postDeck + a follow-up
+    // fetchDecks (the page refetches after a successful POST so server-
+    // assigned ids and auto-created parents flow into the grid).
+    describe("Phase 14-C + New deck", () => {
+        test("button click reveals input; Enter commits postDeck + refetches", async () => {
+            vi.mocked(fetchDecks).mockResolvedValueOnce(decksOk);
+            vi.mocked(fetchHealth).mockResolvedValueOnce(healthLive);
+            vi.mocked(postDeck).mockResolvedValueOnce({
+                id: 1_777_223_500_000,
+                name: "Italian",
+            });
+            // Refetch after success returns a list with the new deck.
+            const decksOkPlusItalian: ApiDeckListResponse = {
+                decks: [
+                    decksOk.decks[0],
+                    {
+                        id: 1_777_223_500_000,
+                        name: "Italian",
+                        level: 1,
+                        new_count: 0,
+                        learn_count: 0,
+                        review_count: 0,
+                        total_in_deck: 0,
+                        filtered: false,
+                        collapsed: false,
+                        preset_id: 1,
+                        children: [],
+                    },
+                ],
+            };
+            vi.mocked(fetchDecks).mockResolvedValueOnce(decksOkPlusItalian);
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const newDeckBtn = container.querySelector<HTMLButtonElement>(
+                    "button.new-deck-btn",
+                );
+                expect(newDeckBtn).not.toBeNull();
+                expect(newDeckBtn!.disabled).toBe(false);
+                newDeckBtn!.click();
+                flushSync();
+
+                const input = container.querySelector<HTMLInputElement>(
+                    "input.new-deck-input",
+                );
+                expect(input).not.toBeNull();
+                input!.value = "Italian";
+                input!.dispatchEvent(new Event("input", { bubbles: true }));
+                input!.dispatchEvent(
+                    new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+                );
+                await settle();
+
+                expect(vi.mocked(postDeck)).toHaveBeenCalledTimes(1);
+                expect(vi.mocked(postDeck)).toHaveBeenCalledWith("Italian");
+                // Refetch fired (initial + post-create refresh).
+                expect(vi.mocked(fetchDecks)).toHaveBeenCalledTimes(2);
+                // Form collapses back to button after success.
+                expect(
+                    container.querySelector("input.new-deck-input"),
+                ).toBeNull();
+                expect(
+                    container.querySelector("button.new-deck-btn"),
+                ).not.toBeNull();
+                // Italian appears in the deck grid.
+                const deckNames = Array.from(
+                    container.querySelectorAll(".deck-name"),
+                ).map((el) => el.textContent?.trim());
+                expect(deckNames).toContain("Italian");
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("server 400 surfaces inline error banner; form stays open", async () => {
+            vi.mocked(fetchDecks).mockResolvedValueOnce(decksOk);
+            vi.mocked(fetchHealth).mockResolvedValueOnce(healthLive);
+            vi.mocked(postDeck).mockRejectedValueOnce(
+                new Error("400 name must not contain consecutive '::' separators"),
+            );
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                container
+                    .querySelector<HTMLButtonElement>("button.new-deck-btn")!
+                    .click();
+                flushSync();
+
+                const input = container.querySelector<HTMLInputElement>(
+                    "input.new-deck-input",
+                );
+                input!.value = "A:::B";
+                input!.dispatchEvent(new Event("input", { bubbles: true }));
+                input!.dispatchEvent(
+                    new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+                );
+                await settle();
+
+                expect(vi.mocked(postDeck)).toHaveBeenCalledTimes(1);
+                // Form stays open so the user can fix-and-retry without
+                // re-clicking + New deck.
+                expect(
+                    container.querySelector("input.new-deck-input"),
+                ).not.toBeNull();
+                const banner = container.querySelector(".error-banner");
+                expect(banner).not.toBeNull();
+                expect(banner?.textContent).toContain("consecutive");
+                // Refetch should NOT have fired on failure (initial only).
+                expect(vi.mocked(fetchDecks)).toHaveBeenCalledTimes(1);
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("button is disabled when liveDecks is null (backend offline)", async () => {
+            // fetchDecks rejects → liveDecks stays null → create button
+            // disabled (we never lie about persisting against fake data).
+            vi.mocked(fetchDecks).mockRejectedValueOnce(
+                new Error("backend unreachable"),
+            );
+            vi.mocked(fetchHealth).mockRejectedValueOnce(
+                new Error("backend unreachable"),
+            );
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const btn = container.querySelector<HTMLButtonElement>(
+                    "button.new-deck-btn",
+                );
+                expect(btn).not.toBeNull();
+                expect(btn!.disabled).toBe(true);
+                expect(vi.mocked(postDeck)).not.toHaveBeenCalled();
+            } finally {
+                unmount(instance);
+            }
+        });
     });
 });

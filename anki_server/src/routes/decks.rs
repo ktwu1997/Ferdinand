@@ -217,6 +217,101 @@ pub async fn patch_deck_preset(
     }))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct DeckCreateRequest {
+    /// Human-readable deck name. May contain `::` to nest under an
+    /// existing parent (e.g. `"Spanish::Verbs::Irregular"`); auto-creates
+    /// missing parents server-side, mirroring desktop Anki. Trimmed
+    /// before further validation.
+    pub name: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct DeckCreateResponse {
+    pub id: i64,
+    /// Server-canonical name after normalization. Will differ from the
+    /// request when Anki rewrites a duplicate to "Foo (1)" / "Foo (2)"
+    /// via `ensure_deck_name_unique`. Echoing it back lets the client
+    /// surface the actual persisted name without a follow-up GET.
+    pub name: String,
+}
+
+const DECK_NAME_MAX_CHARS: usize = 100;
+
+/// Pure-shape validation for a create request. Same `&'static str`
+/// extract pattern as `validate_preset_id`, the create-note rules,
+/// and the deck-config `validate_create_name` (Phase 12-B). Counts
+/// chars-not-bytes so CJK names get the same 100-char budget as
+/// ASCII — a 100-char Japanese deck name passes, 101 fails.
+fn validate_create_name(name: &str) -> Result<&str, &'static str> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("name must not be empty");
+    }
+    if trimmed.chars().count() > DECK_NAME_MAX_CHARS {
+        return Err("name must be at most 100 characters");
+    }
+    if trimmed.starts_with("::") {
+        return Err("name must not start with '::'");
+    }
+    if trimmed.ends_with("::") {
+        return Err("name must not end with '::'");
+    }
+    // Three-or-more colons in a row implies an empty path component (e.g.
+    // "Foo:::Bar" → empty middle). Same effective constraint as desktop
+    // Anki, which rejects empty components in the deck-options dialog.
+    if trimmed.contains(":::") {
+        return Err("name must not contain consecutive '::' separators");
+    }
+    Ok(trimmed)
+}
+
+/// Phase 14-C: create a new normal (non-filtered) deck.
+///
+/// Validation order (cheap → expensive):
+///   1. Request shape via `validate_create_name` (extracted, no
+///      Collection access). Catches empty / over-length / `::`-edge
+///      malformed inputs at the boundary.
+///   2. `Collection::add_deck` — transactional add path that auto-
+///      creates missing parents (so `"Spanish::Verbs::Irregular"`
+///      transparently materialises any missing `Spanish` /
+///      `Spanish::Verbs` ancestors), assigns the deck a fresh
+///      epoch-ms id, and ensures uniqueness (a duplicate name gets
+///      a `" (N)"` suffix appended, matching desktop Anki).
+///
+/// Filtered decks aren't reachable from this endpoint by design — the
+/// home-page "+ New deck" button is for everyday review buckets, and
+/// filtered decks need a search query that doesn't fit the v1 surface.
+#[utoipa::path(
+    post,
+    path = "/api/decks",
+    request_body = inline(serde_json::Value),
+    responses(
+        (status = 200, body = DeckCreateResponse),
+        (status = 400, body = crate::error::ApiError),
+    )
+)]
+pub async fn post_create(
+    State(state): State<AppState>,
+    Json(req): Json<DeckCreateRequest>,
+) -> ApiResult<Json<DeckCreateResponse>> {
+    let trimmed = validate_create_name(&req.name).map_err(ServerError::bad_request)?;
+    let mut col = state.col.lock().await;
+
+    // `Deck::new_normal()` returns a deck with id=0; `add_deck` requires
+    // the zero-id sentinel and assigns an epoch-ms id during the
+    // transaction. `from_human_name` turns "::"-separated input into
+    // the native `\x1f`-joined storage form.
+    let mut deck = anki::decks::Deck::new_normal();
+    deck.name = anki::decks::NativeDeckName::from_human_name(trimmed);
+    col.add_deck(&mut deck)?;
+
+    Ok(Json(DeckCreateResponse {
+        id: deck.id.0,
+        name: deck.human_name(),
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -244,5 +339,84 @@ mod tests {
         let epoch_ms_id = 1_776_837_237_914_i64;
         assert_eq!(validate_preset_id(epoch_ms_id).unwrap(), epoch_ms_id);
         assert_eq!(validate_preset_id(i64::MAX).unwrap(), i64::MAX);
+    }
+
+    #[test]
+    fn validate_create_name_rejects_blank_and_whitespace() {
+        // Empty + whitespace-only must fail with the same message —
+        // surfacing "name must not be empty" everywhere keeps the
+        // client error banner predictable across mash-Enter inputs.
+        for blank in ["", "   ", "\t\n", "  \r\n  "] {
+            assert_eq!(
+                validate_create_name(blank).unwrap_err(),
+                "name must not be empty",
+                "blank={blank:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_create_name_enforces_chars_not_bytes_budget() {
+        // 100 single-byte chars: pass.
+        let ascii_100 = "a".repeat(100);
+        assert_eq!(validate_create_name(&ascii_100).unwrap(), ascii_100);
+        // 101 single-byte chars: fail.
+        let ascii_101 = "a".repeat(101);
+        assert_eq!(
+            validate_create_name(&ascii_101).unwrap_err(),
+            "name must be at most 100 characters"
+        );
+        // 100 CJK chars (each 3 bytes in UTF-8 = 300 bytes): pass.
+        // A naïve `.len() > 100` byte check would reject this; the
+        // chars-not-bytes rule keeps the budget fair across scripts.
+        let cjk_100 = "森".repeat(100);
+        assert_eq!(cjk_100.len(), 300);
+        assert_eq!(validate_create_name(&cjk_100).unwrap(), cjk_100);
+        // 101 CJK chars: fail (boundary inclusive at 100).
+        let cjk_101 = "森".repeat(101);
+        assert_eq!(
+            validate_create_name(&cjk_101).unwrap_err(),
+            "name must be at most 100 characters"
+        );
+    }
+
+    #[test]
+    fn validate_create_name_rejects_double_colon_edge_cases() {
+        // Leading "::" reads as an unnamed root parent; trailing "::"
+        // implies an unnamed leaf — both create empty-name components
+        // that confuse the deck tree.
+        assert_eq!(
+            validate_create_name("::Spanish").unwrap_err(),
+            "name must not start with '::'"
+        );
+        assert_eq!(
+            validate_create_name("Spanish::").unwrap_err(),
+            "name must not end with '::'"
+        );
+        // Triple-colon (and longer) sequences imply an empty middle
+        // component — same disallowed shape as desktop Anki.
+        assert_eq!(
+            validate_create_name("Spanish:::Verbs").unwrap_err(),
+            "name must not contain consecutive '::' separators"
+        );
+        assert_eq!(
+            validate_create_name("A::::B").unwrap_err(),
+            "name must not contain consecutive '::' separators"
+        );
+    }
+
+    #[test]
+    fn validate_create_name_accepts_normal_and_nested_names() {
+        // Plain name, nested name, name with whitespace at the edges
+        // (trimmed), and CJK name all pass the rule set.
+        assert_eq!(validate_create_name("Spanish").unwrap(), "Spanish");
+        assert_eq!(
+            validate_create_name("Spanish::Verbs::Irregular").unwrap(),
+            "Spanish::Verbs::Irregular"
+        );
+        // Trim leading/trailing whitespace.
+        assert_eq!(validate_create_name("  Padded  ").unwrap(), "Padded");
+        // CJK well under the 100-char cap.
+        assert_eq!(validate_create_name("日本語").unwrap(), "日本語");
     }
 }
