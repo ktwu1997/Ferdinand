@@ -18,6 +18,10 @@ crate-type = ["staticlib", "cdylib"]
 # stack and we don't end up with a second copy of native-tls in the
 # dependency tree.
 anki = { path = "../rslib", features = ["rustls"] }
+# Phase 12-D: list_decks JSON round-trip across the FFI boundary so
+# native callers don't need their own struct-marshalling layer.
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [build-dependencies]
 cbindgen = "0.27"
