@@ -116,6 +116,76 @@ pub async fn put_enabled(
     }))
 }
 
+/// Phase 15-B: collection-level FSRS health-check toggle. When enabled,
+/// the next `update_deck_configs` call (triggered by `put_enabled` and
+/// `post_optimize`) passes `fsrs_health_check=true` so rslib runs the
+/// trained-params sanity check (`compute_params` with `health_check`
+/// flag) and surfaces warnings for parameter values that look unstable.
+///
+/// Toggling this flag does NOT itself trigger a reschedule or an
+/// optimize run — it just changes what the next optimize / enable
+/// flip will do. That's intentional: the user can flip it on, run
+/// "Re-optimize", and the health check fires as part of that single
+/// expensive operation rather than two.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct FsrsHealthCheck {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FsrsHealthCheckToggle {
+    pub enabled: bool,
+}
+
+/// Read the FSRS health-check toggle (`BoolKey::FsrsHealthCheck`).
+/// Collection-level flag, same scope as `BoolKey::Fsrs` itself.
+#[utoipa::path(
+    get,
+    path = "/api/fsrs/health_check",
+    responses((status = 200, body = FsrsHealthCheck))
+)]
+pub async fn get_health_check(
+    State(state): State<AppState>,
+) -> ApiResult<Json<FsrsHealthCheck>> {
+    let col = state.col.lock().await;
+    Ok(Json(FsrsHealthCheck {
+        enabled: col.get_config_bool(BoolKey::FsrsHealthCheck),
+    }))
+}
+
+/// Set the FSRS health-check toggle. Idempotent on no-op (skips the
+/// transactional write when the requested state already matches);
+/// non-undoable so it doesn't pollute the undo queue with a setting
+/// flip that has no immediate side effect on user data.
+///
+/// Distinct from `put_enabled`: that path runs a full reschedule
+/// because flipping FSRS on / off changes scheduling math for every
+/// existing card. The health-check flag just changes what the NEXT
+/// optimize call asks rslib to verify, so no reschedule is needed
+/// here.
+#[utoipa::path(
+    put,
+    path = "/api/fsrs/health_check",
+    request_body = inline(serde_json::Value),
+    responses((status = 200, body = FsrsHealthCheck))
+)]
+pub async fn put_health_check(
+    State(state): State<AppState>,
+    Json(req): Json<FsrsHealthCheckToggle>,
+) -> ApiResult<Json<FsrsHealthCheck>> {
+    let mut col = state.col.lock().await;
+    let current = col.get_config_bool(BoolKey::FsrsHealthCheck);
+    if req.enabled == current {
+        // Idempotent fast-path — same hygiene as put_enabled. Skips the
+        // transact() round-trip when the requested state already matches.
+        return Ok(Json(FsrsHealthCheck { enabled: current }));
+    }
+    col.set_config_bool(BoolKey::FsrsHealthCheck, req.enabled, false)?;
+    Ok(Json(FsrsHealthCheck {
+        enabled: col.get_config_bool(BoolKey::FsrsHealthCheck),
+    }))
+}
+
 /// Optional per-preset selector. Phase 14-B: pass `?preset_id=<id>` to
 /// optimize only on cards in decks assigned to that preset; omit for
 /// the v1 default-preset behavior (Phase 9-O3).
@@ -376,6 +446,32 @@ mod tests {
             validate_optimize_query(&q).unwrap_err(),
             "preset_id must be a positive integer"
         );
+    }
+
+    #[test]
+    fn fsrs_health_check_toggle_serde_round_trip() {
+        // Serde shape is part of the public contract — clients rely on
+        // {"enabled": bool} matching put_enabled's wire format. A
+        // silent rename to `health_check` or `value` would break the
+        // mockup `putFsrsHealthCheck` payload without surfacing here
+        // unless we pin both directions.
+        let payload = serde_json::json!({ "enabled": true });
+        let toggle: FsrsHealthCheckToggle = serde_json::from_value(payload).unwrap();
+        assert!(toggle.enabled);
+
+        let response = FsrsHealthCheck { enabled: false };
+        let serialized = serde_json::to_value(&response).unwrap();
+        assert_eq!(serialized, serde_json::json!({ "enabled": false }));
+    }
+
+    #[test]
+    fn fsrs_health_check_toggle_rejects_missing_enabled_field() {
+        // Defensive test against a refactor that adds #[serde(default)]
+        // to `enabled` — silently accepting an empty body would let a
+        // malformed PUT no-op the toggle without telling the caller.
+        let payload = serde_json::json!({});
+        let parsed: Result<FsrsHealthCheckToggle, _> = serde_json::from_value(payload);
+        assert!(parsed.is_err(), "missing enabled must be a parse error");
     }
 
     #[test]

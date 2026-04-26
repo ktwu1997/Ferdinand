@@ -15,10 +15,12 @@ vi.mock("$lib/api", async (importOriginal) => {
         fetchDeckConfigs: vi.fn(),
         fetchDeckConfigById: vi.fn(),
         fetchFsrsEnabled: vi.fn(),
+        fetchFsrsHealthCheck: vi.fn(),
         patchDeckConfigById: vi.fn(),
         postDeckConfig: vi.fn(),
         deleteDeckConfig: vi.fn(),
         putFsrsEnabled: vi.fn(),
+        putFsrsHealthCheck: vi.fn(),
         postFsrsOptimize: vi.fn(),
     };
 });
@@ -29,13 +31,16 @@ import {
     fetchDeckConfigById,
     fetchDeckConfigs,
     fetchFsrsEnabled,
+    fetchFsrsHealthCheck,
     patchDeckConfigById,
     postDeckConfig,
     postFsrsOptimize,
     putFsrsEnabled,
+    putFsrsHealthCheck,
     type ApiDeckConfigDefault,
     type ApiDeckConfigListResponse,
     type ApiFsrsEnabled,
+    type ApiFsrsHealthCheck,
 } from "$lib/api";
 
 // Phase 10-C: factory keeps existing tests cheap as DeckConfig grows.
@@ -62,6 +67,7 @@ const onlyDefaultList: ApiDeckConfigListResponse = {
 };
 
 const fsrsOff: ApiFsrsEnabled = { enabled: false };
+const healthCheckOff: ApiFsrsHealthCheck = { enabled: false };
 
 // onMount runs fetchDeckConfigs + fetchFsrsEnabled in parallel, then
 // fetchDeckConfigById sequentially with the chosen preset id; persist
@@ -87,6 +93,7 @@ describe("SettingsPage contract", () => {
         vi.mocked(fetchDeckConfigs).mockResolvedValue(onlyDefaultList);
         vi.mocked(fetchDeckConfigById).mockResolvedValue(defaultConf);
         vi.mocked(fetchFsrsEnabled).mockResolvedValue(fsrsOff);
+        vi.mocked(fetchFsrsHealthCheck).mockResolvedValue(healthCheckOff);
         container = document.createElement("div");
         document.body.appendChild(container);
     });
@@ -258,6 +265,7 @@ describe("SettingsPage FSRS wiring contract (Phase 9-N3)", () => {
         vi.mocked(fetchDeckConfigs).mockResolvedValue(onlyDefaultList);
         vi.mocked(fetchDeckConfigById).mockResolvedValue(defaultConf);
         vi.mocked(fetchFsrsEnabled).mockResolvedValue(fsrsOff);
+        vi.mocked(fetchFsrsHealthCheck).mockResolvedValue(healthCheckOff);
         container = document.createElement("div");
         document.body.appendChild(container);
     });
@@ -526,6 +534,7 @@ describe("SettingsPage FSRS optimize wiring contract (Phase 9-O3)", () => {
         vi.mocked(fetchDeckConfigs).mockResolvedValue(onlyDefaultList);
         vi.mocked(fetchDeckConfigById).mockResolvedValue(defaultConf);
         vi.mocked(fetchFsrsEnabled).mockResolvedValue(fsrsOff);
+        vi.mocked(fetchFsrsHealthCheck).mockResolvedValue(healthCheckOff);
         container = document.createElement("div");
         document.body.appendChild(container);
     });
@@ -771,6 +780,7 @@ describe("SettingsPage FSRS params hydration contract (Phase 9-O')", () => {
         vi.mocked(fetchDeckConfigs).mockResolvedValue(onlyDefaultList);
         vi.mocked(fetchDeckConfigById).mockResolvedValue(defaultConf);
         vi.mocked(fetchFsrsEnabled).mockResolvedValue(fsrsOff);
+        vi.mocked(fetchFsrsHealthCheck).mockResolvedValue(healthCheckOff);
         container = document.createElement("div");
         document.body.appendChild(container);
     });
@@ -1113,6 +1123,7 @@ describe("SettingsPage create-preset flow (Phase 12-B)", () => {
         vi.mocked(fetchDeckConfigs).mockResolvedValue(onlyDefaultList);
         vi.mocked(fetchDeckConfigById).mockResolvedValue(defaultConf);
         vi.mocked(fetchFsrsEnabled).mockResolvedValue(fsrsOff);
+        vi.mocked(fetchFsrsHealthCheck).mockResolvedValue(healthCheckOff);
         container = document.createElement("div");
         document.body.appendChild(container);
     });
@@ -1296,6 +1307,7 @@ describe("SettingsPage delete-preset flow (Phase 13-B)", () => {
         vi.mocked(fetchDeckConfigs).mockResolvedValue(twoPresetList);
         vi.mocked(fetchDeckConfigById).mockResolvedValue(defaultConf);
         vi.mocked(fetchFsrsEnabled).mockResolvedValue(fsrsOff);
+        vi.mocked(fetchFsrsHealthCheck).mockResolvedValue(healthCheckOff);
         // Default to "user clicked OK" so test bodies don't all repeat
         // the spy install. Tests that need cancellation override per-call.
         confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
@@ -1457,6 +1469,109 @@ describe("SettingsPage delete-preset flow (Phase 13-B)", () => {
             expect(stillSelected?.value).toBe("1777214900905");
             // No successor hydrate fired since delete failed.
             expect(vi.mocked(fetchDeckConfigById)).toHaveBeenCalledTimes(2);
+        } finally {
+            unmount(instance);
+        }
+    });
+});
+
+// Phase 15-B: FSRS health-check toggle. Mount-time hydration must
+// resolve fetchFsrsHealthCheck so the checkbox reflects the persisted
+// state; toggling fires putFsrsHealthCheck and rolls back on error.
+// Same vi.resetAllMocks + describe-local default-mock pattern as the
+// 9-N3 / 9-O'' blocks above.
+describe("SettingsPage FSRS health-check toggle (Phase 15-B)", () => {
+    let container: HTMLDivElement;
+
+    beforeEach(() => {
+        vi.resetAllMocks();
+        vi.mocked(fetchDeckConfigs).mockResolvedValue(onlyDefaultList);
+        vi.mocked(fetchDeckConfigById).mockResolvedValue(defaultConf);
+        vi.mocked(fetchFsrsEnabled).mockResolvedValue(fsrsOff);
+        vi.mocked(fetchFsrsHealthCheck).mockResolvedValue(healthCheckOff);
+        container = document.createElement("div");
+        document.body.appendChild(container);
+    });
+
+    afterEach(() => {
+        container.remove();
+    });
+
+    function healthCheckBox(): HTMLInputElement {
+        const input = container.querySelector<HTMLInputElement>(
+            ".health-toggle input[type='checkbox']",
+        );
+        if (!input) throw new Error("health-toggle checkbox not found");
+        return input;
+    }
+
+    test("mount: fetchFsrsHealthCheck called once; checkbox reflects persisted true state", async () => {
+        vi.mocked(fetchFsrsHealthCheck).mockResolvedValueOnce({ enabled: true });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            expect(vi.mocked(fetchFsrsHealthCheck)).toHaveBeenCalledTimes(1);
+            expect(healthCheckBox().checked).toBe(true);
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("toggle on → putFsrsHealthCheck fires with {enabled: true}; checkbox stays checked on success", async () => {
+        // Mount in OFF state (default mock), then click to flip ON.
+        vi.mocked(putFsrsHealthCheck).mockResolvedValueOnce({ enabled: true });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+            expect(healthCheckBox().checked).toBe(false);
+
+            const cb = healthCheckBox();
+            cb.checked = true;
+            cb.dispatchEvent(new Event("change", { bubbles: true }));
+            await settle();
+
+            expect(vi.mocked(putFsrsHealthCheck)).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(putFsrsHealthCheck)).toHaveBeenCalledWith({
+                enabled: true,
+            });
+            expect(healthCheckBox().checked).toBe(true);
+            // No error banner on the happy path.
+            expect(
+                Array.from(container.querySelectorAll(".field-error")).some(
+                    (e) => e.textContent?.includes("health-check"),
+                ),
+            ).toBe(false);
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("toggle on → server rejects: checkbox rolls back to OFF, error-banner surfaces server message", async () => {
+        vi.mocked(putFsrsHealthCheck).mockRejectedValueOnce(
+            new Error("500 collection locked"),
+        );
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+            expect(healthCheckBox().checked).toBe(false);
+
+            const cb = healthCheckBox();
+            cb.checked = true;
+            cb.dispatchEvent(new Event("change", { bubbles: true }));
+            await settle();
+
+            expect(vi.mocked(putFsrsHealthCheck)).toHaveBeenCalledTimes(1);
+            // Optimistic flip rolled back so the UI reflects what the
+            // server still has — the user retries with eyes open.
+            expect(healthCheckBox().checked).toBe(false);
+            const errors = Array.from(
+                container.querySelectorAll(".field-error"),
+            ).map((e) => e.textContent ?? "");
+            expect(errors.some((t) => t.includes("collection locked"))).toBe(true);
         } finally {
             unmount(instance);
         }

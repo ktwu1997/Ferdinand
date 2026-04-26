@@ -6,10 +6,12 @@
         fetchDeckConfigById,
         fetchDeckConfigs,
         fetchFsrsEnabled,
+        fetchFsrsHealthCheck,
         patchDeckConfigById,
         postDeckConfig,
         postFsrsOptimize,
         putFsrsEnabled,
+        putFsrsHealthCheck,
         type ApiDeckConfigListItem,
     } from "$lib/api";
 
@@ -45,6 +47,15 @@
     let errorRetention: string | null = $state(null);
     let errorMaxInterval: string | null = $state(null);
     let errorFsrs: string | null = $state(null);
+
+    // Phase 15-B: FSRS health-check toggle. Collection-level flag that
+    // tells the next optimize / enable-flip to run rslib's trained-
+    // params sanity check. Lives next to Re-optimize (not the Enable
+    // FSRS toggle) because it only takes effect when an optimize-
+    // adjacent action runs — flipping it on its own is silent.
+    let fsrsHealthCheck = $state(false);
+    let savingHealthCheck = $state(false);
+    let errorHealthCheck: string | null = $state(null);
 
     // Phase 10-C: per-preset scheduling caps. Same onblur+PATCH pattern as
     // maxInterval — drag/keystroke does not persist, only blur or change.
@@ -113,12 +124,14 @@
 
     onMount(async () => {
         try {
-            const [list, fsrs] = await Promise.all([
+            const [list, fsrs, hc] = await Promise.all([
                 fetchDeckConfigs(),
                 fetchFsrsEnabled(),
+                fetchFsrsHealthCheck(),
             ]);
             presets = list.configs;
             fsrsEnabled = fsrs.enabled;
+            fsrsHealthCheck = hc.enabled;
             // Default preset id=1 always exists on a fresh collection; fall
             // back to the first listed preset only when the seeded row is
             // absent (corrupt/stripped collection).
@@ -335,6 +348,27 @@
             errorFsrs = e instanceof Error ? e.message : "Failed to save FSRS toggle";
         } finally {
             savingFsrs = false;
+        }
+    }
+
+    async function persistHealthCheck(): Promise<void> {
+        if (disabledControls()) return;
+        savingHealthCheck = true;
+        errorHealthCheck = null;
+        try {
+            const next = await putFsrsHealthCheck({ enabled: fsrsHealthCheck });
+            fsrsHealthCheck = next.enabled;
+        } catch (e) {
+            // Roll back the optimistic checkbox flip so the UI reflects
+            // the still-persisted-server state — same recovery shape as
+            // persistFsrs, just no reschedule cost on failure.
+            fsrsHealthCheck = !fsrsHealthCheck;
+            errorHealthCheck =
+                e instanceof Error
+                    ? e.message
+                    : "Failed to save FSRS health-check toggle";
+        } finally {
+            savingHealthCheck = false;
         }
     }
 
@@ -665,14 +699,28 @@
             <Card padding="lg">
                 <div class="card-head">
                     <h3>Optimized weights</h3>
-                    <button
-                        class="re-optimize"
-                        onclick={() => runOptimize()}
-                        disabled={disabledControls() || optimizing}
-                    >
-                        {optimizing ? "Optimizing…" : "Re-optimize"}
-                    </button>
+                    <div class="optimize-actions">
+                        <label class="health-toggle" title="Verify trained params on next optimize / enable-flip">
+                            <input
+                                type="checkbox"
+                                bind:checked={fsrsHealthCheck}
+                                disabled={disabledControls() || savingHealthCheck}
+                                onchange={() => persistHealthCheck()}
+                            />
+                            <span>Health check</span>
+                        </label>
+                        <button
+                            class="re-optimize"
+                            onclick={() => runOptimize()}
+                            disabled={disabledControls() || optimizing}
+                        >
+                            {optimizing ? "Optimizing…" : "Re-optimize"}
+                        </button>
+                    </div>
                 </div>
+                {#if errorHealthCheck}
+                    <p class="field-error">{errorHealthCheck}</p>
+                {/if}
                 <p class="hint">
                     {#if paramsSource === "disk"}
                         Loaded {optimizedParams.length} params from disk · click
@@ -1031,6 +1079,28 @@
     .re-optimize:disabled {
         opacity: 0.55;
         cursor: not-allowed;
+    }
+    .optimize-actions {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+    }
+    .health-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--space-1);
+        font-size: var(--text-xs);
+        color: var(--text-muted);
+        cursor: pointer;
+        user-select: none;
+    }
+    .health-toggle input[type="checkbox"] {
+        accent-color: var(--accent);
+        cursor: pointer;
+    }
+    .health-toggle input[type="checkbox"]:disabled {
+        cursor: not-allowed;
+        opacity: 0.55;
     }
 
     .weights {

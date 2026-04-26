@@ -56,6 +56,10 @@ pub fn router() -> Router<AppState> {
             "/api/fsrs/enabled",
             get(fsrs::get_enabled).put(fsrs::put_enabled),
         )
+        .route(
+            "/api/fsrs/health_check",
+            get(fsrs::get_health_check).put(fsrs::put_health_check),
+        )
         .route("/api/fsrs/optimize", post(fsrs::post_optimize))
         .route("/api/stats/recent", get(stats::get_recent))
         .route("/api/tags", get(tags::list_tags))
