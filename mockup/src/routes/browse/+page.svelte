@@ -26,6 +26,14 @@
     let openSection = $state<Record<string, boolean>>({ decks: true, tags: true, saved: true });
     let selectedIdx = $state(0);
 
+    // Phase 11-C: server pagination. PAGE_SIZE chosen to match the existing
+    // "100 rows in" feel without being wasteful on a phone-width screen;
+    // `liveTotal` is the unfiltered match count from /api/cards so the
+    // toolbar can render "X-Y of Z" without an extra request.
+    const PAGE_SIZE = 50;
+    let pageOffset = $state(0);
+    let liveTotal = $state<number | null>(null);
+
     // Phase 9-P: editor-panel mutations against anki_server. Stateful page,
     // so errors surface as an explicit banner (per 9-N3 design_pattern_proven)
     // — silent fallback would drop the user's edit without acknowledgement.
@@ -57,9 +65,10 @@
         // waits on tree data. Both fall back silently to fake data on
         // failure; editor mutations are gated by liveDecks/liveCards being
         // non-null at call time.
-        fetchCards("", 100).then(
+        fetchCards("", PAGE_SIZE, 0).then(
             (res) => {
                 liveCards = res.cards;
+                liveTotal = res.total;
                 loading = false;
             },
             () => {
@@ -293,6 +302,57 @@
         }
     }
 
+    // Phase 11-C: jump to a server page. Clamps to [0, total) and skips
+    // network calls for unchanged offsets so rapid Prev/Next mashing
+    // doesn't pile up duplicate requests.
+    async function goPage(newOffset: number): Promise<void> {
+        const clamped = Math.max(0, newOffset);
+        if (clamped === pageOffset && liveCards !== null) return;
+        loading = true;
+        errorBanner = null;
+        try {
+            const res = await fetchCards("", PAGE_SIZE, clamped);
+            liveCards = res.cards;
+            liveTotal = res.total;
+            pageOffset = clamped;
+            selectedIdx = 0;
+        } catch (e) {
+            errorBanner = e instanceof Error ? e.message : "Couldn't load page";
+        } finally {
+            loading = false;
+        }
+    }
+
+    // 1-indexed range "X-Y of Z" for the toolbar. When liveTotal is null
+    // (still loading or fake-data mode), the indicator falls back to the
+    // local rows count so the UI still shows something honest.
+    let pageStart = $derived(
+        liveCards && liveCards.length > 0 ? pageOffset + 1 : 0,
+    );
+    let pageEnd = $derived(
+        liveCards ? pageOffset + liveCards.length : rows.length,
+    );
+    let canPrev = $derived(pageOffset > 0 && !loading && liveCards !== null);
+    let canNext = $derived(
+        liveCards !== null &&
+            !loading &&
+            liveTotal !== null &&
+            pageOffset + PAGE_SIZE < liveTotal,
+    );
+    // When search narrows the visible rows, switch the indicator to
+    // "F of L" (filtered-of-page); when search is empty, show the
+    // server page range "X–Y of Z". Fake-data path still falls through
+    // to the local rows count so we never emit a misleading total.
+    let countTagText = $derived.by(() => {
+        if (query !== "" && liveCards) {
+            return `${filtered.length} of ${liveCards.length}`;
+        }
+        if (liveTotal !== null && liveCards) {
+            return `${pageStart}–${pageEnd} of ${liveTotal}`;
+        }
+        return `${filtered.length} of ${rows.length}`;
+    });
+
     async function applyPreset(e: Event) {
         const target = e.target as HTMLSelectElement;
         const newPresetId = Number(target.value);
@@ -450,7 +510,21 @@
                 <button class="pill pill-review">Review</button>
                 <button class="pill pill-suspended">Suspended</button>
             </div>
-            <div class="count-tag">{filtered.length} of {rows.length}</div>
+            <div class="pagination" role="group" aria-label="Pagination">
+                <button
+                    class="pill page-btn"
+                    onclick={() => goPage(pageOffset - PAGE_SIZE)}
+                    disabled={!canPrev}
+                    aria-label="Previous page"
+                >‹ Prev</button>
+                <span class="count-tag" aria-live="polite">{countTagText}</span>
+                <button
+                    class="pill page-btn"
+                    onclick={() => goPage(pageOffset + PAGE_SIZE)}
+                    disabled={!canNext}
+                    aria-label="Next page"
+                >Next ›</button>
+            </div>
         </div>
 
         <div class="list" role="list">
@@ -998,6 +1072,18 @@
     .preset-sel:disabled {
         opacity: 0.55;
         cursor: progress;
+    }
+    /* Phase 11-C: pagination cluster lives in the toolbar. Prev/Next pills
+       reuse .pill styling but stay disabled with reduced opacity so the
+       page-boundary state is unmistakable. */
+    .pagination {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--space-2);
+    }
+    .page-btn:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
     }
     .tag-edit {
         display: flex;
