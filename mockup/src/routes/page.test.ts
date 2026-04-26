@@ -105,7 +105,7 @@ describe("HomePage contract", () => {
         }
     });
 
-    test("fetchDecks rejects: silent fallback to fakeDecks, no error banner", async () => {
+    test("fetchDecks rejects: explicit banner surfaces server message; fakeDecks still rendered (Phase 10-B)", async () => {
         vi.mocked(fetchDecks).mockRejectedValueOnce(
             new Error("backend unreachable"),
         );
@@ -117,10 +117,16 @@ describe("HomePage contract", () => {
 
             expect(vi.mocked(fetchDecks)).toHaveBeenCalledTimes(1);
 
-            // Offline fallback is a silent degrade — no banner.
-            expect(container.querySelector(".error-banner")).toBeNull();
+            // Phase 10-B: banner appears with the server's error string so
+            // users know counts are stale (vs. 9-S browse-tree silent
+            // fallback — home page is the entry point, surfacing the
+            // outage here is more valuable than dead silence).
+            const banner = container.querySelector(".error-banner");
+            expect(banner).not.toBeNull();
+            expect(banner?.textContent).toContain("backend unreachable");
+            expect(banner?.textContent).toContain("cached counts");
 
-            // Falls back to the static fakeDecks list.
+            // Fake fallback still renders so the page isn't blank.
             const rows = container.querySelectorAll(".deck-grid .deck-row");
             expect(rows.length).toBe(fakeDecks.length);
 
@@ -137,6 +143,21 @@ describe("HomePage contract", () => {
             expect(
                 container.querySelector(".resume h2")?.textContent,
             ).toContain(fakeDecks[0].name);
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("fetchDecks success: no error banner on the page (Phase 10-B)", async () => {
+        vi.mocked(fetchDecks).mockResolvedValueOnce(decksOk);
+        vi.mocked(fetchHealth).mockResolvedValueOnce(healthLive);
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            // Banner is reserved for fetch failure — happy path stays clean.
+            expect(container.querySelector(".error-banner")).toBeNull();
         } finally {
             unmount(instance);
         }
