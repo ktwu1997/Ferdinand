@@ -93,6 +93,17 @@ export interface ApiFsrsEnabled {
     enabled: boolean;
 }
 
+/**
+ * Phase 15-B: collection-level FSRS health-check toggle. When enabled,
+ * the next FSRS optimize / enable-flip runs the trained-params sanity
+ * check that surfaces warnings for unstable parameter values. Setting
+ * this flag does NOT itself trigger an optimize or reschedule — it
+ * just changes what the next expensive operation will do.
+ */
+export interface ApiFsrsHealthCheck {
+    enabled: boolean;
+}
+
 export interface ApiFsrsOptimizeResponse {
     /** Number of training reviews after revlog filtering. 0 means no data. */
     fsrs_items: number;
@@ -497,6 +508,16 @@ export async function fetchFsrsEnabled(): Promise<ApiFsrsEnabled> {
 
 export async function putFsrsEnabled(req: ApiFsrsEnabled): Promise<ApiFsrsEnabled> {
     return putJson<ApiFsrsEnabled>("/api/fsrs/enabled", req);
+}
+
+export async function fetchFsrsHealthCheck(): Promise<ApiFsrsHealthCheck> {
+    return getJson<ApiFsrsHealthCheck>("/api/fsrs/health_check");
+}
+
+export async function putFsrsHealthCheck(
+    req: ApiFsrsHealthCheck,
+): Promise<ApiFsrsHealthCheck> {
+    return putJson<ApiFsrsHealthCheck>("/api/fsrs/health_check", req);
 }
 
 /**
