@@ -16,7 +16,7 @@ use anki::decks::DeckKind;
 use anki::notes::Note;
 use anki::notetype::NotetypeId;
 use anki::prelude::*;
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
@@ -164,6 +164,80 @@ pub async fn post_create(
     }))
 }
 
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct NoteDeleteResponse {
+    /// Number of cards removed alongside the note. `Collection::remove_notes`
+    /// returns this from its inner OpOutput; the count varies by notetype
+    /// (Basic = 1, Basic+Reverse = 2, Cloze = however many cloze
+    /// deletions the front field carried). Useful for an undo toast like
+    /// "Deleted note (3 cards)".
+    pub removed_card_count: usize,
+}
+
+/// Phase 13-A: delete a note (and all of its generated cards) by id.
+///
+/// Validation order (mirrors the create handler — cheap → expensive):
+///   1. id positive (400). Non-positive ids are nonsense as
+///      `NoteId` is i64 and the storage path treats them as missing,
+///      but we reject at the boundary so the error message is clear.
+///   2. Existence via `col.storage.get_note(nid)` (404). The high-level
+///      `remove_notes` returns Ok with cards_removed=0 for a missing
+///      id rather than erroring, so we must do the existence check
+///      ourselves to surface the 404 client behaviour the rest of the
+///      path-addressed handlers (cards, decks, deck_config) follow.
+///   3. `Collection::remove_notes` — transactional remove path that
+///      also drops every card generated from the note's templates.
+///
+/// The response body's `removed_card_count` is what `OpOutput<usize>`
+/// returned — i.e. cards removed, NOT the note count (which is always
+/// 1 here).
+#[utoipa::path(
+    delete,
+    path = "/api/notes/{id}",
+    responses(
+        (status = 200, body = NoteDeleteResponse),
+        (status = 400, body = crate::error::ApiError),
+        (status = 404, body = crate::error::ApiError),
+    ),
+    params(("id" = i64, Path, description = "Note id"))
+)]
+pub async fn delete_by_id(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> ApiResult<Json<NoteDeleteResponse>> {
+    validate_delete_id(id).map_err(ServerError::bad_request)?;
+
+    let mut col = state.col.lock().await;
+    let nid = NoteId(id);
+    // Pre-check via the storage layer so a missing id surfaces as 404
+    // instead of a silent zero-card delete. Same strict
+    // "path-addressed not-found" pattern as the deck_config / decks
+    // handlers (Phase 9-T `bug_caught` lesson).
+    if col.storage.get_note(nid)?.is_none() {
+        return Err(ServerError::not_found(format!("note {id} not found")));
+    }
+
+    // remove_notes returns OpOutput<usize> where the inner usize is the
+    // card count, NOT the note count. Surface that directly so a future
+    // undo toast can say "Deleted note (3 cards)" without an extra
+    // round-trip.
+    let removed_card_count = col.remove_notes(&[nid])?.output;
+
+    Ok(Json(NoteDeleteResponse { removed_card_count }))
+}
+
+/// Range-validate a delete-by-id request. Same `&'static str` extract
+/// pattern as `validate_request` above and the deck_config /
+/// decks / cards delete validators. Non-positive ids are rejected so
+/// "id 0 not found" can't bleed up as a 404 — it'd be confusing
+/// alongside the create handler's deck_id=0 sentinel rule.
+fn validate_delete_id(id: i64) -> Result<(), &'static str> {
+    if id <= 0 {
+        return Err("id must be a positive integer");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -239,6 +313,33 @@ mod tests {
         let r = req(vec!["forest", "shinrin"]);
         assert!(r.notetype_id.is_none());
         assert!(validate_request(&r).is_ok());
+    }
+
+    #[test]
+    fn validate_delete_id_rejects_non_positive() {
+        // 0 and negative ids are nonsense — NoteId is i64 but real
+        // notes always have positive epoch-ms ids. Reject at the
+        // boundary so the user sees "id must be a positive integer"
+        // instead of "note 0 not found".
+        assert_eq!(
+            validate_delete_id(0).unwrap_err(),
+            "id must be a positive integer"
+        );
+        assert_eq!(
+            validate_delete_id(-7).unwrap_err(),
+            "id must be a positive integer"
+        );
+    }
+
+    #[test]
+    fn validate_delete_id_accepts_epoch_ms_note_ids() {
+        // Real note ids are epoch-ms (e.g. notes the Add Note flow
+        // creates). The validation cap must accept full i64 range
+        // without overflow — same shape as the deck_config /
+        // notetype_id checks elsewhere in the codebase.
+        assert!(validate_delete_id(1).is_ok());
+        assert!(validate_delete_id(1_777_214_900_905).is_ok());
+        assert!(validate_delete_id(i64::MAX).is_ok());
     }
 
     #[test]

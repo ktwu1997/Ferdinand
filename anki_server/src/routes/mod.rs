@@ -8,7 +8,7 @@ pub mod stats;
 pub mod study;
 pub mod tags;
 
-use axum::routing::{get, patch, post};
+use axum::routing::{delete, get, patch, post};
 use axum::Router;
 use serde::Serialize;
 
@@ -24,6 +24,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/cards/{id}", get(cards::get_card))
         .route("/api/cards/{id}/suspend", post(cards::post_suspend))
         .route("/api/notes", post(notes::post_create))
+        .route("/api/notes/{id}", delete(notes::delete_by_id))
         .route("/api/study/queue", get(study::get_queue))
         .route("/api/study/answer", post(study::post_answer))
         .route(
