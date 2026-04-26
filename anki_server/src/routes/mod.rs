@@ -18,6 +18,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/health", get(health))
         .route("/api/decks", get(decks::list_decks))
         .route("/api/decks/{id}", patch(decks::patch_deck))
+        .route("/api/decks/{id}/preset", patch(decks::patch_deck_preset))
         .route("/api/cards", get(cards::list_cards))
         .route("/api/cards/{id}", get(cards::get_card))
         .route("/api/cards/{id}/suspend", post(cards::post_suspend))

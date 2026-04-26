@@ -5,10 +5,13 @@
     import {
         fetchCards,
         fetchDecks,
+        fetchDeckConfigs,
         fetchTags,
         patchDeckName,
+        patchDeckPreset,
         postCardSuspend,
         type ApiCardSummary,
+        type ApiDeckConfigListItem,
         type ApiDeckSummary,
     } from "$lib/api";
     import BrowseRow from "$lib/browse/BrowseRow.svelte";
@@ -41,6 +44,13 @@
     let isMutatingTreeDeck = $state(false);
     let treeDeckInput = $state<HTMLInputElement | null>(null);
 
+    // Phase 11-A: per-deck preset assignment. Presets list is loaded once
+    // on mount; the dropdown reflects the selected card's deck preset_id
+    // via a $derived lookup against liveDecks. Live mode only — fake-data
+    // mode shows an "offline" placeholder so we never lie about persisting.
+    let presets = $state<ApiDeckConfigListItem[] | null>(null);
+    let isMutatingPreset = $state(false);
+
     onMount(() => {
         // Cards drive the main `loading` flag (skeleton rows). Decks are
         // supplementary navigation — fire-and-forget so the row list never
@@ -68,6 +78,12 @@
             },
             () => undefined,
         );
+        fetchDeckConfigs().then(
+            (res) => {
+                presets = res.configs;
+            },
+            () => undefined,
+        );
     });
 
     // Tree sidebar tags. Live when present, fake otherwise — supplementary
@@ -86,6 +102,10 @@
         state: "new" | "learning" | "review" | "suspended" | string;
         deckName: string;
         deckEmoji: string;
+        // Phase 11-A: numeric deck id (live mode only). Null in fake-data
+        // mode so the preset-change handler can refuse to mutate against
+        // synthetic ids.
+        deckId: number | null;
     };
 
     let rows: Row[] = $derived(
@@ -101,6 +121,7 @@
                   state: c.state,
                   deckName: c.deck_name,
                   deckEmoji: "📚",
+                  deckId: c.deck_id,
               }))
             : fakeCards.map((c) => ({
                   id: c.id,
@@ -113,6 +134,7 @@
                   state: c.state,
                   deckName: fakeDecks.find((d) => d.id === c.deckId)?.name ?? "",
                   deckEmoji: fakeDecks.find((d) => d.id === c.deckId)?.emoji ?? "📚",
+                  deckId: null,
               })),
     );
 
@@ -125,6 +147,15 @@
         ),
     );
     let selected = $derived(filtered[selectedIdx] ?? filtered[0] ?? rows[0]);
+
+    // Phase 11-A: derive the selected card's current preset_id from the
+    // live deck list. Null when offline / fake-data / deck not yet loaded
+    // — drives the editor's "preset locked" placeholder.
+    let currentPresetId = $derived.by(() => {
+        if (!selected || !liveDecks || selected.deckId === null) return null;
+        const deck = liveDecks.find((d) => d.id === selected.deckId);
+        return deck?.preset_id ?? null;
+    });
 
     function toggle(section: string) {
         openSection[section] = !openSection[section];
@@ -259,6 +290,36 @@
             errorBanner = e instanceof Error ? e.message : "Rename failed";
         } finally {
             isMutatingTreeDeck = false;
+        }
+    }
+
+    async function applyPreset(e: Event) {
+        const target = e.target as HTMLSelectElement;
+        const newPresetId = Number(target.value);
+        if (!selected || !liveDecks || selected.deckId === null) {
+            errorBanner = "Preset change unavailable on fake data";
+            target.value = String(currentPresetId ?? "");
+            return;
+        }
+        if (newPresetId === currentPresetId) return;
+        const deckId = selected.deckId;
+        isMutatingPreset = true;
+        errorBanner = null;
+        try {
+            const res = await patchDeckPreset(deckId, newPresetId);
+            // Mirror into liveDecks so currentPresetId picks up the new
+            // value across card switches without a full refetch.
+            liveDecks = liveDecks.map((d) =>
+                d.id === deckId ? { ...d, preset_id: res.preset_id } : d,
+            );
+        } catch (err) {
+            errorBanner =
+                err instanceof Error ? err.message : "Couldn't change preset";
+            // Revert the visible select to the previous value on failure
+            // so the UI never lies about persistence.
+            target.value = String(currentPresetId ?? "");
+        } finally {
+            isMutatingPreset = false;
         }
     }
 
@@ -468,6 +529,24 @@
                         onclick={startEditDeck}
                         aria-label="Edit deck name"
                     >{selected?.deckEmoji} {selected?.deckName}</button>
+                {/if}
+            </div>
+            <div class="meta-row">
+                <span class="meta-key">Preset</span>
+                {#if presets === null || liveDecks === null || selected?.deckId == null}
+                    <span class="meta-val subtle">Offline — preset locked</span>
+                {:else}
+                    <select
+                        class="preset-sel"
+                        value={currentPresetId ?? presets[0]?.id ?? 1}
+                        disabled={isMutatingPreset}
+                        onchange={applyPreset}
+                        aria-label="Change preset for {selected?.deckName}"
+                    >
+                        {#each presets as p (p.id)}
+                            <option value={p.id}>{p.name}</option>
+                        {/each}
+                    </select>
                 {/if}
             </div>
             <div class="meta-row">
@@ -896,6 +975,29 @@
     .pill-sel:hover {
         background: var(--bg-hover);
         border-color: var(--border-strong);
+    }
+    /* Phase 11-A: native <select> styled to match the deck-pill so the
+       editor row reads as one consistent meta column. */
+    .preset-sel {
+        padding: 3px 8px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-full);
+        font-size: var(--text-xs);
+        color: var(--text);
+        background: transparent;
+        cursor: pointer;
+        transition:
+            background var(--duration-fast) var(--ease),
+            border-color var(--duration-fast) var(--ease),
+            opacity var(--duration-fast) var(--ease);
+    }
+    .preset-sel:hover {
+        background: var(--bg-hover);
+        border-color: var(--border-strong);
+    }
+    .preset-sel:disabled {
+        opacity: 0.55;
+        cursor: progress;
     }
     .tag-edit {
         display: flex;
