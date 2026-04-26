@@ -17,6 +17,7 @@ vi.mock("$lib/api", async (importOriginal) => {
         fetchFsrsEnabled: vi.fn(),
         patchDeckConfigById: vi.fn(),
         postDeckConfig: vi.fn(),
+        deleteDeckConfig: vi.fn(),
         putFsrsEnabled: vi.fn(),
         postFsrsOptimize: vi.fn(),
     };
@@ -24,6 +25,7 @@ vi.mock("$lib/api", async (importOriginal) => {
 
 import Page from "./+page.svelte";
 import {
+    deleteDeckConfig,
     fetchDeckConfigById,
     fetchDeckConfigs,
     fetchFsrsEnabled,
@@ -1186,6 +1188,194 @@ describe("SettingsPage create-preset flow (Phase 12-B)", () => {
             ).toBe(true);
             // No phantom switch to a preset id we never received.
             expect(vi.mocked(fetchDeckConfigById)).toHaveBeenCalledTimes(1);
+        } finally {
+            unmount(instance);
+        }
+    });
+});
+
+// Phase 13-B: contract tests for the delete-preset flow. Default preset
+// (id=1) must never expose a Delete button; user presets do, gated
+// behind a window.confirm() so a stray click can't drop a preset. On
+// success the page falls back to the first remaining preset (Default
+// when present) and the editor hydrates from the successor.
+describe("SettingsPage delete-preset flow (Phase 13-B)", () => {
+    let container: HTMLDivElement;
+    let confirmSpy: ReturnType<typeof vi.spyOn>;
+
+    const twoPresetList: ApiDeckConfigListResponse = {
+        configs: [
+            { id: 1, name: "Default" },
+            { id: 1777214900905, name: "Languages" },
+        ],
+    };
+
+    beforeEach(() => {
+        vi.resetAllMocks();
+        vi.mocked(fetchDeckConfigs).mockResolvedValue(twoPresetList);
+        vi.mocked(fetchDeckConfigById).mockResolvedValue(defaultConf);
+        vi.mocked(fetchFsrsEnabled).mockResolvedValue(fsrsOff);
+        // Default to "user clicked OK" so test bodies don't all repeat
+        // the spy install. Tests that need cancellation override per-call.
+        confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+        container = document.createElement("div");
+        document.body.appendChild(container);
+    });
+
+    afterEach(() => {
+        confirmSpy.mockRestore();
+        container.remove();
+    });
+
+    test("Delete button is hidden when Default preset is selected", async () => {
+        // Mount loads Default (id=1) by default; Delete must NOT render.
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            expect(
+                container.querySelector(".delete-preset-button"),
+            ).toBeNull();
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("Delete button appears when a non-Default preset is selected, and clicking it calls deleteDeckConfig + window.confirm", async () => {
+        // First call: id=1 mount. Second call: id=1777... after switch.
+        // Third call: Default after delete (successor hydrate).
+        vi.mocked(fetchDeckConfigById)
+            .mockResolvedValueOnce(defaultConf)
+            .mockResolvedValueOnce(
+                makeConf({ id: 1777214900905, name: "Languages" }),
+            )
+            .mockResolvedValueOnce(defaultConf);
+        vi.mocked(deleteDeckConfig).mockResolvedValueOnce({
+            removed_config_id: 1777214900905,
+        });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            // Switch to Languages so the Delete button materialises.
+            const select = container.querySelector<HTMLSelectElement>(
+                "#preset-select",
+            );
+            if (!select) throw new Error("#preset-select missing");
+            select.value = "1777214900905";
+            select.dispatchEvent(new Event("change", { bubbles: true }));
+            await settle();
+
+            const delBtn = container.querySelector(
+                ".delete-preset-button",
+            ) as HTMLButtonElement | null;
+            expect(delBtn).not.toBeNull();
+            delBtn?.click();
+            await settle();
+
+            // Confirm prompt fired and request went out exactly once.
+            expect(confirmSpy).toHaveBeenCalledTimes(1);
+            const confirmMsg = String(confirmSpy.mock.calls[0]?.[0] ?? "");
+            expect(confirmMsg).toContain("Languages");
+            expect(vi.mocked(deleteDeckConfig)).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(deleteDeckConfig)).toHaveBeenCalledWith(
+                1777214900905,
+            );
+            // Successor hydrate fires via switchPreset → fetchDeckConfigById.
+            // Mount=1, switch-to-Languages=2, delete-fallback-to-Default=3.
+            expect(vi.mocked(fetchDeckConfigById)).toHaveBeenCalledTimes(3);
+            expect(vi.mocked(fetchDeckConfigById)).toHaveBeenLastCalledWith(1);
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("cancelling the confirm prompt does not call deleteDeckConfig", async () => {
+        confirmSpy.mockReturnValue(false);
+        vi.mocked(fetchDeckConfigById)
+            .mockResolvedValueOnce(defaultConf)
+            .mockResolvedValueOnce(
+                makeConf({ id: 1777214900905, name: "Languages" }),
+            );
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            const select = container.querySelector<HTMLSelectElement>(
+                "#preset-select",
+            );
+            if (!select) throw new Error("#preset-select missing");
+            select.value = "1777214900905";
+            select.dispatchEvent(new Event("change", { bubbles: true }));
+            await settle();
+
+            (
+                container.querySelector(
+                    ".delete-preset-button",
+                ) as HTMLButtonElement
+            ).click();
+            await settle();
+
+            expect(confirmSpy).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(deleteDeckConfig)).not.toHaveBeenCalled();
+            // Languages still selected — fetchDeckConfigById called for
+            // mount + switch only (2x), no successor hydrate.
+            expect(vi.mocked(fetchDeckConfigById)).toHaveBeenCalledTimes(2);
+            // Preset selector still shows Languages.
+            const stillSelected = container.querySelector<HTMLSelectElement>(
+                "#preset-select",
+            );
+            expect(stillSelected?.value).toBe("1777214900905");
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("server reject (e.g. 404) surfaces inline; selection unchanged", async () => {
+        vi.mocked(fetchDeckConfigById)
+            .mockResolvedValueOnce(defaultConf)
+            .mockResolvedValueOnce(
+                makeConf({ id: 1777214900905, name: "Languages" }),
+            );
+        vi.mocked(deleteDeckConfig).mockRejectedValueOnce(
+            new Error("404 deck_config 1777214900905 not found"),
+        );
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            const select = container.querySelector<HTMLSelectElement>(
+                "#preset-select",
+            );
+            if (!select) throw new Error("#preset-select missing");
+            select.value = "1777214900905";
+            select.dispatchEvent(new Event("change", { bubbles: true }));
+            await settle();
+
+            (
+                container.querySelector(
+                    ".delete-preset-button",
+                ) as HTMLButtonElement
+            ).click();
+            await settle();
+
+            // Error surfaces in field-error inside .preset-row; selection
+            // stays on Languages so the user can retry.
+            const errors = Array.from(
+                container.querySelectorAll(".field-error"),
+            ).map((e) => e.textContent ?? "");
+            expect(
+                errors.some((t) => t.includes("404")),
+            ).toBe(true);
+            const stillSelected = container.querySelector<HTMLSelectElement>(
+                "#preset-select",
+            );
+            expect(stillSelected?.value).toBe("1777214900905");
+            // No successor hydrate fired since delete failed.
+            expect(vi.mocked(fetchDeckConfigById)).toHaveBeenCalledTimes(2);
         } finally {
             unmount(instance);
         }

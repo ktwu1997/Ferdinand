@@ -36,7 +36,9 @@ pub fn router() -> Router<AppState> {
         )
         .route(
             "/api/deck_config/{id}",
-            get(deck_config::get_by_id).patch(deck_config::patch_by_id),
+            get(deck_config::get_by_id)
+                .patch(deck_config::patch_by_id)
+                .delete(deck_config::delete_by_id),
         )
         .route(
             "/api/fsrs/enabled",
