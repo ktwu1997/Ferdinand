@@ -24,6 +24,13 @@ pub struct DeckConfigDefault {
     pub desired_retention: f32,
     /// Maximum review interval in days (1..=36500).
     pub maximum_review_interval: u32,
+    /// Daily cap on newly introduced cards (0..=9999). 0 pauses new cards.
+    pub new_per_day: u32,
+    /// Daily cap on review cards (0..=9999). 0 pauses reviews.
+    pub reviews_per_day: u32,
+    /// Soft per-card answer-time cap in seconds for "good"-side ratings
+    /// (1..=600). The desktop default is 60.
+    pub cap_answer_time_secs: u32,
     /// Persisted FSRS-6 parameters. Empty when the preset has never been
     /// optimized; populated by Phase 9-O `POST /api/fsrs/optimize`.
     pub fsrs_params: Vec<f32>,
@@ -33,6 +40,9 @@ pub struct DeckConfigDefault {
 pub struct DeckConfigPatch {
     pub desired_retention: Option<f32>,
     pub maximum_review_interval: Option<u32>,
+    pub new_per_day: Option<u32>,
+    pub reviews_per_day: Option<u32>,
+    pub cap_answer_time_secs: Option<u32>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -158,19 +168,8 @@ pub async fn patch_by_id(
     Path(id): Path<i64>,
     Json(patch): Json<DeckConfigPatch>,
 ) -> ApiResult<Json<DeckConfigDefault>> {
-    if let Some(r) = patch.desired_retention {
-        if !(0.70..=0.97).contains(&r) || !r.is_finite() {
-            return Err(ServerError::bad_request(
-                "desired_retention must be between 0.70 and 0.97",
-            ));
-        }
-    }
-    if let Some(m) = patch.maximum_review_interval {
-        if !(1..=36_500).contains(&m) {
-            return Err(ServerError::bad_request(
-                "maximum_review_interval must be between 1 and 36500",
-            ));
-        }
+    if let Err(msg) = validate_patch(&patch) {
+        return Err(ServerError::bad_request(msg));
     }
 
     let mut col = state.col.lock().await;
@@ -186,6 +185,15 @@ pub async fn patch_by_id(
     }
     if let Some(m) = patch.maximum_review_interval {
         conf.inner.maximum_review_interval = m;
+    }
+    if let Some(n) = patch.new_per_day {
+        conf.inner.new_per_day = n;
+    }
+    if let Some(r) = patch.reviews_per_day {
+        conf.inner.reviews_per_day = r;
+    }
+    if let Some(c) = patch.cap_answer_time_secs {
+        conf.inner.cap_answer_time_to_secs = c;
     }
 
     let fsrs = col.get_config_bool(BoolKey::Fsrs);
@@ -214,12 +222,157 @@ pub async fn patch_by_id(
     Ok(Json(to_response(&updated)))
 }
 
+/// Range-validate a DeckConfigPatch in isolation. Extracted so the rules
+/// can be unit-tested without a Collection. Returns the same human-readable
+/// strings the handler used to format inline.
+fn validate_patch(patch: &DeckConfigPatch) -> Result<(), &'static str> {
+    if let Some(r) = patch.desired_retention {
+        if !(0.70..=0.97).contains(&r) || !r.is_finite() {
+            return Err("desired_retention must be between 0.70 and 0.97");
+        }
+    }
+    if let Some(m) = patch.maximum_review_interval {
+        if !(1..=36_500).contains(&m) {
+            return Err("maximum_review_interval must be between 1 and 36500");
+        }
+    }
+    if let Some(n) = patch.new_per_day {
+        if n > 9_999 {
+            return Err("new_per_day must be between 0 and 9999");
+        }
+    }
+    if let Some(r) = patch.reviews_per_day {
+        if r > 9_999 {
+            return Err("reviews_per_day must be between 0 and 9999");
+        }
+    }
+    if let Some(c) = patch.cap_answer_time_secs {
+        if !(1..=600).contains(&c) {
+            return Err("cap_answer_time_secs must be between 1 and 600");
+        }
+    }
+    Ok(())
+}
+
 fn to_response(c: &DeckConfig) -> DeckConfigDefault {
     DeckConfigDefault {
         id: c.id.0,
         name: c.name.clone(),
         desired_retention: c.inner.desired_retention,
         maximum_review_interval: c.inner.maximum_review_interval,
+        new_per_day: c.inner.new_per_day,
+        reviews_per_day: c.inner.reviews_per_day,
+        cap_answer_time_secs: c.inner.cap_answer_time_to_secs,
         fsrs_params: c.inner.fsrs_params_6.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_patch() -> DeckConfigPatch {
+        DeckConfigPatch {
+            desired_retention: None,
+            maximum_review_interval: None,
+            new_per_day: None,
+            reviews_per_day: None,
+            cap_answer_time_secs: None,
+        }
+    }
+
+    #[test]
+    fn empty_patch_is_ok() {
+        assert!(validate_patch(&empty_patch()).is_ok());
+    }
+
+    #[test]
+    fn desired_retention_out_of_range() {
+        let mut p = empty_patch();
+        p.desired_retention = Some(0.50);
+        assert_eq!(
+            validate_patch(&p).unwrap_err(),
+            "desired_retention must be between 0.70 and 0.97"
+        );
+        p.desired_retention = Some(0.99);
+        assert!(validate_patch(&p).is_err());
+        p.desired_retention = Some(f32::NAN);
+        assert!(validate_patch(&p).is_err());
+    }
+
+    #[test]
+    fn maximum_review_interval_boundaries() {
+        let mut p = empty_patch();
+        p.maximum_review_interval = Some(0);
+        assert!(validate_patch(&p).is_err());
+        p.maximum_review_interval = Some(36_501);
+        assert!(validate_patch(&p).is_err());
+        p.maximum_review_interval = Some(1);
+        assert!(validate_patch(&p).is_ok());
+        p.maximum_review_interval = Some(36_500);
+        assert!(validate_patch(&p).is_ok());
+    }
+
+    #[test]
+    fn new_per_day_allows_zero_pause_but_caps_at_9999() {
+        let mut p = empty_patch();
+        p.new_per_day = Some(0);
+        assert!(
+            validate_patch(&p).is_ok(),
+            "0 must be allowed (pauses new cards intentionally)",
+        );
+        p.new_per_day = Some(9_999);
+        assert!(validate_patch(&p).is_ok());
+        p.new_per_day = Some(10_000);
+        assert_eq!(
+            validate_patch(&p).unwrap_err(),
+            "new_per_day must be between 0 and 9999"
+        );
+    }
+
+    #[test]
+    fn reviews_per_day_allows_zero_pause_but_caps_at_9999() {
+        let mut p = empty_patch();
+        p.reviews_per_day = Some(0);
+        assert!(validate_patch(&p).is_ok());
+        p.reviews_per_day = Some(9_999);
+        assert!(validate_patch(&p).is_ok());
+        p.reviews_per_day = Some(10_000);
+        assert!(validate_patch(&p).is_err());
+    }
+
+    #[test]
+    fn cap_answer_time_secs_must_be_one_to_six_hundred() {
+        let mut p = empty_patch();
+        // 0 is rejected — a 0-second cap would round-trip every answer to
+        // a hard rating, which is almost certainly not what the user wants.
+        p.cap_answer_time_secs = Some(0);
+        assert!(validate_patch(&p).is_err());
+        p.cap_answer_time_secs = Some(1);
+        assert!(validate_patch(&p).is_ok());
+        p.cap_answer_time_secs = Some(600);
+        assert!(validate_patch(&p).is_ok());
+        p.cap_answer_time_secs = Some(601);
+        assert_eq!(
+            validate_patch(&p).unwrap_err(),
+            "cap_answer_time_secs must be between 1 and 600"
+        );
+    }
+
+    #[test]
+    fn first_failure_short_circuits() {
+        // desired_retention is checked first — so even though new_per_day
+        // is also invalid, the user sees the retention message.
+        let p = DeckConfigPatch {
+            desired_retention: Some(2.0),
+            maximum_review_interval: None,
+            new_per_day: Some(99_999),
+            reviews_per_day: None,
+            cap_answer_time_secs: None,
+        };
+        assert_eq!(
+            validate_patch(&p).unwrap_err(),
+            "desired_retention must be between 0.70 and 0.97"
+        );
     }
 }
