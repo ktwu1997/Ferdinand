@@ -27,6 +27,10 @@ export default defineConfig({
                 "./src/test/stubs/app-stores.ts",
                 import.meta.url,
             ).pathname,
+            "$app/navigation": new URL(
+                "./src/test/stubs/app-navigation.ts",
+                import.meta.url,
+            ).pathname,
         },
     },
 });
