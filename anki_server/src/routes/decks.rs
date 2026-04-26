@@ -312,9 +312,124 @@ pub async fn post_create(
     }))
 }
 
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct DeckDeleteResponse {
+    pub removed_deck_id: i64,
+    /// Total cards removed across the deleted deck and all its children.
+    /// `remove_decks_and_child_decks` cascades through every descendant
+    /// in one transaction; orphaned notes are cleaned up automatically
+    /// by `remove_cards_and_orphaned_notes` (rslib decks/remove.rs:54).
+    pub removed_card_count: usize,
+}
+
+const DEFAULT_DECK_ID: i64 = 1;
+
+/// Pure-shape validation for a delete request. Same `&'static str`
+/// extract pattern as the create / preset / patch validators above.
+///
+/// Rejects:
+///   - non-positive ids (400) — same boundary rule as every other
+///     path-addressed handler in this server.
+///   - DeckId(1), the Default deck (400). rslib's `remove_single_deck`
+///     special-cases Default: it strips every card but keeps the deck
+///     row alive and resets its name (rslib decks/remove.rs:36-44).
+///     Letting that path run unchecked from a path-addressed delete
+///     would silently destroy data without removing the deck the
+///     caller asked to remove — exactly the "explicit not silent"
+///     anti-pattern Phase 13-A and 14-B carved out. Block it here.
+fn validate_delete_id(id: i64) -> Result<i64, &'static str> {
+    if id <= 0 {
+        return Err("id must be a positive integer");
+    }
+    if id == DEFAULT_DECK_ID {
+        return Err("Default deck cannot be deleted");
+    }
+    Ok(id)
+}
+
+/// Phase 15-A: delete a deck (and cascade through children + their cards).
+///
+/// Validation order (cheap → expensive):
+///   1. `validate_delete_id` rejects id<=0 and the protected Default
+///      deck before any Collection access.
+///   2. `col.get_deck(did)` strict existence check returns 404 on miss
+///      — same path-addressed lookup pattern as `patch_deck` above and
+///      13-A `delete_by_id` for notes. The downstream
+///      `remove_decks_and_child_decks` is a no-op for unknown ids
+///      (rslib decks/remove.rs:11), so without this guard the response
+///      would silently report 0 cards removed instead of a 404.
+///   3. `Collection::remove_decks_and_child_decks(&[did])` runs the
+///      transactional cascade: collects child decks, deletes all their
+///      cards via `remove_cards_and_orphaned_notes` (which folds in
+///      orphan-note cleanup), and removes the deck rows themselves.
+///
+/// Returns the deleted id and the total card count from the OpOutput
+/// payload so the caller can show "Removed N cards" feedback without a
+/// follow-up GET.
+#[utoipa::path(
+    delete,
+    path = "/api/decks/{id}",
+    responses(
+        (status = 200, body = DeckDeleteResponse),
+        (status = 400, body = crate::error::ApiError),
+        (status = 404, body = crate::error::ApiError),
+    ),
+    params(("id" = i64, Path, description = "Deck id"))
+)]
+pub async fn delete_by_id(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> ApiResult<Json<DeckDeleteResponse>> {
+    validate_delete_id(id).map_err(ServerError::bad_request)?;
+    let mut col = state.col.lock().await;
+    let did = DeckId(id);
+    if col.get_deck(did)?.is_none() {
+        return Err(ServerError::not_found(format!("deck {id} not found")));
+    }
+    let output = col.remove_decks_and_child_decks(&[did])?;
+    Ok(Json(DeckDeleteResponse {
+        removed_deck_id: id,
+        removed_card_count: output.output,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validate_delete_id_rejects_non_positive() {
+        for bad in [0, -1, i64::MIN] {
+            assert_eq!(
+                validate_delete_id(bad).unwrap_err(),
+                "id must be a positive integer",
+                "bad={bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_delete_id_rejects_default_deck() {
+        // The Default deck (id=1) is silently special-cased by rslib's
+        // remove path — it strips cards and renames the deck back to
+        // default rather than removing the row. Block it at the request
+        // boundary so a `DELETE /api/decks/1` can never silently destroy
+        // user data.
+        assert_eq!(
+            validate_delete_id(DEFAULT_DECK_ID).unwrap_err(),
+            "Default deck cannot be deleted"
+        );
+    }
+
+    #[test]
+    fn validate_delete_id_accepts_real_epoch_ms_id() {
+        // Real Anki deck ids are epoch-ms timestamps (e.g. demo deck
+        // 1776837237914 in /tmp/ferdinand_dev/collection.anki2).
+        let epoch_ms_id = 1_776_837_237_914_i64;
+        assert_eq!(validate_delete_id(epoch_ms_id).unwrap(), epoch_ms_id);
+        assert_eq!(validate_delete_id(2).unwrap(), 2);
+        assert_eq!(validate_delete_id(i64::MAX).unwrap(), i64::MAX);
+    }
 
     #[test]
     fn validate_preset_id_rejects_zero() {

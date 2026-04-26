@@ -3,6 +3,7 @@
     import { cards as fakeCards, decks as fakeDecks, savedSearches, tags as fakeTags } from "$lib/data";
     import Kbd from "$lib/components/Kbd.svelte";
     import {
+        deleteDeck,
         deleteNote,
         fetchCards,
         fetchDecks,
@@ -69,6 +70,12 @@
     let treeDeckDraft = $state("");
     let isMutatingTreeDeck = $state(false);
     let treeDeckInput = $state<HTMLInputElement | null>(null);
+
+    // Phase 15-A: tree-sidebar delete. Default deck (id=1) is rejected
+    // server-side, so the X glyph hides for that row defensively. Only
+    // one delete in flight at a time so a confirm-then-double-click
+    // can't race.
+    let treeDeletingDeckId = $state<number | null>(null);
 
     // Phase 11-A: per-deck preset assignment. Presets list is loaded once
     // on mount; the dropdown reflects the selected card's deck preset_id
@@ -358,6 +365,65 @@
             errorBanner = e instanceof Error ? e.message : "Rename failed";
         } finally {
             isMutatingTreeDeck = false;
+        }
+    }
+
+    // Phase 15-A: delete a tree-sidebar deck (cascades server-side
+    // through children + their cards + orphan notes). Pre-confirms via
+    // window.confirm so a misclicked × never silently destroys data.
+    // Refetches `liveCards` only when the server reports cards were
+    // removed — empty deck cleanup (the common 14-C residual case)
+    // costs zero extra round-trips.
+    async function deleteTreeDeck(deckId: number, name: string) {
+        if (!liveDecks) {
+            errorBanner = "Deck delete unavailable on fake data";
+            return;
+        }
+        // Default deck guard. Server returns 400 for id=1 too, but
+        // surfacing the warning client-side dodges the network round-trip
+        // and matches the hidden-X behaviour in the row template.
+        if (deckId === 1) {
+            errorBanner = "Default deck cannot be deleted";
+            return;
+        }
+        if (treeDeletingDeckId !== null) return;
+        const ok = window.confirm(
+            `Delete "${name}" and all its cards? This cannot be undone.`,
+        );
+        if (!ok) return;
+        treeDeletingDeckId = deckId;
+        errorBanner = null;
+        try {
+            const res = await deleteDeck(deckId);
+            // Filter the deleted deck out of liveDecks. Cascaded children
+            // weren't in the flat top-level liveDecks anyway (they live
+            // inside ApiDeckSummary.children), so a single .filter()
+            // suffices for the visible rows.
+            liveDecks = liveDecks.filter((d) => d.id !== deckId);
+            // Refetch the current card page only when the cascade actually
+            // removed cards — for the empty-deck cleanup case (e.g. the
+            // Phase 14-C residual decks) no cards changed and we save the
+            // round-trip.
+            if (res.removed_card_count > 0) {
+                const refreshed = await fetchCards(query, PAGE_SIZE, pageOffset);
+                liveCards = refreshed.cards;
+                liveTotal = refreshed.total;
+                // If the current page is now past the end (we deleted
+                // enough cards to shrink past `pageOffset`), step back.
+                if (pageOffset > 0 && liveCards.length === 0 && liveTotal > 0) {
+                    pageOffset = Math.max(0, liveTotal - PAGE_SIZE);
+                    const reclamped = await fetchCards(query, PAGE_SIZE, pageOffset);
+                    liveCards = reclamped.cards;
+                    liveTotal = reclamped.total;
+                }
+                if (selectedIdx >= (liveCards?.length ?? 0)) {
+                    selectedIdx = Math.max(0, (liveCards?.length ?? 1) - 1);
+                }
+            }
+        } catch (e) {
+            errorBanner = e instanceof Error ? e.message : "Delete failed";
+        } finally {
+            treeDeletingDeckId = null;
         }
     }
 
@@ -702,14 +768,26 @@
                                 <span class="count">{d.totalCards}</span>
                             </div>
                         {:else}
-                            <button
-                                class="item"
-                                ondblclick={() => startEditTreeDeck(d.id, d.name)}
-                            >
-                                <span class="emoji">{d.emoji}</span>
-                                <span>{d.name}</span>
-                                <span class="count">{d.totalCards}</span>
-                            </button>
+                            <div class="item-wrap">
+                                <button
+                                    class="item"
+                                    ondblclick={() => startEditTreeDeck(d.id, d.name)}
+                                >
+                                    <span class="emoji">{d.emoji}</span>
+                                    <span>{d.name}</span>
+                                    <span class="count">{d.totalCards}</span>
+                                </button>
+                                {#if liveDecks && typeof d.id === "number" && d.id !== 1}
+                                    <button
+                                        type="button"
+                                        class="delete-x"
+                                        disabled={treeDeletingDeckId !== null}
+                                        onclick={() =>
+                                            deleteTreeDeck(d.id as number, d.name)}
+                                        aria-label="Delete deck {d.name}"
+                                    >×</button>
+                                {/if}
+                            </div>
                         {/if}
                     {/each}
                 </div>
@@ -1058,6 +1136,44 @@
     .item:hover {
         background: var(--bg-hover);
         color: var(--text);
+    }
+    .item-wrap {
+        position: relative;
+        display: flex;
+        align-items: center;
+    }
+    .item-wrap:hover .delete-x,
+    .item-wrap:focus-within .delete-x {
+        opacity: 1;
+    }
+    .item-wrap .item {
+        padding-right: 1.6rem;
+    }
+    .delete-x {
+        position: absolute;
+        right: var(--space-1);
+        top: 50%;
+        transform: translateY(-50%);
+        width: 1.1rem;
+        height: 1.1rem;
+        line-height: 1;
+        font-size: 0.95rem;
+        color: var(--text-subtle);
+        background: transparent;
+        border-radius: var(--radius-sm);
+        opacity: 0;
+        transition:
+            opacity var(--duration-fast) var(--ease),
+            color var(--duration-fast) var(--ease),
+            background var(--duration-fast) var(--ease);
+    }
+    .delete-x:hover {
+        color: #c0392b;
+        background: var(--bg-hover);
+    }
+    .delete-x:disabled {
+        opacity: 0;
+        cursor: not-allowed;
     }
     .item-edit {
         background: var(--bg-hover);

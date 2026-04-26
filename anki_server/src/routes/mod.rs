@@ -22,7 +22,10 @@ pub fn router() -> Router<AppState> {
             "/api/decks",
             get(decks::list_decks).post(decks::post_create),
         )
-        .route("/api/decks/{id}", patch(decks::patch_deck))
+        .route(
+            "/api/decks/{id}",
+            patch(decks::patch_deck).delete(decks::delete_by_id),
+        )
         .route("/api/decks/{id}/preset", patch(decks::patch_deck_preset))
         .route("/api/cards", get(cards::list_cards))
         .route("/api/cards/{id}", get(cards::get_card))

@@ -30,10 +30,12 @@ vi.mock("$lib/api", async (importOriginal) => {
         patchNote: vi.fn(),
         postCardSuspend: vi.fn(),
         deleteNote: vi.fn(),
+        deleteDeck: vi.fn(),
     };
 });
 
 import {
+    deleteDeck,
     deleteNote,
     fetchCards,
     fetchDecks,
@@ -1441,6 +1443,169 @@ describe("BrowsePage delete-note flow (Phase 13-A)", () => {
             expect(
                 container.querySelector(".count-tag")?.textContent?.trim(),
             ).toBe("1–1 of 2");
+        } finally {
+            unmount(instance);
+        }
+    });
+});
+
+// Phase 15-A: tree-sidebar deck delete. Mirrors the deleteNote
+// describe — window.confirm gate → deleteDeck → liveDecks filter.
+// Server-side guards (Default protected, missing 404) are surfaced
+// in the same .error-banner slot as the rename/suspend/preset paths.
+describe("BrowsePage delete-deck flow (Phase 15-A)", () => {
+    let container: HTMLDivElement;
+    let confirmSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+        vi.resetAllMocks();
+        resetPageStub();
+        // Tree-delete tests need fetchDecks to succeed so liveDecks is
+        // populated and the X button renders. Per-test mockResolvedValueOnce
+        // overrides happen below.
+        vi.mocked(fetchTags).mockRejectedValue(new Error("tags unreachable"));
+        vi.mocked(fetchDeckConfigs).mockRejectedValue(
+            new Error("preset list unreachable"),
+        );
+        confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+        container = document.createElement("div");
+        document.body.appendChild(container);
+    });
+
+    afterEach(() => {
+        confirmSpy.mockRestore();
+        container.remove();
+    });
+
+    // Scope to the Decks section so .item / .item-wrap selectors don't
+    // collide with rows from the Tags / Saved-searches sections, which
+    // also use the .section-items / .item class names.
+    function decksSection(root: HTMLElement): Element {
+        const decksTitle = Array.from(
+            root.querySelectorAll<HTMLButtonElement>(".tree .section-title"),
+        ).find((t) => t.textContent?.includes("Decks"));
+        if (!decksTitle) throw new Error("Decks section-title not found");
+        const section = decksTitle.closest(".section");
+        if (!section) throw new Error("Decks section container missing");
+        return section;
+    }
+    function deckRowButtons(root: HTMLElement): HTMLButtonElement[] {
+        return Array.from(
+            decksSection(root).querySelectorAll<HTMLButtonElement>(
+                ".section-items .item",
+            ),
+        );
+    }
+    function deckRowWraps(root: HTMLElement): HTMLElement[] {
+        return Array.from(
+            decksSection(root).querySelectorAll<HTMLElement>(
+                ".section-items .item-wrap",
+            ),
+        );
+    }
+    function deleteXButton(
+        root: HTMLElement,
+        deckName: string,
+    ): HTMLButtonElement {
+        const btn = Array.from(
+            decksSection(root).querySelectorAll<HTMLButtonElement>(
+                ".section-items .delete-x",
+            ),
+        ).find(
+            (b) => b.getAttribute("aria-label") === `Delete deck ${deckName}`,
+        );
+        if (!btn) throw new Error(`delete-x button for "${deckName}" not found`);
+        return btn;
+    }
+
+    test("hover-X click → confirm → deleteDeck called with row id; row filtered from tree", async () => {
+        vi.mocked(fetchCards).mockResolvedValueOnce({ total: 0, cards: [] });
+        vi.mocked(fetchDecks).mockResolvedValueOnce({
+            decks: [
+                deck(101, "日本語", { total_in_deck: 137 }),
+                deck(202, "Português", { total_in_deck: 0 }),
+            ],
+        });
+        vi.mocked(deleteDeck).mockResolvedValueOnce({
+            removed_deck_id: 202,
+            removed_card_count: 0,
+        });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            // Both rows render with their X buttons.
+            expect(deckRowWraps(container).length).toBe(2);
+
+            const xBtn = deleteXButton(container, "Português");
+            xBtn.click();
+            await settle();
+
+            expect(confirmSpy).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(deleteDeck)).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(deleteDeck)).toHaveBeenCalledWith(202);
+
+            // Tree shrinks: only the surviving deck remains.
+            const remaining = deckRowButtons(container);
+            expect(remaining.length).toBe(1);
+            expect(remaining[0]?.textContent).toContain("日本語");
+            expect(container.querySelector(".error-banner")).toBeNull();
+            // No card refetch when removed_card_count=0 (the empty-deck
+            // cleanup branch). Mount-time fetchCards counts as 1.
+            expect(vi.mocked(fetchCards)).toHaveBeenCalledTimes(1);
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("cancel confirm: deleteDeck NOT called; row remains", async () => {
+        confirmSpy.mockReturnValue(false);
+        vi.mocked(fetchCards).mockResolvedValueOnce({ total: 0, cards: [] });
+        vi.mocked(fetchDecks).mockResolvedValueOnce({
+            decks: [deck(101, "日本語", { total_in_deck: 137 })],
+        });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            const xBtn = deleteXButton(container, "日本語");
+            xBtn.click();
+            await settle();
+
+            expect(confirmSpy).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(deleteDeck)).not.toHaveBeenCalled();
+            // Row still there.
+            expect(deckRowButtons(container).length).toBe(1);
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("server 400 (e.g. Default attempt slipping past UI): error-banner surfaces server message; row preserved", async () => {
+        vi.mocked(fetchCards).mockResolvedValueOnce({ total: 0, cards: [] });
+        vi.mocked(fetchDecks).mockResolvedValueOnce({
+            decks: [deck(101, "日本語", { total_in_deck: 137 })],
+        });
+        vi.mocked(deleteDeck).mockRejectedValueOnce(
+            new Error("400 Default deck cannot be deleted"),
+        );
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            const xBtn = deleteXButton(container, "日本語");
+            xBtn.click();
+            await settle();
+
+            expect(vi.mocked(deleteDeck)).toHaveBeenCalledTimes(1);
+            const banner = container.querySelector(".error-banner");
+            expect(banner).not.toBeNull();
+            expect(banner?.textContent).toContain("Default deck cannot be deleted");
+            // Row preserved on the rejected delete.
+            expect(deckRowButtons(container).length).toBe(1);
         } finally {
             unmount(instance);
         }

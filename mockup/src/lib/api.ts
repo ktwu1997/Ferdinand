@@ -354,6 +354,39 @@ export async function postNote(
     return postJson<ApiNoteCreateResponse>("/api/notes", req);
 }
 
+export interface ApiDeckDeleteResponse {
+    removed_deck_id: number;
+    /**
+     * Total cards removed across the deleted deck and all descendants.
+     * Useful for an undo toast like "Deleted deck (12 cards)". 0 when
+     * the deck (and all children) were already empty.
+     */
+    removed_card_count: number;
+}
+
+/**
+ * Phase 15-A: delete a deck (cascades through children + their cards
+ * + orphan notes). Server rejects id<=0 (400), the protected Default
+ * deck id=1 (400), and missing ids (404).
+ */
+export async function deleteDeck(id: number): Promise<ApiDeckDeleteResponse> {
+    const res = await fetch(`${apiBase()}/api/decks/${id}`, {
+        method: "DELETE",
+        headers: { accept: "application/json" },
+    });
+    if (!res.ok) {
+        let detail = res.statusText;
+        try {
+            const parsed = (await res.json()) as { message?: string };
+            if (parsed?.message) detail = parsed.message;
+        } catch {
+            // body wasn't JSON — fall through with statusText
+        }
+        throw new Error(`${res.status} ${detail}`);
+    }
+    return (await res.json()) as ApiDeckDeleteResponse;
+}
+
 export interface ApiNoteDeleteResponse {
     /**
      * Number of cards removed alongside the note. Varies by notetype
