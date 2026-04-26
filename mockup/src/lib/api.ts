@@ -280,6 +280,31 @@ export async function postDeckConfig(
     return postJson<ApiDeckConfigListItem>("/api/deck_config", req);
 }
 
+export interface ApiNoteCreateRequest {
+    deck_id: number;
+    /** Field values in template order; first is the sort field. */
+    fields: string[];
+    tags?: string[];
+    /** Optional notetype id; server falls back to "Basic" by name. */
+    notetype_id?: number;
+}
+
+export interface ApiNoteCreateResponse {
+    note_id: number;
+    card_count: number;
+}
+
+/**
+ * Phase 12-C: create a new note. Server validates first-field non-empty
+ * (400), deck existence (404), notetype existence (404), and field-count
+ * match (400) before persisting via Collection::add_note.
+ */
+export async function postNote(
+    req: ApiNoteCreateRequest,
+): Promise<ApiNoteCreateResponse> {
+    return postJson<ApiNoteCreateResponse>("/api/notes", req);
+}
+
 export async function fetchDeckConfigById(id: number): Promise<ApiDeckConfigDefault> {
     return getJson<ApiDeckConfigDefault>(`/api/deck_config/${id}`);
 }

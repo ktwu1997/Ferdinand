@@ -3,6 +3,7 @@ pub mod deck_config;
 pub mod decks;
 pub mod fsrs;
 pub mod media;
+pub mod notes;
 pub mod stats;
 pub mod study;
 pub mod tags;
@@ -22,6 +23,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/cards", get(cards::list_cards))
         .route("/api/cards/{id}", get(cards::get_card))
         .route("/api/cards/{id}/suspend", post(cards::post_suspend))
+        .route("/api/notes", post(notes::post_create))
         .route("/api/study/queue", get(study::get_queue))
         .route("/api/study/answer", post(study::post_answer))
         .route(

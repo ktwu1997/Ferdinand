@@ -79,7 +79,7 @@
             <LiveIndicator />
         </div>
         <div class="actions">
-            <Button variant="ghost" size="sm">
+            <Button variant="ghost" size="sm" href="/notes/new">
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
                 Add note
                 <Kbd>A</Kbd>
