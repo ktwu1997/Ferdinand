@@ -16,6 +16,12 @@
 //! `{note_count, card_count, deck_count, revlog_count}` so a top-bar
 //! summary like "12 decks · 206 cards · 38 notes" can hydrate from one
 //! FFI call instead of a fan-out of four.
+//! v5 surface (Phase 15-D): `_note_get_json` returns the raw note shape
+//! (`{id, notetype_id, notetype_name, fields, tags, mtime}`) for a given
+//! note id so a SwiftUI editor can populate every field without losing
+//! HTML to the server-side `{{Field}}` rendering. Returns NULL for both
+//! "missing handle" and "no such note" — callers distinguish via
+//! [`ferdinand_note_count`] or by remembering the id they asked for.
 //!
 //! ## Memory model
 //!
@@ -47,6 +53,7 @@ use std::ptr;
 use std::sync::OnceLock;
 
 use anki::collection::{Collection, CollectionBuilder};
+use anki::notes::NoteId;
 use anki::timestamp::TimestampSecs;
 use serde::Serialize;
 
@@ -432,10 +439,97 @@ pub unsafe extern "C" fn ferdinand_collection_stats_json(
     }
 }
 
+/// One row in the JSON returned by [`ferdinand_note_get_json`]. Mirrors
+/// the desktop editor's per-note shape — id, owning notetype id and
+/// human-readable name, raw field values (preserving HTML rather than
+/// the server-side `{{Field}}`-rendered front/back), tags, and the
+/// note's last-modified epoch seconds. Field count and order match the
+/// notetype's field definition; clients that need labels can still call
+/// the `/api/notetypes` endpoint for `field_names`.
+#[derive(Serialize)]
+struct FfiNote {
+    id: i64,
+    notetype_id: i64,
+    notetype_name: String,
+    fields: Vec<String>,
+    tags: Vec<String>,
+    mtime: i64,
+}
+
+/// Return a heap-allocated NUL-terminated JSON object describing a
+/// single note: `{"id":..., "notetype_id":..., "notetype_name":"...",
+/// "fields":["..."], "tags":["..."], "mtime":...}`. Returns NULL on a
+/// NULL handle, a non-positive `nid`, an unknown note id, or any
+/// underlying storage error.
+///
+/// Field values are returned exactly as stored (raw HTML preserved) so
+/// a native editor can round-trip through PATCH /api/notes/{id} without
+/// losing formatting — distinct from the rendered `front_html` /
+/// `back_html` exposed by the browse list endpoints.
+///
+/// Ownership: the returned pointer is heap-allocated and owned by the
+/// caller. Release with [`ferdinand_free_string`] exactly once — same
+/// contract as [`ferdinand_list_decks_json`],
+/// [`ferdinand_deck_tree_json`], and
+/// [`ferdinand_collection_stats_json`].
+///
+/// # Safety
+/// - `handle` must be a non-NULL pointer returned by
+///   [`ferdinand_collection_open`] that has not been closed.
+/// - Must NOT be called concurrently with any other FFI call on the
+///   same handle from another thread.
+#[no_mangle]
+pub unsafe extern "C" fn ferdinand_note_get_json(
+    handle: *mut FerdinandCollection,
+    nid: i64,
+) -> *mut c_char {
+    if handle.is_null() || nid <= 0 {
+        return ptr::null_mut();
+    }
+    // SAFETY: caller contract — `handle` is a valid open Collection and
+    // is not concurrently accessed from another thread. `get_notetype`
+    // mutates the notetype cache so we need &mut access; storage.get_note
+    // works through the &mut handle without further constraint.
+    let col = unsafe { &mut (*handle).inner };
+
+    let note = match col.storage.get_note(NoteId(nid)) {
+        Ok(Some(n)) => n,
+        // Missing note id and any underlying storage error both fold to
+        // NULL. The "no such note" case is the documented contract for
+        // a path-addressed lookup; finer-grained error reporting would
+        // require an out-parameter, which v5 deliberately avoids to
+        // keep the ABI single-pointer-return.
+        _ => return ptr::null_mut(),
+    };
+
+    let notetype = match col.get_notetype(note.notetype_id) {
+        Ok(Some(nt)) => nt,
+        _ => return ptr::null_mut(),
+    };
+
+    let payload = FfiNote {
+        id: note.id.0,
+        notetype_id: note.notetype_id.0,
+        notetype_name: notetype.name.clone(),
+        fields: note.fields().clone(),
+        tags: note.tags.clone(),
+        mtime: note.mtime.0,
+    };
+
+    let json = match serde_json::to_string(&payload) {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+    match CString::new(json) {
+        Ok(s) => s.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
 /// Release a heap C string previously returned by an `*_json` FFI
 /// function ([`ferdinand_list_decks_json`],
-/// [`ferdinand_deck_tree_json`], or
-/// [`ferdinand_collection_stats_json`]). NULL-safe so callers can
+/// [`ferdinand_deck_tree_json`], [`ferdinand_collection_stats_json`],
+/// or [`ferdinand_note_get_json`]). NULL-safe so callers can
 /// defensively free after a NULL return without branching.
 ///
 /// # Safety
@@ -771,6 +865,143 @@ mod tests {
         );
 
         // SAFETY: produced by ferdinand_collection_stats_json; documented release path.
+        unsafe { ferdinand_free_string(json_ptr) };
+        // SAFETY: `handle` was opened above and not yet closed.
+        unsafe { ferdinand_collection_close(handle) };
+        let _ = std::fs::remove_file(&tmpdir);
+    }
+
+    #[test]
+    fn note_get_json_returns_null_for_null_handle() {
+        // SAFETY: NULL is the documented sentinel for "no collection".
+        let p = unsafe { ferdinand_note_get_json(ptr::null_mut(), 1) };
+        assert!(p.is_null());
+    }
+
+    #[test]
+    fn note_get_json_returns_null_for_non_positive_nid() {
+        // 0 and negatives never correspond to a real note id; rejecting
+        // them before the storage hit keeps the contract symmetric with
+        // the path-addressed handlers in anki_server.
+        let tmpdir = std::env::temp_dir().join(format!(
+            "ferdinand_ffi_note_get_neg_test_{}_{}.anki2",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        ));
+        let cpath = CString::new(tmpdir.to_str().unwrap()).unwrap();
+
+        // SAFETY: `cpath` outlives the call.
+        let handle = unsafe { ferdinand_collection_open(cpath.as_ptr()) };
+        assert!(!handle.is_null(), "open should succeed for fresh path");
+
+        for bad in [0_i64, -1, i64::MIN] {
+            // SAFETY: `handle` is a freshly opened, single-threaded handle.
+            let p = unsafe { ferdinand_note_get_json(handle, bad) };
+            assert!(p.is_null(), "non-positive nid {bad} must return NULL");
+        }
+        // Missing note (positive id but no row) folds to the same NULL
+        // sentinel — the contract is "NULL means no payload", not
+        // "NULL means specifically id<=0".
+        // SAFETY: `handle` valid; nid>0.
+        let p = unsafe { ferdinand_note_get_json(handle, 999_999_999_999) };
+        assert!(p.is_null(), "missing note id must return NULL");
+
+        // SAFETY: `handle` was opened above and not yet closed.
+        unsafe { ferdinand_collection_close(handle) };
+        let _ = std::fs::remove_file(&tmpdir);
+    }
+
+    #[test]
+    fn note_get_json_round_trip_against_real_collection() {
+        // Build a fresh collection, add one note via the high-level
+        // Collection API, then ask for it back via the FFI and verify
+        // every documented field. Round-tripping through the public
+        // surface (rather than poking storage directly) keeps the test
+        // honest about the path real callers will take.
+        use anki::notes::Note;
+        use anki::notetype::NotetypeKind;
+
+        let tmpdir = std::env::temp_dir().join(format!(
+            "ferdinand_ffi_note_get_test_{}_{}.anki2",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        ));
+        let cpath = CString::new(tmpdir.to_str().unwrap()).unwrap();
+
+        // SAFETY: `cpath` outlives the call.
+        let handle = unsafe { ferdinand_collection_open(cpath.as_ptr()) };
+        assert!(!handle.is_null(), "open should succeed for fresh path");
+
+        // Seed a Basic note via the same code path the server uses.
+        let nid = {
+            // SAFETY: single-threaded; we do not call into FFI again
+            // until this borrow ends.
+            let col = unsafe { &mut (*handle).inner };
+            let basic = col
+                .get_notetype_by_name("Basic")
+                .expect("Basic notetype lookup must succeed")
+                .expect("Basic notetype always seeded on a fresh collection");
+            assert!(matches!(basic.config.kind(), NotetypeKind::Normal));
+            let mut note = Note::new(&basic);
+            note.set_field(0, "<b>Front HTML</b>")
+                .expect("set Front field");
+            note.set_field(1, "Back plain").expect("set Back field");
+            note.tags = vec!["seed".into(), "ffi".into()];
+            // Default deck (id=1) always exists on a fresh collection.
+            let did = anki::decks::DeckId(1);
+            col.add_note(&mut note, did)
+                .expect("add_note must succeed against fresh collection");
+            note.id.0
+        };
+        assert!(nid > 0, "added note must have a positive id, got {nid}");
+
+        // SAFETY: `handle` is a freshly opened, single-threaded handle.
+        let json_ptr = unsafe { ferdinand_note_get_json(handle, nid) };
+        assert!(
+            !json_ptr.is_null(),
+            "note_get_json should succeed for seeded note"
+        );
+
+        // SAFETY: produced by CString::into_raw above; not yet freed.
+        let json = unsafe { CStr::from_ptr(json_ptr) }
+            .to_str()
+            .expect("note_get_json must return valid UTF-8");
+        let payload: serde_json::Value =
+            serde_json::from_str(json).expect("note_get_json must return a valid JSON object");
+
+        assert_eq!(payload["id"], nid);
+        assert!(payload["notetype_id"].is_i64());
+        assert_eq!(payload["notetype_name"], "Basic");
+        let fields = payload["fields"].as_array().expect("fields must be array");
+        assert_eq!(fields.len(), 2);
+        // Raw HTML must survive — the whole point of v5 vs the rendered
+        // front_html/back_html exposed via the browse list endpoints.
+        assert_eq!(fields[0], "<b>Front HTML</b>");
+        assert_eq!(fields[1], "Back plain");
+        let tags = payload["tags"].as_array().expect("tags must be array");
+        assert_eq!(tags.len(), 2);
+        // Anki canonicalises tags into sorted order on `add_note`, so
+        // the round-tripped list comes back ["ffi", "seed"] regardless
+        // of insertion order. Assert by membership to keep the test
+        // robust against future sort-key changes.
+        let tag_set: std::collections::HashSet<&str> =
+            tags.iter().map(|t| t.as_str().unwrap()).collect();
+        assert!(tag_set.contains("seed"));
+        assert!(tag_set.contains("ffi"));
+        assert!(payload["mtime"].is_i64());
+        assert!(
+            payload["mtime"].as_i64().unwrap() > 0,
+            "mtime must be a positive epoch second, got {}",
+            payload["mtime"]
+        );
+
+        // SAFETY: produced by ferdinand_note_get_json; documented release path.
         unsafe { ferdinand_free_string(json_ptr) };
         // SAFETY: `handle` was opened above and not yet closed.
         unsafe { ferdinand_collection_close(handle) };
