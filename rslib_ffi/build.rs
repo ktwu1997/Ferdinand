@@ -26,5 +26,8 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
     // Surface the header path to downstream tooling (and test scripts).
-    println!("cargo:rustc-env=FERDINAND_FFI_HEADER={}", header_path.display());
+    println!(
+        "cargo:rustc-env=FERDINAND_FFI_HEADER={}",
+        header_path.display()
+    );
 }
