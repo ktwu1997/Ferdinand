@@ -198,10 +198,21 @@ export async function fetchStatsRecent(days = 30): Promise<ApiStatsRecent> {
     return getJson<ApiStatsRecent>(`/api/stats/recent?${query}`);
 }
 
-export async function fetchCards(q = "", limit = 50): Promise<ApiCardListResponse> {
+/**
+ * List cards via /api/cards. Phase 11-C: pagination via (offset, limit);
+ * `total` in the response reflects the unfiltered match count so callers
+ * can render "X-Y of Z" without an extra round-trip. Server caps limit
+ * at 500.
+ */
+export async function fetchCards(
+    q = "",
+    limit = 50,
+    offset = 0,
+): Promise<ApiCardListResponse> {
     const query = new URLSearchParams();
     if (q) query.set("q", q);
     query.set("limit", String(limit));
+    query.set("offset", String(offset));
     return getJson<ApiCardListResponse>(`/api/cards?${query}`);
 }
 

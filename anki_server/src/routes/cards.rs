@@ -58,33 +58,68 @@ pub struct ListQuery {
     pub q: Option<String>,
     #[serde(default = "default_limit")]
     pub limit: usize,
+    /// Phase 11-C: zero-based offset into the search-result list. Pagination
+    /// uses (offset, limit) addressing; total in the response is the unfiltered
+    /// match count so the client can compute "X-Y of Z" cheaply.
+    #[serde(default)]
+    pub offset: usize,
 }
 
 fn default_limit() -> usize {
     50
 }
 
-/// List cards matching an Anki search expression.
+/// Phase 11-C: per-request page-size cap. Above this, the build_summary()
+/// hot loop (template render per card) starts dominating request latency
+/// — the browse list paginates client-side anyway, so the server enforces
+/// a hard ceiling rather than letting an accidental `?limit=999999` hang
+/// a session.
+const MAX_LIMIT: usize = 500;
+
+/// Pure validation surface for the pagination params, mirroring the
+/// 9-R / 10-C / 11-B / 11-A validate_* extraction pattern. Returning a
+/// `&'static str` keeps the handler thin and lets unit tests cover every
+/// boundary without touching a Collection.
+fn validate_pagination(offset: usize, limit: usize) -> Result<(usize, usize), &'static str> {
+    if limit == 0 {
+        return Err("limit must be >= 1");
+    }
+    if limit > MAX_LIMIT {
+        return Err("limit must be <= 500");
+    }
+    Ok((offset, limit))
+}
+
+/// List cards matching an Anki search expression. Pagination is by
+/// (offset, limit); `total` reflects the full match count, not the slice
+/// returned, so the client can compute "X-Y of Z" without an extra call.
 #[utoipa::path(
     get,
     path = "/api/cards",
-    responses((status = 200, body = CardListResponse)),
+    responses(
+        (status = 200, body = CardListResponse),
+        (status = 400, body = crate::error::ApiError),
+    ),
     params(
         ("q" = Option<String>, Query, description = "Anki search expression"),
-        ("limit" = Option<usize>, Query, description = "Max cards returned")
+        ("limit" = Option<usize>, Query, description = "Page size, 1..=500 (default 50)"),
+        ("offset" = Option<usize>, Query, description = "Zero-based offset into result list (default 0)")
     )
 )]
 pub async fn list_cards(
     State(state): State<AppState>,
     Query(q): Query<ListQuery>,
 ) -> ApiResult<Json<CardListResponse>> {
+    let (offset, limit) =
+        validate_pagination(q.offset, q.limit).map_err(ServerError::bad_request)?;
     let mut col = state.col.lock().await;
     let search = q.q.as_deref().unwrap_or("").trim().to_string();
     let ids = col.search_cards(search.as_str(), SortMode::NoOrder)?;
     let total = ids.len();
     let cards = ids
         .into_iter()
-        .take(q.limit)
+        .skip(offset)
+        .take(limit)
         .map(|cid| build_summary(&mut col, cid))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Json(CardListResponse { total, cards }))
@@ -224,4 +259,41 @@ pub async fn post_suspend(
         id: cid.0,
         state: card_state_label(&card),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_pagination_rejects_zero_limit() {
+        assert!(validate_pagination(0, 0).is_err());
+        assert!(validate_pagination(50, 0).is_err());
+    }
+
+    #[test]
+    fn validate_pagination_rejects_oversize_limit() {
+        assert!(validate_pagination(0, MAX_LIMIT + 1).is_err());
+        assert!(validate_pagination(0, usize::MAX).is_err());
+    }
+
+    #[test]
+    fn validate_pagination_accepts_inclusive_boundaries() {
+        assert_eq!(validate_pagination(0, 1).unwrap(), (0, 1));
+        assert_eq!(validate_pagination(0, MAX_LIMIT).unwrap(), (0, MAX_LIMIT));
+    }
+
+    #[test]
+    fn validate_pagination_accepts_default_limit() {
+        let limit = default_limit();
+        assert_eq!(validate_pagination(0, limit).unwrap(), (0, 50));
+    }
+
+    #[test]
+    fn validate_pagination_passes_offset_through_unchanged() {
+        // Offset has no upper bound — Anki collections in the wild stay
+        // well under usize::MAX, and `.skip(huge)` is just an empty slice.
+        assert_eq!(validate_pagination(usize::MAX, 50).unwrap(), (usize::MAX, 50));
+        assert_eq!(validate_pagination(1_000_000, 50).unwrap(), (1_000_000, 50));
+    }
 }

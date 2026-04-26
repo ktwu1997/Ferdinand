@@ -155,7 +155,7 @@ describe("BrowsePage contract", () => {
         }
     });
 
-    test("fetchCards success: rows render from live payload; count-tag reflects length", async () => {
+    test("fetchCards success: rows render from live payload; count-tag reflects page range (Phase 11-C)", async () => {
         vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
 
         const instance = mount(Page, { target: container, props: {} });
@@ -163,7 +163,8 @@ describe("BrowsePage contract", () => {
             await settle();
 
             expect(vi.mocked(fetchCards)).toHaveBeenCalledTimes(1);
-            expect(vi.mocked(fetchCards)).toHaveBeenCalledWith("", 100);
+            // Phase 11-C: PAGE_SIZE=50, initial offset=0.
+            expect(vi.mocked(fetchCards)).toHaveBeenCalledWith("", 50, 0);
 
             expect(container.querySelectorAll(".list div.row").length).toBe(0);
             expect(container.querySelectorAll(".list button.row").length).toBe(
@@ -172,7 +173,7 @@ describe("BrowsePage contract", () => {
 
             expect(
                 container.querySelector(".count-tag")?.textContent?.trim(),
-            ).toBe("3 of 3");
+            ).toBe("1–3 of 3");
         } finally {
             unmount(instance);
         }
@@ -202,22 +203,26 @@ describe("BrowsePage contract", () => {
         }
     });
 
-    test("search filter: typing narrows rows and updates count-tag", async () => {
+    test("search filter: typing narrows rows; count-tag flips from page-range to filtered-of-page", async () => {
         vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
 
         const instance = mount(Page, { target: container, props: {} });
         try {
             await settle();
 
+            // Phase 11-C: empty-query state shows server page range.
             expect(
                 container.querySelector(".count-tag")?.textContent?.trim(),
-            ).toBe("3 of 3");
+            ).toBe("1–3 of 3");
 
             setSearch(container, "gato");
 
             expect(container.querySelectorAll(".list button.row").length).toBe(
                 1,
             );
+            // Search-active state shows filtered-of-page so the user sees
+            // "how many of THIS page match" — page-range only makes sense
+            // when the full page is on display.
             expect(
                 container.querySelector(".count-tag")?.textContent?.trim(),
             ).toBe("1 of 3");
@@ -741,6 +746,181 @@ describe("BrowsePage contract", () => {
                 expect(placeholder?.textContent).toContain(
                     "Offline — preset locked",
                 );
+            } finally {
+                unmount(instance);
+            }
+        });
+    });
+
+    describe("Phase 11-C pagination", () => {
+        const fullPageOf50: ApiCardListResponse = {
+            total: 207,
+            cards: Array.from({ length: 50 }, (_, i) =>
+                card(1000 + i, `<p>front-${i}</p>`, `<p>back-${i}</p>`),
+            ),
+        };
+
+        const lastPageOf7: ApiCardListResponse = {
+            total: 207,
+            cards: Array.from({ length: 7 }, (_, i) =>
+                card(2000 + i, `<p>front-${i}</p>`, `<p>back-${i}</p>`),
+            ),
+        };
+
+        test("initial fetch passes (q='', limit=50, offset=0); count-tag shows '1–50 of 207'", async () => {
+            vi.mocked(fetchCards).mockResolvedValueOnce(fullPageOf50);
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                expect(vi.mocked(fetchCards)).toHaveBeenCalledTimes(1);
+                expect(vi.mocked(fetchCards)).toHaveBeenCalledWith("", 50, 0);
+                expect(
+                    container.querySelector(".count-tag")?.textContent?.trim(),
+                ).toBe("1–50 of 207");
+                // Prev disabled at offset 0; Next enabled because there's more.
+                const prev = container.querySelector<HTMLButtonElement>(
+                    'button[aria-label="Previous page"]',
+                );
+                const next = container.querySelector<HTMLButtonElement>(
+                    'button[aria-label="Next page"]',
+                );
+                expect(prev?.disabled).toBe(true);
+                expect(next?.disabled).toBe(false);
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("Next click refetches with offset=50; count-tag updates to '51–100 of 207'", async () => {
+            const middlePage: ApiCardListResponse = {
+                total: 207,
+                cards: Array.from({ length: 50 }, (_, i) =>
+                    card(2000 + i, `<p>middle-${i}</p>`, `<p>back-${i}</p>`),
+                ),
+            };
+            vi.mocked(fetchCards)
+                .mockResolvedValueOnce(fullPageOf50)
+                .mockResolvedValueOnce(middlePage);
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const next = container.querySelector<HTMLButtonElement>(
+                    'button[aria-label="Next page"]',
+                );
+                next!.click();
+                await settle();
+
+                expect(vi.mocked(fetchCards)).toHaveBeenCalledTimes(2);
+                expect(vi.mocked(fetchCards)).toHaveBeenLastCalledWith(
+                    "",
+                    50,
+                    50,
+                );
+                expect(
+                    container.querySelector(".count-tag")?.textContent?.trim(),
+                ).toBe("51–100 of 207");
+                // Prev now enabled (we left offset 0); Next still enabled
+                // (50+50 < 207).
+                const prev = container.querySelector<HTMLButtonElement>(
+                    'button[aria-label="Previous page"]',
+                );
+                expect(prev?.disabled).toBe(false);
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("Last partial page (7 of 207 starting at offset 200): count-tag '201–207 of 207'; Next disabled", async () => {
+            const middle1: ApiCardListResponse = {
+                total: 207,
+                cards: Array.from({ length: 50 }, (_, i) =>
+                    card(3000 + i, `<p>m1-${i}</p>`, `<p>back</p>`),
+                ),
+            };
+            const middle2: ApiCardListResponse = {
+                total: 207,
+                cards: Array.from({ length: 50 }, (_, i) =>
+                    card(4000 + i, `<p>m2-${i}</p>`, `<p>back</p>`),
+                ),
+            };
+            const middle3: ApiCardListResponse = {
+                total: 207,
+                cards: Array.from({ length: 50 }, (_, i) =>
+                    card(5000 + i, `<p>m3-${i}</p>`, `<p>back</p>`),
+                ),
+            };
+            vi.mocked(fetchCards)
+                .mockResolvedValueOnce(fullPageOf50)
+                .mockResolvedValueOnce(middle1)
+                .mockResolvedValueOnce(middle2)
+                .mockResolvedValueOnce(middle3)
+                .mockResolvedValueOnce(lastPageOf7);
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                // Click Next four times to reach the 7-row tail page (offsets
+                // 50, 100, 150, 200).
+                for (let i = 0; i < 4; i++) {
+                    const next = container.querySelector<HTMLButtonElement>(
+                        'button[aria-label="Next page"]',
+                    );
+                    next!.click();
+                    await settle();
+                }
+
+                expect(vi.mocked(fetchCards)).toHaveBeenLastCalledWith(
+                    "",
+                    50,
+                    200,
+                );
+                expect(
+                    container.querySelector(".count-tag")?.textContent?.trim(),
+                ).toBe("201–207 of 207");
+                // Tail page reached: Next disabled, Prev still enabled.
+                const next = container.querySelector<HTMLButtonElement>(
+                    'button[aria-label="Next page"]',
+                );
+                const prev = container.querySelector<HTMLButtonElement>(
+                    'button[aria-label="Previous page"]',
+                );
+                expect(next?.disabled).toBe(true);
+                expect(prev?.disabled).toBe(false);
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("page fetch reject: errorBanner surfaces server message; offset stays where it was", async () => {
+            vi.mocked(fetchCards)
+                .mockResolvedValueOnce(fullPageOf50)
+                .mockRejectedValueOnce(new Error("503 server overloaded"));
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+                expect(
+                    container.querySelector(".count-tag")?.textContent?.trim(),
+                ).toBe("1–50 of 207");
+
+                const next = container.querySelector<HTMLButtonElement>(
+                    'button[aria-label="Next page"]',
+                );
+                next!.click();
+                await settle();
+
+                const banner = container.querySelector(".error-banner");
+                expect(banner).not.toBeNull();
+                expect(banner?.textContent).toContain("503 server overloaded");
+                // Offset unchanged on failure — count-tag still page 1.
+                expect(
+                    container.querySelector(".count-tag")?.textContent?.trim(),
+                ).toBe("1–50 of 207");
             } finally {
                 unmount(instance);
             }
