@@ -11,6 +11,11 @@
 //! API call. Returned JSON is a flat depth-first array — clients that
 //! need a tree can re-nest by `level` if desired, but the flat shape is
 //! cheaper for SwiftUI `List` rendering.
+//! v4 surface (Phase 14-D): `_note_count` mirrors `_deck_count` for the
+//! note table, and `_collection_stats_json` returns a single object with
+//! `{note_count, card_count, deck_count, revlog_count}` so a top-bar
+//! summary like "12 decks · 206 cards · 38 notes" can hydrate from one
+//! FFI call instead of a fan-out of four.
 //!
 //! ## Memory model
 //!
@@ -294,9 +299,7 @@ fn flatten_deck_tree(node: &anki_proto::decks::DeckTreeNode, out: &mut Vec<FfiDe
 /// - Must NOT be called concurrently with any other FFI call on the
 ///   same handle from another thread.
 #[no_mangle]
-pub unsafe extern "C" fn ferdinand_deck_tree_json(
-    handle: *mut FerdinandCollection,
-) -> *mut c_char {
+pub unsafe extern "C" fn ferdinand_deck_tree_json(handle: *mut FerdinandCollection) -> *mut c_char {
     if handle.is_null() {
         return ptr::null_mut();
     }
@@ -326,10 +329,114 @@ pub unsafe extern "C" fn ferdinand_deck_tree_json(
     }
 }
 
+/// Return the number of notes in the collection, or `-1` on error /
+/// NULL handle. Mirrors [`ferdinand_deck_count`] for the notes table —
+/// useful for a "N notes" footer label without paying the cost of
+/// listing every note.
+///
+/// # Safety
+/// - `handle` must be a non-NULL pointer returned by
+///   [`ferdinand_collection_open`] that has not been closed.
+/// - Must NOT be called concurrently with any other FFI call on the
+///   same handle from another thread.
+#[no_mangle]
+pub unsafe extern "C" fn ferdinand_note_count(handle: *const FerdinandCollection) -> i64 {
+    if handle.is_null() {
+        return -1;
+    }
+    // SAFETY: caller contract — `handle` is a valid open Collection and
+    // is not concurrently accessed from another thread. `db()` returns
+    // an immutable borrow of the SQLite connection.
+    let col = unsafe { &(*handle).inner };
+    col.storage
+        .db()
+        .query_row("SELECT COUNT(*) FROM notes", [], |row| row.get::<_, i64>(0))
+        .unwrap_or(-1)
+}
+
+/// Aggregated counts shape returned by [`ferdinand_collection_stats_json`].
+/// Each field is a non-negative count derived from the same source as the
+/// individual `*_count` FFI calls, so a SwiftUI top-bar can render
+/// "{deck_count} decks · {card_count} cards · {note_count} notes" with
+/// `revlog_count` available for a "since first review" subtitle.
+#[derive(Serialize)]
+struct FfiCollectionStats {
+    note_count: i64,
+    card_count: i64,
+    deck_count: i64,
+    revlog_count: i64,
+}
+
+/// Return a heap-allocated NUL-terminated JSON object with the four
+/// top-level table counts: `{"note_count": ..., "card_count": ...,
+/// "deck_count": ..., "revlog_count": ...}`. Returns NULL on a NULL
+/// handle or any underlying storage error.
+///
+/// `deck_count` matches [`ferdinand_deck_count`] (includes the implicit
+/// Default deck via `get_all_deck_names(false)`); the three table counts
+/// are direct `SELECT COUNT(*)` reads against the open SQLite handle.
+///
+/// Ownership: the returned pointer is heap-allocated and owned by the
+/// caller. Release with [`ferdinand_free_string`] exactly once — same
+/// contract as [`ferdinand_list_decks_json`] and
+/// [`ferdinand_deck_tree_json`].
+///
+/// # Safety
+/// - `handle` must be a non-NULL pointer returned by
+///   [`ferdinand_collection_open`] that has not been closed.
+/// - Must NOT be called concurrently with any other FFI call on the
+///   same handle from another thread.
+#[no_mangle]
+pub unsafe extern "C" fn ferdinand_collection_stats_json(
+    handle: *mut FerdinandCollection,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    // SAFETY: caller contract — `handle` is a valid open Collection and
+    // is not concurrently accessed from another thread. We borrow
+    // immutably; both `storage.db()` and `get_all_deck_names` take &self.
+    let col = unsafe { &(*handle).inner };
+
+    let db = col.storage.db();
+    let note_count: i64 = match db.query_row("SELECT COUNT(*) FROM notes", [], |r| r.get(0)) {
+        Ok(n) => n,
+        Err(_) => return ptr::null_mut(),
+    };
+    let card_count: i64 = match db.query_row("SELECT COUNT(*) FROM cards", [], |r| r.get(0)) {
+        Ok(n) => n,
+        Err(_) => return ptr::null_mut(),
+    };
+    let revlog_count: i64 = match db.query_row("SELECT COUNT(*) FROM revlog", [], |r| r.get(0)) {
+        Ok(n) => n,
+        Err(_) => return ptr::null_mut(),
+    };
+    let deck_count: i64 = match col.get_all_deck_names(false) {
+        Ok(names) => names.len() as i64,
+        Err(_) => return ptr::null_mut(),
+    };
+
+    let stats = FfiCollectionStats {
+        note_count,
+        card_count,
+        deck_count,
+        revlog_count,
+    };
+    let json = match serde_json::to_string(&stats) {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+    match CString::new(json) {
+        Ok(s) => s.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
 /// Release a heap C string previously returned by an `*_json` FFI
-/// function ([`ferdinand_list_decks_json`] or
-/// [`ferdinand_deck_tree_json`]). NULL-safe so callers can defensively
-/// free after a NULL return without branching.
+/// function ([`ferdinand_list_decks_json`],
+/// [`ferdinand_deck_tree_json`], or
+/// [`ferdinand_collection_stats_json`]). NULL-safe so callers can
+/// defensively free after a NULL return without branching.
 ///
 /// # Safety
 /// - `s` must be either NULL, or a pointer returned by an FFI function
@@ -389,10 +496,7 @@ mod tests {
         // *missing* file but valid parent succeeds. To reach the failure
         // branch we point at a parent dir that doesn't exist — open
         // can't create the .anki2 file there.
-        let path = CString::new(
-            "/tmp/ferdinand_ffi_no_such_parent_dir/coll.anki2",
-        )
-        .unwrap();
+        let path = CString::new("/tmp/ferdinand_ffi_no_such_parent_dir/coll.anki2").unwrap();
         // SAFETY: `path` is a valid NUL-terminated UTF-8 C string that
         // outlives the call.
         let p = unsafe { ferdinand_collection_open(path.as_ptr()) };
@@ -421,10 +525,8 @@ mod tests {
         // create the file if missing. `get_all_deck_names(false)` always
         // returns at least the implicit Default deck, so the count is
         // strictly positive.
-        let tmpdir = std::env::temp_dir().join(format!(
-            "ferdinand_ffi_test_{}.anki2",
-            std::process::id(),
-        ));
+        let tmpdir =
+            std::env::temp_dir().join(format!("ferdinand_ffi_test_{}.anki2", std::process::id(),));
         let tmpdir_str = tmpdir.to_str().expect("tempdir path is utf-8");
         let cpath = CString::new(tmpdir_str).unwrap();
 
@@ -487,8 +589,8 @@ mod tests {
         let json = unsafe { CStr::from_ptr(json_ptr) }
             .to_str()
             .expect("list_decks_json must return valid UTF-8");
-        let decks: Vec<serde_json::Value> = serde_json::from_str(json)
-            .expect("list_decks_json must return a valid JSON array");
+        let decks: Vec<serde_json::Value> =
+            serde_json::from_str(json).expect("list_decks_json must return a valid JSON array");
         assert!(!decks.is_empty(), "Default deck always present");
         // Shape check: every entry has id (i64), name (String),
         // preset_id (i64 or null).
@@ -545,14 +647,17 @@ mod tests {
 
         // SAFETY: `handle` is a freshly opened, single-threaded handle.
         let json_ptr = unsafe { ferdinand_deck_tree_json(handle) };
-        assert!(!json_ptr.is_null(), "deck_tree should succeed for fresh col");
+        assert!(
+            !json_ptr.is_null(),
+            "deck_tree should succeed for fresh col"
+        );
 
         // SAFETY: produced by CString::into_raw above; not yet freed.
         let json = unsafe { CStr::from_ptr(json_ptr) }
             .to_str()
             .expect("deck_tree_json must return valid UTF-8");
-        let rows: Vec<serde_json::Value> = serde_json::from_str(json)
-            .expect("deck_tree_json must return a valid JSON array");
+        let rows: Vec<serde_json::Value> =
+            serde_json::from_str(json).expect("deck_tree_json must return a valid JSON array");
         assert!(!rows.is_empty(), "Default deck always present");
         for r in &rows {
             assert!(r["id"].is_i64());
@@ -572,6 +677,100 @@ mod tests {
         );
 
         // SAFETY: produced by ferdinand_deck_tree_json; documented release path.
+        unsafe { ferdinand_free_string(json_ptr) };
+        // SAFETY: `handle` was opened above and not yet closed.
+        unsafe { ferdinand_collection_close(handle) };
+        let _ = std::fs::remove_file(&tmpdir);
+    }
+
+    #[test]
+    fn note_count_returns_minus_one_for_null_handle() {
+        // SAFETY: NULL is the documented sentinel for "no collection".
+        let n = unsafe { ferdinand_note_count(ptr::null()) };
+        assert_eq!(n, -1);
+    }
+
+    #[test]
+    fn note_count_round_trip_against_real_collection() {
+        // A fresh collection has zero notes — exercises the happy path
+        // and pins the contract that the count is non-negative on
+        // success (so callers can use `< 0` as the error sentinel).
+        let tmpdir = std::env::temp_dir().join(format!(
+            "ferdinand_ffi_note_count_test_{}_{}.anki2",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        ));
+        let cpath = CString::new(tmpdir.to_str().unwrap()).unwrap();
+
+        // SAFETY: `cpath` outlives the call.
+        let handle = unsafe { ferdinand_collection_open(cpath.as_ptr()) };
+        assert!(!handle.is_null(), "open should succeed for fresh path");
+
+        // SAFETY: `handle` is a freshly opened, single-threaded handle.
+        let n = unsafe { ferdinand_note_count(handle) };
+        assert_eq!(n, 0, "fresh collection has no notes, got {n}");
+
+        // SAFETY: `handle` was opened above and not yet closed.
+        unsafe { ferdinand_collection_close(handle) };
+        let _ = std::fs::remove_file(&tmpdir);
+    }
+
+    #[test]
+    fn collection_stats_json_returns_null_for_null_handle() {
+        // SAFETY: NULL is the documented sentinel for "no collection".
+        let p = unsafe { ferdinand_collection_stats_json(ptr::null_mut()) };
+        assert!(p.is_null());
+    }
+
+    #[test]
+    fn collection_stats_json_round_trip_against_real_collection() {
+        // Open a fresh collection, fetch the stats, parse the JSON, and
+        // verify the four-field shape. A fresh collection has the
+        // implicit Default deck (deck_count >= 1) and no rows in the
+        // notes/cards/revlog tables (counts == 0). All four fields must
+        // be non-negative on success.
+        let tmpdir = std::env::temp_dir().join(format!(
+            "ferdinand_ffi_stats_test_{}_{}.anki2",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        ));
+        let cpath = CString::new(tmpdir.to_str().unwrap()).unwrap();
+
+        // SAFETY: `cpath` outlives the call.
+        let handle = unsafe { ferdinand_collection_open(cpath.as_ptr()) };
+        assert!(!handle.is_null(), "open should succeed for fresh path");
+
+        // SAFETY: `handle` is a freshly opened, single-threaded handle.
+        let json_ptr = unsafe { ferdinand_collection_stats_json(handle) };
+        assert!(!json_ptr.is_null(), "stats should succeed for fresh col");
+
+        // SAFETY: produced by CString::into_raw above; not yet freed.
+        let json = unsafe { CStr::from_ptr(json_ptr) }
+            .to_str()
+            .expect("collection_stats_json must return valid UTF-8");
+        let stats: serde_json::Value = serde_json::from_str(json)
+            .expect("collection_stats_json must return a valid JSON object");
+        // Shape: object with the four documented keys.
+        assert!(stats["note_count"].is_i64());
+        assert!(stats["card_count"].is_i64());
+        assert!(stats["deck_count"].is_i64());
+        assert!(stats["revlog_count"].is_i64());
+        // Fresh-collection invariants.
+        assert_eq!(stats["note_count"], 0);
+        assert_eq!(stats["card_count"], 0);
+        assert_eq!(stats["revlog_count"], 0);
+        assert!(
+            stats["deck_count"].as_i64().unwrap() >= 1,
+            "Default deck always present, got {stats}"
+        );
+
+        // SAFETY: produced by ferdinand_collection_stats_json; documented release path.
         unsafe { ferdinand_free_string(json_ptr) };
         // SAFETY: `handle` was opened above and not yet closed.
         unsafe { ferdinand_collection_close(handle) };
