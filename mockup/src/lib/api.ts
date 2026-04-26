@@ -280,6 +280,35 @@ export async function postDeckConfig(
     return postJson<ApiDeckConfigListItem>("/api/deck_config", req);
 }
 
+export interface ApiDeckConfigDeleteResponse {
+    removed_config_id: number;
+}
+
+/**
+ * Phase 13-B: delete a preset by id. Server rejects id=1 (Default,
+ * 400) and missing ids (404). Decks that used the deleted preset are
+ * reassigned to Default by the server (matches desktop behavior).
+ */
+export async function deleteDeckConfig(
+    id: number,
+): Promise<ApiDeckConfigDeleteResponse> {
+    const res = await fetch(`${apiBase()}/api/deck_config/${id}`, {
+        method: "DELETE",
+        headers: { accept: "application/json" },
+    });
+    if (!res.ok) {
+        let detail = res.statusText;
+        try {
+            const parsed = (await res.json()) as { message?: string };
+            if (parsed?.message) detail = parsed.message;
+        } catch {
+            // body wasn't JSON — fall through with statusText
+        }
+        throw new Error(`${res.status} ${detail}`);
+    }
+    return (await res.json()) as ApiDeckConfigDeleteResponse;
+}
+
 export interface ApiNoteCreateRequest {
     deck_id: number;
     /** Field values in template order; first is the sort field. */

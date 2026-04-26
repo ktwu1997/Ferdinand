@@ -2,6 +2,7 @@
     import { onMount } from "svelte";
     import Card from "$lib/components/Card.svelte";
     import {
+        deleteDeckConfig,
         fetchDeckConfigById,
         fetchDeckConfigs,
         fetchFsrsEnabled,
@@ -11,6 +12,8 @@
         putFsrsEnabled,
         type ApiDeckConfigListItem,
     } from "$lib/api";
+
+    const DEFAULT_PRESET_ID = 1;
 
     let sections = [
         { id: "profile", label: "Profile" },
@@ -72,6 +75,12 @@
     let newPresetName = $state("");
     let savingCreatePreset = $state(false);
     let errorCreatePreset: string | null = $state(null);
+
+    // Phase 13-B: delete-preset state. We don't have a busy-overlay UX, so
+    // disable the Delete button + show inline status while the request is
+    // in flight. Errors surface in the same field-error slot as create.
+    let deletingPreset = $state(false);
+    let errorDeletePreset: string | null = $state(null);
 
     function applyPresetSnapshot(
         conf: {
@@ -168,6 +177,46 @@
         creatingPreset = false;
         newPresetName = "";
         errorCreatePreset = null;
+    }
+
+    async function deletePreset(id: number, name: string): Promise<void> {
+        // Two-step delete: native confirm() keeps the dependency surface
+        // minimal — no modal component, no focus-trap to maintain. The
+        // copy includes the preset name so a slip on the dropdown
+        // doesn't take out the wrong preset.
+        if (
+            typeof window !== "undefined" &&
+            !window.confirm(
+                `Delete preset "${name}"? Decks using it will fall back to Default.`,
+            )
+        ) {
+            return;
+        }
+        deletingPreset = true;
+        errorDeletePreset = null;
+        try {
+            await deleteDeckConfig(id);
+            // Drop the deleted row from the local list and pick a successor
+            // — Default if it survives, else the first remaining preset.
+            // Server-side delete already reassigned orphan decks to Default
+            // so we don't have to refetch /api/decks.
+            presets = presets.filter((p) => p.id !== id);
+            const successor =
+                presets.find((p) => p.id === DEFAULT_PRESET_ID) ?? presets[0];
+            if (successor) {
+                // selectedPresetId may be the just-deleted id; clear first
+                // so switchPreset's short-circuit doesn't see a stale match.
+                selectedPresetId = null;
+                await switchPreset(successor.id);
+            } else {
+                selectedPresetId = null;
+            }
+        } catch (e) {
+            errorDeletePreset =
+                e instanceof Error ? e.message : "Failed to delete preset";
+        } finally {
+            deletingPreset = false;
+        }
     }
 
     async function switchPreset(nextId: number): Promise<void> {
@@ -379,6 +428,31 @@
                         >
                             + New preset
                         </button>
+                    {/if}
+                    {#if !creatingPreset && selectedPresetId !== null && selectedPresetId !== DEFAULT_PRESET_ID}
+                        {@const sel = presets.find(
+                            (p) => p.id === selectedPresetId,
+                        )}
+                        {#if sel}
+                            <button
+                                type="button"
+                                class="delete-preset-button"
+                                onclick={() => deletePreset(sel.id, sel.name)}
+                                disabled={disabledControls() ||
+                                    switchingPreset ||
+                                    deletingPreset}
+                            >
+                                Delete
+                            </button>
+                        {/if}
+                    {/if}
+                    {#if deletingPreset}
+                        <span class="saving">Deleting…</span>
+                    {/if}
+                    {#if errorDeletePreset}
+                        <span class="field-error" role="alert"
+                            >{errorDeletePreset}</span
+                        >
                     {/if}
                 </div>
                 {#if creatingPreset}
@@ -796,7 +870,8 @@
     }
     .new-preset-button,
     .save-preset-button,
-    .cancel-preset-button {
+    .cancel-preset-button,
+    .delete-preset-button {
         background: var(--bg);
         color: var(--text);
         border: 1px solid var(--border);
@@ -807,14 +882,22 @@
     }
     .new-preset-button:hover:not(:disabled),
     .save-preset-button:hover:not(:disabled),
-    .cancel-preset-button:hover:not(:disabled) {
+    .cancel-preset-button:hover:not(:disabled),
+    .delete-preset-button:hover:not(:disabled) {
         border-color: var(--text-muted);
     }
     .new-preset-button:disabled,
     .save-preset-button:disabled,
-    .cancel-preset-button:disabled {
+    .cancel-preset-button:disabled,
+    .delete-preset-button:disabled {
         opacity: 0.55;
         cursor: not-allowed;
+    }
+    .delete-preset-button {
+        color: var(--danger, #c44);
+    }
+    .delete-preset-button:hover:not(:disabled) {
+        border-color: var(--danger, #c44);
     }
     .save-preset-button {
         background: var(--accent, #c0c);

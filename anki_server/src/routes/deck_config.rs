@@ -320,6 +320,109 @@ pub async fn post_create(
     }))
 }
 
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct DeckConfigDeleteResponse {
+    pub removed_config_id: i64,
+}
+
+/// Phase 13-B: delete a preset by id.
+///
+/// Deleting the seeded Default preset (id=1) is rejected at the API
+/// boundary (400) — every collection needs at least one preset, and
+/// rslib's reassignment loop falls back to `configs.last()` for orphaned
+/// decks, so dropping Default would leave the only-config case
+/// undefined. Missing ids return 404 (path-addressed; same strict
+/// `fallback=false` semantics as `get_by_id` / `patch_by_id`).
+///
+/// Persistence path: `Collection::update_deck_configs` with
+/// `removed_config_ids=[id]`. The endpoint must still pass a non-empty
+/// `configs` slice (rslib `update.rs:160` `require!`); we send the
+/// Default config as a no-op upsert placeholder. `target_deck_id=0` —
+/// matching the Phase 12-B create trick — keeps the per-deck
+/// reassignment loop from firing for any real deck via the
+/// "selected_deck_ids" branch (DeckId(0) doesn't match anything).
+///
+/// Side effect, by upstream design: decks whose `config_id` was the
+/// removed id get reassigned to `configs.last()` (= Default in our
+/// placeholder vec) via the "previous config removed" branch in
+/// rslib `update.rs:233-241`. This is the same behaviour the desktop
+/// deck-options screen produces — orphan decks fall back to Default.
+#[utoipa::path(
+    delete,
+    path = "/api/deck_config/{id}",
+    responses(
+        (status = 200, body = DeckConfigDeleteResponse),
+        (status = 400, body = crate::error::ApiError),
+        (status = 404, body = crate::error::ApiError),
+    ),
+    params(("id" = i64, Path, description = "Deck config id"))
+)]
+pub async fn delete_by_id(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> ApiResult<Json<DeckConfigDeleteResponse>> {
+    validate_delete_id(id).map_err(ServerError::bad_request)?;
+
+    let mut col = state.col.lock().await;
+    let dcid = DeckConfigId(id);
+    // fallback=false: a missing id returns 404 instead of silently
+    // routing onto the Default preset. Same pre-flight check as the
+    // GET/PATCH handlers above.
+    let placeholder = col
+        .get_deck_config(DEFAULT_PRESET_ID, false)?
+        .ok_or_else(|| ServerError::from(anyhow!("Default preset id=1 missing — collection is corrupt")))?;
+    if col.get_deck_config(dcid, false)?.is_none() {
+        return Err(ServerError::not_found(format!("deck_config {id} not found")));
+    }
+
+    let fsrs = col.get_config_bool(BoolKey::Fsrs);
+    let fsrs_health_check = col.get_config_bool(BoolKey::FsrsHealthCheck);
+    let new_cards_ignore_review_limit = col.get_config_bool(BoolKey::NewCardsIgnoreReviewLimit);
+    let apply_all_parent_limits = col.get_config_bool(BoolKey::ApplyAllParentLimits);
+
+    let req = UpdateDeckConfigsRequest {
+        // DeckId(0) matches no real deck, so the per-deck reassignment
+        // loop never fires for selected decks. Decks that used the
+        // removed preset still get reassigned to configs.last() (=
+        // Default) via the "previous config removed" branch — this is
+        // the desktop's standard behaviour for orphaned decks.
+        target_deck_id: DeckId(0),
+        // Default placeholder satisfies update.rs:160's require!() and
+        // also serves as the configs.last() fallback for orphaned decks.
+        configs: vec![placeholder],
+        removed_config_ids: vec![dcid],
+        mode: UpdateDeckConfigsMode::Normal,
+        card_state_customizer: String::new(),
+        limits: Limits::default(),
+        new_cards_ignore_review_limit,
+        apply_all_parent_limits,
+        fsrs,
+        fsrs_reschedule: false,
+        fsrs_health_check,
+    };
+    col.update_deck_configs(req)?;
+
+    Ok(Json(DeckConfigDeleteResponse { removed_config_id: id }))
+}
+
+/// Range-validate a delete-by-id request. Extracted so the rules
+/// unit-test without a Collection. Default preset (id=1) is reserved
+/// because (a) every fresh collection seeds it and (b) the rslib
+/// reassignment loop falls back to `configs.last()` for orphaned decks
+/// — making the only-config case undefined would be hard to recover
+/// from. Non-positive ids are rejected before the storage lookup so
+/// we never confuse "id 0 doesn't exist" with "DeckId(0) is the
+/// create-only sentinel".
+fn validate_delete_id(id: i64) -> Result<(), &'static str> {
+    if id <= 0 {
+        return Err("id must be a positive integer");
+    }
+    if id == DEFAULT_PRESET_ID.0 {
+        return Err("the Default preset cannot be deleted");
+    }
+    Ok(())
+}
+
 /// Range-validate a `DeckConfigCreateRequest`'s name. Extracted so the
 /// rules unit-test without a Collection — same `&'static str` extract
 /// pattern as `validate_patch` and `validate_preset_id`.
@@ -522,6 +625,42 @@ mod tests {
         // the duplicate check stable across "hello" vs "hello   ".
         assert_eq!(validate_create_name("  hello  ").unwrap(), "hello");
         assert_eq!(validate_create_name("\nfoo\t").unwrap(), "foo");
+    }
+
+    #[test]
+    fn validate_delete_id_rejects_default_preset() {
+        // id=1 is the seeded Default. Removing it would leave the
+        // configs.last() reassignment branch undefined for orphaned
+        // decks on the only-config case.
+        assert_eq!(
+            validate_delete_id(1).unwrap_err(),
+            "the Default preset cannot be deleted"
+        );
+    }
+
+    #[test]
+    fn validate_delete_id_rejects_non_positive() {
+        // 0 is the create-only target_deck_id sentinel; negative ids
+        // can't index any real preset. Both rejected at the boundary
+        // so the storage layer never sees them.
+        assert_eq!(
+            validate_delete_id(0).unwrap_err(),
+            "id must be a positive integer"
+        );
+        assert_eq!(
+            validate_delete_id(-7).unwrap_err(),
+            "id must be a positive integer"
+        );
+    }
+
+    #[test]
+    fn validate_delete_id_accepts_epoch_ms_user_preset_ids() {
+        // Real user presets carry epoch-ms ids (e.g. 1777214900905
+        // from the Phase 12-B Smoke preset). The validation cap must
+        // accept 64-bit values without overflow.
+        assert!(validate_delete_id(1_777_214_900_905).is_ok());
+        assert!(validate_delete_id(2).is_ok());
+        assert!(validate_delete_id(i64::MAX).is_ok());
     }
 
     #[test]
