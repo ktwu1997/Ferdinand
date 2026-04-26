@@ -2,11 +2,13 @@
     import { onMount } from "svelte";
     import Card from "$lib/components/Card.svelte";
     import {
-        fetchDeckConfigDefault,
+        fetchDeckConfigById,
+        fetchDeckConfigs,
         fetchFsrsEnabled,
-        patchDeckConfigDefault,
+        patchDeckConfigById,
         postFsrsOptimize,
         putFsrsEnabled,
+        type ApiDeckConfigListItem,
     } from "$lib/api";
 
     let sections = [
@@ -20,12 +22,16 @@
 
     let active = $state("fsrs");
 
-    // FSRS settings wired to anki_server (Phase 9-N2; optimize/reschedule 9-O2).
-    // Server stores desired_retention as a 0.70..=0.97 float; UI works in
-    // integer percent and converts at the boundary. Persistence fires on
-    // change/blur (not input/keystroke) so a slider drag is one PATCH.
+    // FSRS settings wired to anki_server (Phase 9-N2; optimize/reschedule 9-O2;
+    // multi-preset selector 9-O''). Server stores desired_retention as a
+    // 0.70..=0.97 float; UI works in integer percent and converts at the
+    // boundary. Persistence fires on change/blur (not input/keystroke) so a
+    // slider drag is one PATCH.
     let loading = $state(true);
     let loadError: string | null = $state(null);
+    let presets: ApiDeckConfigListItem[] = $state([]);
+    let selectedPresetId = $state<number | null>(null);
+    let switchingPreset = $state(false);
     let retentionPct = $state(90);
     let maxInterval = $state(36500);
     let fsrsEnabled = $state(false);
@@ -39,26 +45,51 @@
     // Optimize state. Phase 9-O' hydrates params from GET response so the
     // weights grid survives page reload. paramsSource distinguishes "loaded
     // from disk" hint copy from "trained this run" — the two share UI but
-    // mean different things to the user.
+    // mean different things to the user. Re-evaluated on every preset switch
+    // so the hint never lies about the active preset's training history.
     let optimizing = $state(false);
     let errorOptimize: string | null = $state(null);
     let optimizeFsrsItems: number | null = $state(null);
     let optimizedParams: number[] = $state([]);
     let paramsSource: "disk" | "fresh" | null = $state(null);
 
+    function applyPresetSnapshot(
+        conf: { desired_retention: number; maximum_review_interval: number; fsrs_params: number[] },
+    ): void {
+        retentionPct = Math.round(conf.desired_retention * 100);
+        maxInterval = conf.maximum_review_interval;
+        // Copy the array — assigning the incoming reference can leave Svelte's
+        // $state proxy referencing a non-tracked array if the caller mutates
+        // the source later. Snapshot semantics are what the UI wants here.
+        if (conf.fsrs_params.length > 0) {
+            optimizedParams = [...conf.fsrs_params];
+            paramsSource = "disk";
+        } else {
+            optimizedParams = [];
+            paramsSource = null;
+        }
+        // Drop any "fresh" optimize-result hint left over from a prior preset.
+        optimizeFsrsItems = null;
+    }
+
     onMount(async () => {
         try {
-            const [conf, fsrs] = await Promise.all([
-                fetchDeckConfigDefault(),
+            const [list, fsrs] = await Promise.all([
+                fetchDeckConfigs(),
                 fetchFsrsEnabled(),
             ]);
-            retentionPct = Math.round(conf.desired_retention * 100);
-            maxInterval = conf.maximum_review_interval;
+            presets = list.configs;
             fsrsEnabled = fsrs.enabled;
-            if (conf.fsrs_params.length > 0) {
-                optimizedParams = conf.fsrs_params;
-                paramsSource = "disk";
+            // Default preset id=1 always exists on a fresh collection; fall
+            // back to the first listed preset only when the seeded row is
+            // absent (corrupt/stripped collection).
+            const initial = presets.find((p) => p.id === 1) ?? presets[0];
+            if (!initial) {
+                throw new Error("No deck config presets available");
             }
+            selectedPresetId = initial.id;
+            const conf = await fetchDeckConfigById(initial.id);
+            applyPresetSnapshot(conf);
         } catch (e) {
             loadError = e instanceof Error ? e.message : "Failed to load settings";
         } finally {
@@ -67,15 +98,35 @@
     });
 
     function disabledControls(): boolean {
-        return loading || loadError !== null;
+        return loading || loadError !== null || selectedPresetId === null;
+    }
+
+    async function switchPreset(nextId: number): Promise<void> {
+        if (nextId === selectedPresetId) return;
+        switchingPreset = true;
+        errorRetention = null;
+        errorMaxInterval = null;
+        errorOptimize = null;
+        try {
+            const conf = await fetchDeckConfigById(nextId);
+            selectedPresetId = nextId;
+            applyPresetSnapshot(conf);
+        } catch (e) {
+            // Stay on the previous preset; surface the failure inline so the
+            // user knows the dropdown's apparent state did not take effect.
+            errorOptimize =
+                e instanceof Error ? e.message : "Failed to load preset";
+        } finally {
+            switchingPreset = false;
+        }
     }
 
     async function persistRetention(): Promise<void> {
-        if (disabledControls()) return;
+        if (disabledControls() || selectedPresetId === null) return;
         savingRetention = true;
         errorRetention = null;
         try {
-            const next = await patchDeckConfigDefault({
+            const next = await patchDeckConfigById(selectedPresetId, {
                 desired_retention: retentionPct / 100,
             });
             retentionPct = Math.round(next.desired_retention * 100);
@@ -88,11 +139,11 @@
     }
 
     async function persistMaxInterval(): Promise<void> {
-        if (disabledControls()) return;
+        if (disabledControls() || selectedPresetId === null) return;
         savingMaxInterval = true;
         errorMaxInterval = null;
         try {
-            const next = await patchDeckConfigDefault({
+            const next = await patchDeckConfigById(selectedPresetId, {
                 maximum_review_interval: maxInterval,
             });
             maxInterval = next.maximum_review_interval;
@@ -172,8 +223,31 @@
                 </div>
             {/if}
             <p class="disclaimer">
-                Editing the Default preset. Per-deck overrides come in a later release.
+                Editing presets directly. Per-deck assignment (which deck uses
+                which preset) comes in a later release.
             </p>
+            {#if presets.length > 0}
+                <div class="preset-row">
+                    <label for="preset-select">Preset</label>
+                    <select
+                        id="preset-select"
+                        class="preset-select"
+                        value={selectedPresetId}
+                        onchange={(e) => {
+                            const next = Number((e.target as HTMLSelectElement).value);
+                            if (!Number.isNaN(next)) switchPreset(next);
+                        }}
+                        disabled={loading || loadError !== null || switchingPreset}
+                    >
+                        {#each presets as p (p.id)}
+                            <option value={p.id}>{p.name}</option>
+                        {/each}
+                    </select>
+                    {#if switchingPreset}
+                        <span class="saving">Loading…</span>
+                    {/if}
+                </div>
+            {/if}
             <Card padding="lg">
                 <div class="field">
                     <div class="field-head">
@@ -447,6 +521,30 @@
         color: var(--text-subtle);
         font-style: italic;
         margin-bottom: calc(var(--space-2) * -1);
+    }
+
+    .preset-row {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+        margin: var(--space-3) 0;
+    }
+    .preset-row label {
+        font-size: var(--text-sm);
+        color: var(--text-muted);
+    }
+    .preset-select {
+        background: var(--bg);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        padding: var(--space-1) var(--space-2);
+        font: inherit;
+        min-width: 14rem;
+    }
+    .preset-select:focus {
+        outline: none;
+        border-color: var(--text-muted);
     }
 
     .error-banner {

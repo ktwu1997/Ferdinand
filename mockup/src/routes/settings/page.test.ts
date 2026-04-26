@@ -2,17 +2,20 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { flushSync, mount, unmount } from "svelte";
 
 // Phase 8-K bootstrap: 6 nav tests with no network deps.
-// Phase 9-N3 conversion: settings now calls fetchDeckConfigDefault +
-// fetchFsrsEnabled in onMount and patch/put on user interaction. We mock
-// only those four — getJson, apiBase, mediaBase, etc. stay real via
-// importOriginal, matching the 8-D / 8-E pattern.
+// Phase 9-N3 conversion: settings calls FSRS endpoints in onMount and
+// patch/put on user interaction. Phase 9-O'' adds preset selector — onMount
+// now resolves a list (fetchDeckConfigs) + a per-id detail
+// (fetchDeckConfigById) instead of the single /default fetch. We mock only
+// those network shims; getJson, apiBase, mediaBase, etc. stay real via
+// importOriginal (8-D / 8-E pattern).
 vi.mock("$lib/api", async (importOriginal) => {
     const actual = await importOriginal<typeof import("$lib/api")>();
     return {
         ...actual,
-        fetchDeckConfigDefault: vi.fn(),
+        fetchDeckConfigs: vi.fn(),
+        fetchDeckConfigById: vi.fn(),
         fetchFsrsEnabled: vi.fn(),
-        patchDeckConfigDefault: vi.fn(),
+        patchDeckConfigById: vi.fn(),
         putFsrsEnabled: vi.fn(),
         postFsrsOptimize: vi.fn(),
     };
@@ -20,12 +23,14 @@ vi.mock("$lib/api", async (importOriginal) => {
 
 import Page from "./+page.svelte";
 import {
-    fetchDeckConfigDefault,
+    fetchDeckConfigById,
+    fetchDeckConfigs,
     fetchFsrsEnabled,
-    patchDeckConfigDefault,
+    patchDeckConfigById,
     postFsrsOptimize,
     putFsrsEnabled,
     type ApiDeckConfigDefault,
+    type ApiDeckConfigListResponse,
     type ApiFsrsEnabled,
 } from "$lib/api";
 
@@ -37,10 +42,15 @@ const defaultConf: ApiDeckConfigDefault = {
     fsrs_params: [],
 };
 
+const onlyDefaultList: ApiDeckConfigListResponse = {
+    configs: [{ id: 1, name: "Default" }],
+};
+
 const fsrsOff: ApiFsrsEnabled = { enabled: false };
 
-// onMount runs Promise.all over two fetches; persist handlers add another
-// microtask-only chain. 10 turns + flushSync covers both.
+// onMount runs fetchDeckConfigs + fetchFsrsEnabled in parallel, then
+// fetchDeckConfigById sequentially with the chosen preset id; persist
+// handlers add another microtask-only chain. 10 turns + flushSync covers it.
 async function settle(): Promise<void> {
     for (let i = 0; i < 10; i++) await Promise.resolve();
     flushSync();
@@ -50,11 +60,17 @@ describe("SettingsPage contract", () => {
     let container: HTMLDivElement;
 
     beforeEach(() => {
-        vi.clearAllMocks();
+        // resetAllMocks clears mock.calls AND implementations (including any
+        // leftover mockResolvedValueOnce queue entries from prior tests that
+        // a handler did not happen to consume). Phase 9-O'' added a third
+        // network call (fetchDeckConfigs) to the onMount chain, which
+        // exposed leftover-once leaking between tests under clearAllMocks.
+        vi.resetAllMocks();
         // Default mocks keep the FSRS card render path happy for the
         // 8-K-era nav tests (they don't query FSRS values, but we must
         // not leak unhandled rejections from onMount).
-        vi.mocked(fetchDeckConfigDefault).mockResolvedValue(defaultConf);
+        vi.mocked(fetchDeckConfigs).mockResolvedValue(onlyDefaultList);
+        vi.mocked(fetchDeckConfigById).mockResolvedValue(defaultConf);
         vi.mocked(fetchFsrsEnabled).mockResolvedValue(fsrsOff);
         container = document.createElement("div");
         document.body.appendChild(container);
@@ -219,7 +235,14 @@ describe("SettingsPage FSRS wiring contract (Phase 9-N3)", () => {
     let container: HTMLDivElement;
 
     beforeEach(() => {
-        vi.clearAllMocks();
+        // 9-O'' parity with the outer beforeEach: resetAllMocks clears the
+        // mockResolvedValueOnce queue (clearAllMocks alone leaves it intact),
+        // then we set defaults so onMount's three network calls always have
+        // a fallback shape even when a test forgot one.
+        vi.resetAllMocks();
+        vi.mocked(fetchDeckConfigs).mockResolvedValue(onlyDefaultList);
+        vi.mocked(fetchDeckConfigById).mockResolvedValue(defaultConf);
+        vi.mocked(fetchFsrsEnabled).mockResolvedValue(fsrsOff);
         container = document.createElement("div");
         document.body.appendChild(container);
     });
@@ -228,15 +251,15 @@ describe("SettingsPage FSRS wiring contract (Phase 9-N3)", () => {
         container.remove();
     });
 
-    test("onMount fires fetchDeckConfigDefault + fetchFsrsEnabled exactly once each", async () => {
-        vi.mocked(fetchDeckConfigDefault).mockResolvedValueOnce(defaultConf);
+    test("onMount fires fetchDeckConfigById + fetchFsrsEnabled exactly once each", async () => {
+        vi.mocked(fetchDeckConfigById).mockResolvedValueOnce(defaultConf);
         vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce(fsrsOff);
 
         const instance = mount(Page, { target: container, props: {} });
         try {
             await settle();
 
-            expect(vi.mocked(fetchDeckConfigDefault)).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(fetchDeckConfigById)).toHaveBeenCalledTimes(1);
             expect(vi.mocked(fetchFsrsEnabled)).toHaveBeenCalledTimes(1);
         } finally {
             unmount(instance);
@@ -244,7 +267,7 @@ describe("SettingsPage FSRS wiring contract (Phase 9-N3)", () => {
     });
 
     test("loaded values populate slider, pill, number input, and checkbox", async () => {
-        vi.mocked(fetchDeckConfigDefault).mockResolvedValueOnce({
+        vi.mocked(fetchDeckConfigById).mockResolvedValueOnce({
             id: 1,
             name: "Default",
             desired_retention: 0.85,
@@ -280,8 +303,8 @@ describe("SettingsPage FSRS wiring contract (Phase 9-N3)", () => {
         }
     });
 
-    test("disclaimer copy 'Editing the Default preset' renders in FSRS panel", async () => {
-        vi.mocked(fetchDeckConfigDefault).mockResolvedValueOnce(defaultConf);
+    test("disclaimer copy 'Editing presets directly' renders in FSRS panel (Phase 9-O'')", async () => {
+        vi.mocked(fetchDeckConfigById).mockResolvedValueOnce(defaultConf);
         vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce(fsrsOff);
 
         const instance = mount(Page, { target: container, props: {} });
@@ -291,7 +314,10 @@ describe("SettingsPage FSRS wiring contract (Phase 9-N3)", () => {
             const disclaimer = container.querySelector(".disclaimer");
             expect(disclaimer).not.toBeNull();
             expect(disclaimer?.textContent).toContain(
-                "Editing the Default preset",
+                "Editing presets directly",
+            );
+            expect(disclaimer?.textContent).toContain(
+                "Per-deck assignment",
             );
         } finally {
             unmount(instance);
@@ -299,9 +325,9 @@ describe("SettingsPage FSRS wiring contract (Phase 9-N3)", () => {
     });
 
     test("retention slider change persists desired_retention as float (pct/100)", async () => {
-        vi.mocked(fetchDeckConfigDefault).mockResolvedValueOnce(defaultConf);
+        vi.mocked(fetchDeckConfigById).mockResolvedValueOnce(defaultConf);
         vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce(fsrsOff);
-        vi.mocked(patchDeckConfigDefault).mockResolvedValueOnce({
+        vi.mocked(patchDeckConfigById).mockResolvedValueOnce({
             ...defaultConf,
             desired_retention: 0.92,
         });
@@ -318,8 +344,8 @@ describe("SettingsPage FSRS wiring contract (Phase 9-N3)", () => {
             slider.dispatchEvent(new Event("change", { bubbles: true }));
             await settle();
 
-            expect(vi.mocked(patchDeckConfigDefault)).toHaveBeenCalledTimes(1);
-            expect(vi.mocked(patchDeckConfigDefault)).toHaveBeenCalledWith({
+            expect(vi.mocked(patchDeckConfigById)).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(patchDeckConfigById)).toHaveBeenCalledWith(1, {
                 desired_retention: 0.92,
             });
         } finally {
@@ -328,9 +354,9 @@ describe("SettingsPage FSRS wiring contract (Phase 9-N3)", () => {
     });
 
     test("max-interval blur persists maximum_review_interval (no retention field)", async () => {
-        vi.mocked(fetchDeckConfigDefault).mockResolvedValueOnce(defaultConf);
+        vi.mocked(fetchDeckConfigById).mockResolvedValueOnce(defaultConf);
         vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce(fsrsOff);
-        vi.mocked(patchDeckConfigDefault).mockResolvedValueOnce({
+        vi.mocked(patchDeckConfigById).mockResolvedValueOnce({
             ...defaultConf,
             maximum_review_interval: 365,
         });
@@ -347,17 +373,18 @@ describe("SettingsPage FSRS wiring contract (Phase 9-N3)", () => {
             numInput.dispatchEvent(new Event("blur", { bubbles: true }));
             await settle();
 
-            expect(vi.mocked(patchDeckConfigDefault)).toHaveBeenCalledTimes(1);
-            const call = vi.mocked(patchDeckConfigDefault).mock.calls[0]?.[0];
-            expect(call).toEqual({ maximum_review_interval: 365 });
-            expect(call?.desired_retention).toBeUndefined();
+            expect(vi.mocked(patchDeckConfigById)).toHaveBeenCalledTimes(1);
+            const call = vi.mocked(patchDeckConfigById).mock.calls[0];
+            expect(call?.[0]).toBe(1);
+            expect(call?.[1]).toEqual({ maximum_review_interval: 365 });
+            expect(call?.[1]?.desired_retention).toBeUndefined();
         } finally {
             unmount(instance);
         }
     });
 
     test("FSRS checkbox click puts {enabled: true}", async () => {
-        vi.mocked(fetchDeckConfigDefault).mockResolvedValueOnce(defaultConf);
+        vi.mocked(fetchDeckConfigById).mockResolvedValueOnce(defaultConf);
         vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce(fsrsOff);
         vi.mocked(putFsrsEnabled).mockResolvedValueOnce({ enabled: true });
 
@@ -381,7 +408,7 @@ describe("SettingsPage FSRS wiring contract (Phase 9-N3)", () => {
     });
 
     test("FSRS toggle response value overrides optimistic local state", async () => {
-        vi.mocked(fetchDeckConfigDefault).mockResolvedValueOnce(defaultConf);
+        vi.mocked(fetchDeckConfigById).mockResolvedValueOnce(defaultConf);
         vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce(fsrsOff);
         // Server clamps the request — UI must reflect the server's truth.
         vi.mocked(putFsrsEnabled).mockResolvedValueOnce({ enabled: false });
@@ -403,7 +430,7 @@ describe("SettingsPage FSRS wiring contract (Phase 9-N3)", () => {
     });
 
     test("load reject shows .error-banner and disables every FSRS control", async () => {
-        vi.mocked(fetchDeckConfigDefault).mockRejectedValueOnce(
+        vi.mocked(fetchDeckConfigById).mockRejectedValueOnce(
             new Error("backend unreachable"),
         );
         vi.mocked(fetchFsrsEnabled).mockRejectedValueOnce(
@@ -442,9 +469,9 @@ describe("SettingsPage FSRS wiring contract (Phase 9-N3)", () => {
     });
 
     test("patch reject surfaces inline .field-error with server message", async () => {
-        vi.mocked(fetchDeckConfigDefault).mockResolvedValueOnce(defaultConf);
+        vi.mocked(fetchDeckConfigById).mockResolvedValueOnce(defaultConf);
         vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce(fsrsOff);
-        vi.mocked(patchDeckConfigDefault).mockRejectedValueOnce(
+        vi.mocked(patchDeckConfigById).mockRejectedValueOnce(
             new Error("400 desired_retention must be between 0.70 and 0.97"),
         );
 
@@ -480,7 +507,14 @@ describe("SettingsPage FSRS optimize wiring contract (Phase 9-O3)", () => {
     let container: HTMLDivElement;
 
     beforeEach(() => {
-        vi.clearAllMocks();
+        // 9-O'' parity with the outer beforeEach: resetAllMocks clears the
+        // mockResolvedValueOnce queue (clearAllMocks alone leaves it intact),
+        // then we set defaults so onMount's three network calls always have
+        // a fallback shape even when a test forgot one.
+        vi.resetAllMocks();
+        vi.mocked(fetchDeckConfigs).mockResolvedValue(onlyDefaultList);
+        vi.mocked(fetchDeckConfigById).mockResolvedValue(defaultConf);
+        vi.mocked(fetchFsrsEnabled).mockResolvedValue(fsrsOff);
         container = document.createElement("div");
         document.body.appendChild(container);
     });
@@ -499,7 +533,7 @@ describe("SettingsPage FSRS optimize wiring contract (Phase 9-O3)", () => {
     }
 
     test("clicking Re-optimize calls postFsrsOptimize exactly once", async () => {
-        vi.mocked(fetchDeckConfigDefault).mockResolvedValueOnce(defaultConf);
+        vi.mocked(fetchDeckConfigById).mockResolvedValueOnce(defaultConf);
         vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce({ enabled: true });
         vi.mocked(postFsrsOptimize).mockResolvedValueOnce({
             fsrs_items: 0,
@@ -520,7 +554,7 @@ describe("SettingsPage FSRS optimize wiring contract (Phase 9-O3)", () => {
     });
 
     test("successful optimize renders one .w-cell per param and 'Trained on N reviews'", async () => {
-        vi.mocked(fetchDeckConfigDefault).mockResolvedValueOnce(defaultConf);
+        vi.mocked(fetchDeckConfigById).mockResolvedValueOnce(defaultConf);
         vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce({ enabled: true });
         const params = Array.from({ length: 19 }, (_, i) => 0.1 + i * 0.05);
         vi.mocked(postFsrsOptimize).mockResolvedValueOnce({
@@ -544,7 +578,7 @@ describe("SettingsPage FSRS optimize wiring contract (Phase 9-O3)", () => {
     });
 
     test("optimize with fsrs_items=0 shows 'No reviews available yet' and renders no weights", async () => {
-        vi.mocked(fetchDeckConfigDefault).mockResolvedValueOnce(defaultConf);
+        vi.mocked(fetchDeckConfigById).mockResolvedValueOnce(defaultConf);
         vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce({ enabled: true });
         vi.mocked(postFsrsOptimize).mockResolvedValueOnce({
             fsrs_items: 0,
@@ -569,7 +603,7 @@ describe("SettingsPage FSRS optimize wiring contract (Phase 9-O3)", () => {
     });
 
     test("optimize 400 reject surfaces server message into .field-error", async () => {
-        vi.mocked(fetchDeckConfigDefault).mockResolvedValueOnce(defaultConf);
+        vi.mocked(fetchDeckConfigById).mockResolvedValueOnce(defaultConf);
         vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce(fsrsOff);
         vi.mocked(postFsrsOptimize).mockRejectedValueOnce(
             new Error("400 FSRS must be enabled before optimizing"),
@@ -593,7 +627,7 @@ describe("SettingsPage FSRS optimize wiring contract (Phase 9-O3)", () => {
     });
 
     test("button shows 'Optimizing…' and is disabled while the request is in flight", async () => {
-        vi.mocked(fetchDeckConfigDefault).mockResolvedValueOnce(defaultConf);
+        vi.mocked(fetchDeckConfigById).mockResolvedValueOnce(defaultConf);
         vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce({ enabled: true });
 
         // Manual deferred so we can observe the in-flight UI before the
@@ -637,7 +671,14 @@ describe("SettingsPage FSRS params hydration contract (Phase 9-O')", () => {
     let container: HTMLDivElement;
 
     beforeEach(() => {
-        vi.clearAllMocks();
+        // 9-O'' parity with the outer beforeEach: resetAllMocks clears the
+        // mockResolvedValueOnce queue (clearAllMocks alone leaves it intact),
+        // then we set defaults so onMount's three network calls always have
+        // a fallback shape even when a test forgot one.
+        vi.resetAllMocks();
+        vi.mocked(fetchDeckConfigs).mockResolvedValue(onlyDefaultList);
+        vi.mocked(fetchDeckConfigById).mockResolvedValue(defaultConf);
+        vi.mocked(fetchFsrsEnabled).mockResolvedValue(fsrsOff);
         container = document.createElement("div");
         document.body.appendChild(container);
     });
@@ -648,7 +689,7 @@ describe("SettingsPage FSRS params hydration contract (Phase 9-O')", () => {
 
     test("non-empty fsrs_params on mount renders one .w-cell per param", async () => {
         const params = Array.from({ length: 19 }, (_, i) => 0.2 + i * 0.03);
-        vi.mocked(fetchDeckConfigDefault).mockResolvedValueOnce({
+        vi.mocked(fetchDeckConfigById).mockResolvedValueOnce({
             ...defaultConf,
             fsrs_params: params,
         });
@@ -668,7 +709,7 @@ describe("SettingsPage FSRS params hydration contract (Phase 9-O')", () => {
 
     test("non-empty fsrs_params on mount shows 'Loaded · N params' hint (distinct from post-optimize)", async () => {
         const params = Array.from({ length: 19 }, () => 0.5);
-        vi.mocked(fetchDeckConfigDefault).mockResolvedValueOnce({
+        vi.mocked(fetchDeckConfigById).mockResolvedValueOnce({
             ...defaultConf,
             fsrs_params: params,
         });
@@ -687,8 +728,151 @@ describe("SettingsPage FSRS params hydration contract (Phase 9-O')", () => {
         }
     });
 
+    test("preset selector mounts with all configs from fetchDeckConfigs; Default selected", async () => {
+        vi.mocked(fetchDeckConfigs).mockResolvedValueOnce({
+            configs: [
+                { id: 1, name: "Default" },
+                { id: 88, name: "Spanish heavy" },
+                { id: 99, name: "Sparse Japanese" },
+            ],
+        });
+        vi.mocked(fetchDeckConfigById).mockResolvedValueOnce(defaultConf);
+        vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce(fsrsOff);
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            const select = container.querySelector<HTMLSelectElement>(
+                "#preset-select",
+            );
+            expect(select).not.toBeNull();
+            const options = Array.from(
+                select?.querySelectorAll<HTMLOptionElement>("option") ?? [],
+            );
+            expect(options.map((o) => o.textContent?.trim())).toEqual([
+                "Default",
+                "Spanish heavy",
+                "Sparse Japanese",
+            ]);
+            // Default (id=1) auto-selected on mount.
+            expect(select?.value).toBe("1");
+            expect(vi.mocked(fetchDeckConfigById)).toHaveBeenCalledWith(1);
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("changing the preset selector fires fetchDeckConfigById with the new id and reloads fields", async () => {
+        vi.mocked(fetchDeckConfigs).mockResolvedValueOnce({
+            configs: [
+                { id: 1, name: "Default" },
+                { id: 88, name: "Spanish heavy" },
+            ],
+        });
+        // First call: id=1 (mount). Second call: id=88 (switch).
+        vi.mocked(fetchDeckConfigById)
+            .mockResolvedValueOnce({
+                id: 1,
+                name: "Default",
+                desired_retention: 0.9,
+                maximum_review_interval: 36500,
+                fsrs_params: [],
+            })
+            .mockResolvedValueOnce({
+                id: 88,
+                name: "Spanish heavy",
+                desired_retention: 0.95,
+                maximum_review_interval: 180,
+                fsrs_params: [],
+            });
+        vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce(fsrsOff);
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            const select = container.querySelector<HTMLSelectElement>(
+                "#preset-select",
+            );
+            if (!select) throw new Error("#preset-select missing");
+            select.value = "88";
+            select.dispatchEvent(new Event("change", { bubbles: true }));
+            await settle();
+
+            expect(vi.mocked(fetchDeckConfigById)).toHaveBeenCalledTimes(2);
+            expect(vi.mocked(fetchDeckConfigById).mock.calls[1]?.[0]).toBe(88);
+
+            // Slider + max-interval reflect the switched preset's values.
+            expect(
+                container.querySelector(".value-pill")?.textContent?.trim(),
+            ).toBe("95%");
+            const numInput = container.querySelector<HTMLInputElement>(
+                "#max-interval",
+            );
+            expect(numInput?.valueAsNumber).toBe(180);
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("switching preset routes the persist call to the new selected id (not Default)", async () => {
+        vi.mocked(fetchDeckConfigs).mockResolvedValueOnce({
+            configs: [
+                { id: 1, name: "Default" },
+                { id: 88, name: "Spanish heavy" },
+            ],
+        });
+        vi.mocked(fetchDeckConfigById)
+            .mockResolvedValueOnce(defaultConf)
+            .mockResolvedValueOnce({
+                id: 88,
+                name: "Spanish heavy",
+                desired_retention: 0.9,
+                maximum_review_interval: 36500,
+                fsrs_params: [],
+            });
+        vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce(fsrsOff);
+        vi.mocked(patchDeckConfigById).mockResolvedValueOnce({
+            id: 88,
+            name: "Spanish heavy",
+            desired_retention: 0.92,
+            maximum_review_interval: 36500,
+            fsrs_params: [],
+        });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            const select = container.querySelector<HTMLSelectElement>(
+                "#preset-select",
+            );
+            if (!select) throw new Error("#preset-select missing");
+            select.value = "88";
+            select.dispatchEvent(new Event("change", { bubbles: true }));
+            await settle();
+
+            const slider = container.querySelector<HTMLInputElement>(
+                "#desired-retention",
+            );
+            if (!slider) throw new Error("slider missing");
+            slider.value = "92";
+            slider.dispatchEvent(new Event("input", { bubbles: true }));
+            slider.dispatchEvent(new Event("change", { bubbles: true }));
+            await settle();
+
+            expect(vi.mocked(patchDeckConfigById)).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(patchDeckConfigById)).toHaveBeenCalledWith(88, {
+                desired_retention: 0.92,
+            });
+        } finally {
+            unmount(instance);
+        }
+    });
+
     test("empty fsrs_params on mount keeps 'Click Re-optimize' placeholder hint and no weights", async () => {
-        vi.mocked(fetchDeckConfigDefault).mockResolvedValueOnce({
+        vi.mocked(fetchDeckConfigById).mockResolvedValueOnce({
             ...defaultConf,
             fsrs_params: [],
         });

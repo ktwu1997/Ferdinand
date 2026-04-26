@@ -198,6 +198,31 @@ export async function patchDeckConfigDefault(
     return patchJson<ApiDeckConfigDefault>("/api/deck_config/default", patch);
 }
 
+/** Phase 9-O''. Lean preset list for the settings preset selector — only id+name. */
+export interface ApiDeckConfigListItem {
+    id: number;
+    name: string;
+}
+
+export interface ApiDeckConfigListResponse {
+    configs: ApiDeckConfigListItem[];
+}
+
+export async function fetchDeckConfigs(): Promise<ApiDeckConfigListResponse> {
+    return getJson<ApiDeckConfigListResponse>("/api/deck_config");
+}
+
+export async function fetchDeckConfigById(id: number): Promise<ApiDeckConfigDefault> {
+    return getJson<ApiDeckConfigDefault>(`/api/deck_config/${id}`);
+}
+
+export async function patchDeckConfigById(
+    id: number,
+    patch: ApiDeckConfigDefaultPatch,
+): Promise<ApiDeckConfigDefault> {
+    return patchJson<ApiDeckConfigDefault>(`/api/deck_config/${id}`, patch);
+}
+
 export async function fetchFsrsEnabled(): Promise<ApiFsrsEnabled> {
     return getJson<ApiFsrsEnabled>("/api/fsrs/enabled");
 }
