@@ -5,8 +5,13 @@
     import Sparkline from "$lib/components/Sparkline.svelte";
     import Kbd from "$lib/components/Kbd.svelte";
     import LiveIndicator from "$lib/components/LiveIndicator.svelte";
-    import { decks as fakeDecks, history, totalDue, type Deck } from "$lib/data";
-    import { fetchDecks } from "$lib/api";
+    import {
+        decks as fakeDecks,
+        history as fakeHistory,
+        totalDue,
+        type Deck,
+    } from "$lib/data";
+    import { fetchDecks, fetchStatsRecent, type ApiDayCount } from "$lib/api";
 
     let liveDecks: Deck[] | null = $state(null);
     // Phase 10-B: explicit error banner on fetch failure. Read-only page,
@@ -16,6 +21,12 @@
     // also reject the user's edits; here, no edits to reject, just stale
     // counts to acknowledge.
     let loadError = $state<string | null>(null);
+
+    // Phase 11-B: live last-30-days history from /api/stats/recent. Same
+    // banner-plus-fake fallback shape as the deck fetch — the page never
+    // blanks, but the user is told their counts are stale.
+    let liveHistory: ApiDayCount[] | null = $state(null);
+    let statsError = $state<string | null>(null);
 
     onMount(async () => {
         try {
@@ -36,13 +47,21 @@
         } catch (e) {
             loadError = e instanceof Error ? e.message : "Couldn't load decks";
         }
+
+        try {
+            const stats = await fetchStatsRecent(30);
+            liveHistory = stats.history;
+        } catch (e) {
+            statsError = e instanceof Error ? e.message : "Couldn't load stats";
+        }
     });
 
     let decks = $derived(liveDecks ?? fakeDecks);
     let resume = $derived(decks[0] ?? fakeDecks[0]);
-    const totalReviews = history.reduce((a, d) => a + d.reviews, 0);
+    let history = $derived(liveHistory ?? fakeHistory);
+    let totalReviews = $derived(history.reduce((a, d) => a + d.reviews, 0));
     let totalDueAll = $derived(decks.reduce((a, d) => a + totalDue(d), 0));
-    const last7 = history.slice(-7).map((d) => d.reviews);
+    let last7 = $derived(history.slice(-7).map((d) => d.reviews));
 
     const today = new Date().toLocaleDateString("en-US", {
         weekday: "long",
@@ -138,6 +157,11 @@
             <h3>Last 30 days</h3>
             <a class="ghost-link" href="/stats">See full stats →</a>
         </div>
+        {#if statsError}
+            <div class="stats-error-banner" role="alert">
+                Couldn't load review history — showing cached values. ({statsError})
+            </div>
+        {/if}
         <Card padding="lg">
             <div class="stat-head">
                 <div>
@@ -375,7 +399,8 @@
 
     /* Phase 10-B: cached-counts banner. Same token vocabulary as the
        browse page banner so disabled/danger UI feels consistent. */
-    .error-banner {
+    .error-banner,
+    .stats-error-banner {
         font-size: var(--text-xs);
         color: var(--danger);
         background: color-mix(in oklch, var(--danger) 10%, transparent);

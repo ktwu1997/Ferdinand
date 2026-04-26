@@ -3,24 +3,29 @@ import { flushSync, mount, unmount } from "svelte";
 
 import Page from "./+page.svelte";
 import { resetPageStub } from "../test/stubs/app-stores";
-import { decks as fakeDecks, history, totalDue } from "$lib/data";
-import type { ApiDeckListResponse, ApiHealth } from "$lib/api";
+import { decks as fakeDecks, history as fakeHistory, totalDue } from "$lib/data";
+import type {
+    ApiDeckListResponse,
+    ApiHealth,
+    ApiStatsRecent,
+} from "$lib/api";
 
 // Phase 8-D: contract tests for the home route. Mock only the network
-// surface (fetchDecks + fetchHealth) — LiveIndicator calls fetchHealth
-// on its own onMount, so we must control both to exercise the live /
-// offline branches. `importOriginal` keeps mediaBase, apiBase, and the
-// rest of $lib/api real, matching the 8-C pattern.
+// surface (fetchDecks + fetchHealth + fetchStatsRecent) — LiveIndicator
+// calls fetchHealth on its own onMount, so we must control all three to
+// exercise the live / offline branches. `importOriginal` keeps mediaBase,
+// apiBase, and the rest of $lib/api real, matching the 8-C pattern.
 vi.mock("$lib/api", async (importOriginal) => {
     const actual = await importOriginal<typeof import("$lib/api")>();
     return {
         ...actual,
         fetchDecks: vi.fn(),
         fetchHealth: vi.fn(),
+        fetchStatsRecent: vi.fn(),
     };
 });
 
-import { fetchDecks, fetchHealth } from "$lib/api";
+import { fetchDecks, fetchHealth, fetchStatsRecent } from "$lib/api";
 
 const decksOk: ApiDeckListResponse = {
     decks: [
@@ -41,11 +46,21 @@ const decksOk: ApiDeckListResponse = {
 
 const healthLive: ApiHealth = { ok: true, version: "0.1.0" };
 
-// Two concurrent async onMount chains run under one mount(): the page's
-// fetchDecks and LiveIndicator's fetchHealth. 10 microtask turns is
-// generous for both to resolve before the assertions.
+// Phase 11-B: default stats payload mirrors fakeHistory's totals so the
+// live path produces the same `.stat-value` as the pre-11-B fakeHistory
+// path. Individual tests override with `mockResolvedValueOnce` /
+// `mockRejectedValueOnce` to exercise specific scenarios.
+const fakeHistoryAsApi: ApiStatsRecent = {
+    days: fakeHistory.length,
+    history: fakeHistory.map((d) => ({ date: d.date, reviews: d.reviews })),
+};
+
+// Three concurrent async onMount chains run under one mount(): the page's
+// fetchDecks (then fetchStatsRecent in the same async scope) and
+// LiveIndicator's fetchHealth. 12 microtask turns leaves headroom for the
+// sequential awaits inside the page's own onMount.
 async function settle(): Promise<void> {
-    for (let i = 0; i < 10; i++) await Promise.resolve();
+    for (let i = 0; i < 12; i++) await Promise.resolve();
     flushSync();
 }
 
@@ -53,8 +68,16 @@ describe("HomePage contract", () => {
     let container: HTMLDivElement;
 
     beforeEach(() => {
-        vi.clearAllMocks();
+        // resetAllMocks (not clearAllMocks) wipes any unconsumed
+        // mockResolvedValueOnce queue from a sibling test that errored out,
+        // per the Phase 9-T fact. Defaults are re-applied below so unrelated
+        // tests don't have to know about every mocked function.
+        vi.resetAllMocks();
         resetPageStub();
+        // Phase 11-B default: fetchStatsRecent succeeds with fakeHistory's
+        // totals. Tests that don't care about stats work unchanged; tests
+        // that DO care override with mockResolvedValueOnce / mockRejectedValueOnce.
+        vi.mocked(fetchStatsRecent).mockResolvedValue(fakeHistoryAsApi);
         container = document.createElement("div");
         document.body.appendChild(container);
     });
@@ -220,7 +243,7 @@ describe("HomePage contract", () => {
         }
     });
 
-    test("Stats section: .stat-value equals totalReviews.toLocaleString()", async () => {
+    test("Stats section: .stat-value equals totalReviews.toLocaleString() (default mock = fakeHistory totals)", async () => {
         vi.mocked(fetchDecks).mockResolvedValueOnce(decksOk);
         vi.mocked(fetchHealth).mockResolvedValueOnce(healthLive);
 
@@ -228,7 +251,10 @@ describe("HomePage contract", () => {
         try {
             await settle();
 
-            const totalReviews = history.reduce((a, d) => a + d.reviews, 0);
+            const totalReviews = fakeHistory.reduce(
+                (a, d) => a + d.reviews,
+                0,
+            );
             expect(
                 container.querySelector(".stat-value")?.textContent?.trim(),
             ).toBe(totalReviews.toLocaleString());
@@ -239,6 +265,95 @@ describe("HomePage contract", () => {
             expect(headings).toEqual(
                 expect.arrayContaining(["All decks", "Last 30 days"]),
             );
+        } finally {
+            unmount(instance);
+        }
+    });
+});
+
+describe("Phase 11-B stats history", () => {
+    let container: HTMLDivElement;
+
+    beforeEach(() => {
+        vi.resetAllMocks();
+        resetPageStub();
+        vi.mocked(fetchStatsRecent).mockResolvedValue(fakeHistoryAsApi);
+        container = document.createElement("div");
+        document.body.appendChild(container);
+    });
+
+    afterEach(() => {
+        container.remove();
+    });
+
+    test("fetchStatsRecent success: live history drives .stat-value", async () => {
+        vi.mocked(fetchDecks).mockResolvedValueOnce(decksOk);
+        vi.mocked(fetchHealth).mockResolvedValueOnce(healthLive);
+        // Custom server payload — three days of activity totalling 76. The
+        // mockResolvedValueOnce wins over the beforeEach default.
+        vi.mocked(fetchStatsRecent).mockResolvedValueOnce({
+            days: 3,
+            history: [
+                { date: "2026-04-24", reviews: 30 },
+                { date: "2026-04-25", reviews: 25 },
+                { date: "2026-04-26", reviews: 21 },
+            ],
+        });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            expect(vi.mocked(fetchStatsRecent)).toHaveBeenCalledTimes(1);
+            expect(
+                container.querySelector(".stat-value")?.textContent?.trim(),
+            ).toBe((76).toLocaleString());
+            // No banner on success — happy path stays clean.
+            expect(
+                container.querySelector(".stats-error-banner"),
+            ).toBeNull();
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("fetchStatsRecent rejects: stats-error-banner surfaces and fakeHistory totals drive .stat-value", async () => {
+        vi.mocked(fetchDecks).mockResolvedValueOnce(decksOk);
+        vi.mocked(fetchHealth).mockResolvedValueOnce(healthLive);
+        vi.mocked(fetchStatsRecent).mockRejectedValueOnce(
+            new Error("stats endpoint unreachable"),
+        );
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            const banner = container.querySelector(".stats-error-banner");
+            expect(banner).not.toBeNull();
+            expect(banner?.textContent).toContain("stats endpoint unreachable");
+            expect(banner?.textContent).toContain("cached values");
+
+            // Fallback: fakeHistory still drives the count so the page isn't blank.
+            const totalReviews = fakeHistory.reduce(
+                (a, d) => a + d.reviews,
+                0,
+            );
+            expect(
+                container.querySelector(".stat-value")?.textContent?.trim(),
+            ).toBe(totalReviews.toLocaleString());
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("fetchStatsRecent default-mock 30 days: page calls fetchStatsRecent(30)", async () => {
+        vi.mocked(fetchDecks).mockResolvedValueOnce(decksOk);
+        vi.mocked(fetchHealth).mockResolvedValueOnce(healthLive);
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+            expect(vi.mocked(fetchStatsRecent)).toHaveBeenCalledWith(30);
         } finally {
             unmount(instance);
         }
