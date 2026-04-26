@@ -9,6 +9,13 @@
     import { fetchDecks } from "$lib/api";
 
     let liveDecks: Deck[] | null = $state(null);
+    // Phase 10-B: explicit error banner on fetch failure. Read-only page,
+    // so fake fallback is preserved (silent-degrade on the data) — but the
+    // banner tells the user their counts are stale, which a fully-silent
+    // path would hide. Distinct from 9-N3 stateful pages: those would
+    // also reject the user's edits; here, no edits to reject, just stale
+    // counts to acknowledge.
+    let loadError = $state<string | null>(null);
 
     onMount(async () => {
         try {
@@ -26,8 +33,8 @@
                     totalCards: d.total_in_deck,
                     lastStudied: new Date().toISOString(),
                 }));
-        } catch {
-            // keep fake data
+        } catch (e) {
+            loadError = e instanceof Error ? e.message : "Couldn't load decks";
         }
     });
 
@@ -60,6 +67,12 @@
             </Button>
         </div>
     </header>
+
+    {#if loadError}
+        <div class="error-banner" role="alert">
+            Couldn't reach server — showing cached counts. ({loadError})
+        </div>
+    {/if}
 
     <h1>{totalDueAll} cards to review</h1>
     <p class="subtitle">
@@ -358,5 +371,17 @@
         color: var(--text-subtle);
         text-align: right;
         margin-bottom: var(--space-2);
+    }
+
+    /* Phase 10-B: cached-counts banner. Same token vocabulary as the
+       browse page banner so disabled/danger UI feels consistent. */
+    .error-banner {
+        font-size: var(--text-xs);
+        color: var(--danger);
+        background: color-mix(in oklch, var(--danger) 10%, transparent);
+        border: 1px solid color-mix(in oklch, var(--danger) 30%, transparent);
+        border-radius: var(--radius-sm);
+        padding: 0.4rem 0.6rem;
+        margin-bottom: var(--space-3);
     }
 </style>
