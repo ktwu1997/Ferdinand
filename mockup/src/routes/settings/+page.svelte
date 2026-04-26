@@ -42,6 +42,18 @@
     let errorMaxInterval: string | null = $state(null);
     let errorFsrs: string | null = $state(null);
 
+    // Phase 10-C: per-preset scheduling caps. Same onblur+PATCH pattern as
+    // maxInterval — drag/keystroke does not persist, only blur or change.
+    let newPerDay = $state(20);
+    let reviewsPerDay = $state(200);
+    let capAnswerTimeSecs = $state(60);
+    let savingNewPerDay = $state(false);
+    let savingReviewsPerDay = $state(false);
+    let savingCapAnswerTime = $state(false);
+    let errorNewPerDay: string | null = $state(null);
+    let errorReviewsPerDay: string | null = $state(null);
+    let errorCapAnswerTime: string | null = $state(null);
+
     // Optimize state. Phase 9-O' hydrates params from GET response so the
     // weights grid survives page reload. paramsSource distinguishes "loaded
     // from disk" hint copy from "trained this run" — the two share UI but
@@ -54,10 +66,20 @@
     let paramsSource: "disk" | "fresh" | null = $state(null);
 
     function applyPresetSnapshot(
-        conf: { desired_retention: number; maximum_review_interval: number; fsrs_params: number[] },
+        conf: {
+            desired_retention: number;
+            maximum_review_interval: number;
+            new_per_day: number;
+            reviews_per_day: number;
+            cap_answer_time_secs: number;
+            fsrs_params: number[];
+        },
     ): void {
         retentionPct = Math.round(conf.desired_retention * 100);
         maxInterval = conf.maximum_review_interval;
+        newPerDay = conf.new_per_day;
+        reviewsPerDay = conf.reviews_per_day;
+        capAnswerTimeSecs = conf.cap_answer_time_secs;
         // Copy the array — assigning the incoming reference can leave Svelte's
         // $state proxy referencing a non-tracked array if the caller mutates
         // the source later. Snapshot semantics are what the UI wants here.
@@ -152,6 +174,57 @@
                 e instanceof Error ? e.message : "Failed to save interval";
         } finally {
             savingMaxInterval = false;
+        }
+    }
+
+    async function persistNewPerDay(): Promise<void> {
+        if (disabledControls() || selectedPresetId === null) return;
+        savingNewPerDay = true;
+        errorNewPerDay = null;
+        try {
+            const next = await patchDeckConfigById(selectedPresetId, {
+                new_per_day: newPerDay,
+            });
+            newPerDay = next.new_per_day;
+        } catch (e) {
+            errorNewPerDay =
+                e instanceof Error ? e.message : "Failed to save new-per-day";
+        } finally {
+            savingNewPerDay = false;
+        }
+    }
+
+    async function persistReviewsPerDay(): Promise<void> {
+        if (disabledControls() || selectedPresetId === null) return;
+        savingReviewsPerDay = true;
+        errorReviewsPerDay = null;
+        try {
+            const next = await patchDeckConfigById(selectedPresetId, {
+                reviews_per_day: reviewsPerDay,
+            });
+            reviewsPerDay = next.reviews_per_day;
+        } catch (e) {
+            errorReviewsPerDay =
+                e instanceof Error ? e.message : "Failed to save reviews-per-day";
+        } finally {
+            savingReviewsPerDay = false;
+        }
+    }
+
+    async function persistCapAnswerTime(): Promise<void> {
+        if (disabledControls() || selectedPresetId === null) return;
+        savingCapAnswerTime = true;
+        errorCapAnswerTime = null;
+        try {
+            const next = await patchDeckConfigById(selectedPresetId, {
+                cap_answer_time_secs: capAnswerTimeSecs,
+            });
+            capAnswerTimeSecs = next.cap_answer_time_secs;
+        } catch (e) {
+            errorCapAnswerTime =
+                e instanceof Error ? e.message : "Failed to save answer-time cap";
+        } finally {
+            savingCapAnswerTime = false;
         }
     }
 
@@ -329,6 +402,81 @@
                     {/if}
                     {#if errorMaxInterval}
                         <p class="field-error">{errorMaxInterval}</p>
+                    {/if}
+                </div>
+
+                <div class="field">
+                    <div class="field-head">
+                        <div>
+                            <label for="new-per-day">New cards per day</label>
+                            <p class="hint">Daily cap on newly-introduced cards. 0 pauses new cards.</p>
+                        </div>
+                        <input
+                            id="new-per-day"
+                            class="num-input"
+                            type="number"
+                            min="0"
+                            max="9999"
+                            bind:value={newPerDay}
+                            onblur={() => persistNewPerDay()}
+                            disabled={disabledControls()}
+                        />
+                    </div>
+                    {#if savingNewPerDay}
+                        <span class="saving">Saving…</span>
+                    {/if}
+                    {#if errorNewPerDay}
+                        <p class="field-error">{errorNewPerDay}</p>
+                    {/if}
+                </div>
+
+                <div class="field">
+                    <div class="field-head">
+                        <div>
+                            <label for="reviews-per-day">Reviews per day</label>
+                            <p class="hint">Daily cap on review cards. 0 pauses reviews.</p>
+                        </div>
+                        <input
+                            id="reviews-per-day"
+                            class="num-input"
+                            type="number"
+                            min="0"
+                            max="9999"
+                            bind:value={reviewsPerDay}
+                            onblur={() => persistReviewsPerDay()}
+                            disabled={disabledControls()}
+                        />
+                    </div>
+                    {#if savingReviewsPerDay}
+                        <span class="saving">Saving…</span>
+                    {/if}
+                    {#if errorReviewsPerDay}
+                        <p class="field-error">{errorReviewsPerDay}</p>
+                    {/if}
+                </div>
+
+                <div class="field">
+                    <div class="field-head">
+                        <div>
+                            <label for="cap-answer-time">Answer-time cap</label>
+                            <p class="hint">Soft per-card timer in seconds. Slower than this counts as a hard answer.</p>
+                        </div>
+                        <input
+                            id="cap-answer-time"
+                            class="num-input"
+                            type="number"
+                            min="1"
+                            max="600"
+                            bind:value={capAnswerTimeSecs}
+                            onblur={() => persistCapAnswerTime()}
+                            disabled={disabledControls()}
+                        />
+                    </div>
+                    {#if savingCapAnswerTime}
+                        <span class="saving">Saving…</span>
+                    {/if}
+                    {#if errorCapAnswerTime}
+                        <p class="field-error">{errorCapAnswerTime}</p>
                     {/if}
                 </div>
             </Card>

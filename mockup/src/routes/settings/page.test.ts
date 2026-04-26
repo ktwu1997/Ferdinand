@@ -34,13 +34,24 @@ import {
     type ApiFsrsEnabled,
 } from "$lib/api";
 
-const defaultConf: ApiDeckConfigDefault = {
-    id: 1,
-    name: "Default",
-    desired_retention: 0.9,
-    maximum_review_interval: 36500,
-    fsrs_params: [],
-};
+// Phase 10-C: factory keeps existing tests cheap as DeckConfig grows.
+// new_per_day / reviews_per_day / cap_answer_time_secs were added in 10-C
+// and must be present on every ApiDeckConfigDefault fixture.
+function makeConf(overrides: Partial<ApiDeckConfigDefault> = {}): ApiDeckConfigDefault {
+    return {
+        id: 1,
+        name: "Default",
+        desired_retention: 0.9,
+        maximum_review_interval: 36500,
+        new_per_day: 20,
+        reviews_per_day: 200,
+        cap_answer_time_secs: 60,
+        fsrs_params: [],
+        ...overrides,
+    };
+}
+
+const defaultConf: ApiDeckConfigDefault = makeConf();
 
 const onlyDefaultList: ApiDeckConfigListResponse = {
     configs: [{ id: 1, name: "Default" }],
@@ -267,13 +278,9 @@ describe("SettingsPage FSRS wiring contract (Phase 9-N3)", () => {
     });
 
     test("loaded values populate slider, pill, number input, and checkbox", async () => {
-        vi.mocked(fetchDeckConfigById).mockResolvedValueOnce({
-            id: 1,
-            name: "Default",
-            desired_retention: 0.85,
-            maximum_review_interval: 365,
-            fsrs_params: [],
-        });
+        vi.mocked(fetchDeckConfigById).mockResolvedValueOnce(
+            makeConf({ desired_retention: 0.85, maximum_review_interval: 365 }),
+        );
         vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce({ enabled: true });
 
         const instance = mount(Page, { target: container, props: {} });
@@ -772,20 +779,15 @@ describe("SettingsPage FSRS params hydration contract (Phase 9-O')", () => {
         });
         // First call: id=1 (mount). Second call: id=88 (switch).
         vi.mocked(fetchDeckConfigById)
-            .mockResolvedValueOnce({
-                id: 1,
-                name: "Default",
-                desired_retention: 0.9,
-                maximum_review_interval: 36500,
-                fsrs_params: [],
-            })
-            .mockResolvedValueOnce({
-                id: 88,
-                name: "Spanish heavy",
-                desired_retention: 0.95,
-                maximum_review_interval: 180,
-                fsrs_params: [],
-            });
+            .mockResolvedValueOnce(makeConf())
+            .mockResolvedValueOnce(
+                makeConf({
+                    id: 88,
+                    name: "Spanish heavy",
+                    desired_retention: 0.95,
+                    maximum_review_interval: 180,
+                }),
+            );
         vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce(fsrsOff);
 
         const instance = mount(Page, { target: container, props: {} });
@@ -825,21 +827,17 @@ describe("SettingsPage FSRS params hydration contract (Phase 9-O')", () => {
         });
         vi.mocked(fetchDeckConfigById)
             .mockResolvedValueOnce(defaultConf)
-            .mockResolvedValueOnce({
+            .mockResolvedValueOnce(
+                makeConf({ id: 88, name: "Spanish heavy" }),
+            );
+        vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce(fsrsOff);
+        vi.mocked(patchDeckConfigById).mockResolvedValueOnce(
+            makeConf({
                 id: 88,
                 name: "Spanish heavy",
-                desired_retention: 0.9,
-                maximum_review_interval: 36500,
-                fsrs_params: [],
-            });
-        vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce(fsrsOff);
-        vi.mocked(patchDeckConfigById).mockResolvedValueOnce({
-            id: 88,
-            name: "Spanish heavy",
-            desired_retention: 0.92,
-            maximum_review_interval: 36500,
-            fsrs_params: [],
-        });
+                desired_retention: 0.92,
+            }),
+        );
 
         const instance = mount(Page, { target: container, props: {} });
         try {
@@ -888,5 +886,131 @@ describe("SettingsPage FSRS params hydration contract (Phase 9-O')", () => {
         } finally {
             unmount(instance);
         }
+    });
+
+    describe("Phase 10-C scheduling knobs", () => {
+        async function blurNumInput(
+            root: HTMLElement,
+            id: string,
+            value: number,
+        ): Promise<HTMLInputElement> {
+            const input = root.querySelector<HTMLInputElement>(`#${id}`);
+            if (!input) throw new Error(`#${id} input missing`);
+            input.value = String(value);
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            input.dispatchEvent(new Event("blur", { bubbles: true }));
+            await settle();
+            return input;
+        }
+
+        test("loaded values populate all 3 new num-inputs from preset snapshot", async () => {
+            vi.mocked(fetchDeckConfigById).mockResolvedValueOnce(
+                makeConf({
+                    new_per_day: 30,
+                    reviews_per_day: 250,
+                    cap_answer_time_secs: 90,
+                }),
+            );
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                expect(
+                    container.querySelector<HTMLInputElement>("#new-per-day")
+                        ?.valueAsNumber,
+                ).toBe(30);
+                expect(
+                    container.querySelector<HTMLInputElement>(
+                        "#reviews-per-day",
+                    )?.valueAsNumber,
+                ).toBe(250);
+                expect(
+                    container.querySelector<HTMLInputElement>(
+                        "#cap-answer-time",
+                    )?.valueAsNumber,
+                ).toBe(90);
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("blur on each new num-input persists the right field via PATCH and echoes server value", async () => {
+            vi.mocked(patchDeckConfigById)
+                .mockResolvedValueOnce(makeConf({ new_per_day: 12 }))
+                .mockResolvedValueOnce(makeConf({ reviews_per_day: 175 }))
+                .mockResolvedValueOnce(makeConf({ cap_answer_time_secs: 50 }));
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                await blurNumInput(container, "new-per-day", 12);
+                await blurNumInput(container, "reviews-per-day", 175);
+                await blurNumInput(container, "cap-answer-time", 50);
+
+                expect(
+                    vi.mocked(patchDeckConfigById),
+                ).toHaveBeenCalledTimes(3);
+                expect(
+                    vi.mocked(patchDeckConfigById).mock.calls[0],
+                ).toEqual([1, { new_per_day: 12 }]);
+                expect(
+                    vi.mocked(patchDeckConfigById).mock.calls[1],
+                ).toEqual([1, { reviews_per_day: 175 }]);
+                expect(
+                    vi.mocked(patchDeckConfigById).mock.calls[2],
+                ).toEqual([1, { cap_answer_time_secs: 50 }]);
+
+                // Each field's input echoes the server response, not the
+                // raw blur value (server is source of truth).
+                expect(
+                    container.querySelector<HTMLInputElement>("#new-per-day")
+                        ?.valueAsNumber,
+                ).toBe(12);
+                expect(
+                    container.querySelector<HTMLInputElement>(
+                        "#reviews-per-day",
+                    )?.valueAsNumber,
+                ).toBe(175);
+                expect(
+                    container.querySelector<HTMLInputElement>(
+                        "#cap-answer-time",
+                    )?.valueAsNumber,
+                ).toBe(50);
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("PATCH 400 surfaces inline field-error scoped to the offending knob, others stay clean", async () => {
+            vi.mocked(patchDeckConfigById).mockRejectedValueOnce(
+                new Error("400 cap_answer_time_secs must be between 1 and 600"),
+            );
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                await blurNumInput(container, "cap-answer-time", 999);
+
+                // cap-answer-time field should now have a field-error sibling
+                // containing the server message; no other field should.
+                const allErrors = Array.from(
+                    container.querySelectorAll(".field-error"),
+                );
+                const capErrors = allErrors.filter((e) =>
+                    (e.textContent ?? "").includes("cap_answer_time_secs"),
+                );
+                expect(capErrors.length).toBe(1);
+                expect(capErrors[0]?.textContent).toContain("between 1 and 600");
+
+                // No spillover into the other two new fields.
+                const text = allErrors.map((e) => e.textContent ?? "").join(" ");
+                expect(text).not.toMatch(/new_per_day|reviews_per_day/);
+            } finally {
+                unmount(instance);
+            }
+        });
     });
 });

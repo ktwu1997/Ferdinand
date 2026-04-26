@@ -62,6 +62,12 @@ export interface ApiDeckConfigDefault {
     desired_retention: number;
     /** Maximum review interval in days (1..=36500). */
     maximum_review_interval: number;
+    /** Daily new-card cap (0..=9999). Phase 10-C. */
+    new_per_day: number;
+    /** Daily review-card cap (0..=9999). Phase 10-C. */
+    reviews_per_day: number;
+    /** Soft answer-time cap in seconds (1..=600). Phase 10-C. */
+    cap_answer_time_secs: number;
     /**
      * Persisted FSRS-6 parameters. Empty when the preset has never been
      * optimized. Phase 9-O' lets the weights grid hydrate on mount instead
@@ -73,6 +79,9 @@ export interface ApiDeckConfigDefault {
 export interface ApiDeckConfigDefaultPatch {
     desired_retention?: number;
     maximum_review_interval?: number;
+    new_per_day?: number;
+    reviews_per_day?: number;
+    cap_answer_time_secs?: number;
 }
 
 export interface ApiFsrsEnabled {
