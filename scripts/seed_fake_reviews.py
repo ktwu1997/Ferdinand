@@ -30,12 +30,23 @@ use ``--reset`` to clear revlog first, and ``--reset-cards`` to also clear
 prior card scheduling state when re-seeding a previously-rescheduled
 collection.
 
+Phase 9-T adds ``--add-cards N`` which clones the first existing note+card
+N times before the revlog seed runs. This breaks the 6-card FSRS training
+floor observed in 9-Q' and exercises the trained-params persistence path
+(POST /api/fsrs/optimize → params.length==21 → GET /api/deck_config/default
+→ fsrs_params.length==21). Cloned notes share the source's notetype/fields
+(same csum) — the optimizer reads revlog directly so per-card content does
+not affect training.
+
 Usage:
     python3 scripts/seed_fake_reviews.py --db /tmp/ferdinand_dev/collection.anki2
     python3 scripts/seed_fake_reviews.py --db /path/to.anki2 --reviews-per-card 80 --reset
     python3 scripts/seed_fake_reviews.py --db /path/to.anki2 --dry-run
     python3 scripts/seed_fake_reviews.py --db /path/to.anki2 \\
         --difficulty-mode varied --reset --reset-cards
+    python3 scripts/seed_fake_reviews.py --db /path/to.anki2 \\
+        --add-cards 200 --reset --reset-cards \\
+        --difficulty-mode varied --reviews-per-card 50
 """
 
 from __future__ import annotations
@@ -200,6 +211,71 @@ def build_review_rows(
     return deduped
 
 
+def clone_note_and_card_rows(
+    write_cur: sqlite3.Cursor,
+    num_to_add: int,
+    base_card_id_ms: int,
+) -> int:
+    """Clone the first existing note and card N times. Returns N.
+
+    Each cloned note gets a unique guid (hex of the new note id, "f" prefix
+    so it won't collide with existing user-generated guids). Each cloned
+    card resets scheduling fields (queue/type/due/ivl/factor/reps/lapses/
+    left/odue/odid/flags/data) so the reschedule path treats them as fresh
+    new cards regardless of the source card's prior FSRS state. The shared
+    notetype/deck/ord layout means the optimizer's preset-name-based
+    revlog filter (`"preset:Default" -is:suspended`) still picks them up.
+
+    Strides of 2 across base_card_id_ms keep new note ids and card ids
+    disjoint (new_nid = base + 2i; new_cid = base + 2i + 1).
+    """
+    note_row = write_cur.execute(
+        "SELECT id, guid, mid, mod, usn, tags, flds, sfld, csum, flags, data "
+        "FROM notes ORDER BY id LIMIT 1"
+    ).fetchone()
+    if not note_row:
+        raise RuntimeError("no notes to clone — collection is empty")
+    card_row = write_cur.execute(
+        "SELECT id, nid, did, ord, mod, usn, type, queue, due, ivl, factor, "
+        "reps, lapses, left, odue, odid, flags, data FROM cards ORDER BY id LIMIT 1"
+    ).fetchone()
+    if not card_row:
+        raise RuntimeError("no cards to clone — add some via the UI first")
+
+    new_notes: list[tuple] = []
+    new_cards: list[tuple] = []
+    for i in range(num_to_add):
+        new_nid = base_card_id_ms + 2 * i
+        new_cid = base_card_id_ms + 2 * i + 1
+        new_guid = f"f{new_nid:016x}"
+        # Note columns: id, guid, mid, mod, usn, tags, flds, sfld, csum, flags, data
+        new_notes.append((
+            new_nid, new_guid, note_row[2], note_row[3], note_row[4],
+            note_row[5], note_row[6], note_row[7], note_row[8],
+            note_row[9], note_row[10],
+        ))
+        # Card columns: id, nid, did, ord, mod, usn, type, queue, due, ivl,
+        # factor, reps, lapses, left, odue, odid, flags, data — scheduling
+        # fields zeroed so cloned cards start fresh in the new queue.
+        new_cards.append((
+            new_cid, new_nid, card_row[2], card_row[3], card_row[4],
+            card_row[5], 0, 0, 0, 0,
+            2500, 0, 0, 0, 0, 0, 0, "",
+        ))
+    write_cur.executemany(
+        "INSERT INTO notes (id, guid, mid, mod, usn, tags, flds, sfld, csum, flags, data) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        new_notes,
+    )
+    write_cur.executemany(
+        "INSERT INTO cards (id, nid, did, ord, mod, usn, type, queue, due, ivl, "
+        "factor, reps, lapses, left, odue, odid, flags, data) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        new_cards,
+    )
+    return num_to_add
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", required=True, help="path to collection.anki2")
@@ -221,14 +297,24 @@ def main() -> int:
     parser.add_argument(
         "--reset-cards", action="store_true",
         help="also reset card scheduling state (queue/type/due/ivl/factor/"
-             "reps/lapses) before inserting revlog rows. Use when re-seeding "
-             "a previously-rescheduled collection.",
+             "reps/lapses/data) before inserting revlog rows. Use when "
+             "re-seeding a previously-rescheduled collection.",
+    )
+    parser.add_argument(
+        "--add-cards", type=int, default=0, metavar="N",
+        help="clone the first existing note+card N times before seeding "
+             "revlog. Used by Phase 9-T to break the 6-card FSRS training "
+             "floor and exercise trained-params persistence.",
     )
     args = parser.parse_args()
 
     db_path = Path(args.db)
     if not db_path.exists():
         print(f"error: db not found: {db_path}", file=sys.stderr)
+        return 2
+
+    if args.add_cards < 0:
+        print("error: --add-cards must be >= 0", file=sys.stderr)
         return 2
 
     rng = random.Random(args.seed)
@@ -239,31 +325,41 @@ def main() -> int:
     ro_conn = sqlite3.connect(ro_uri, uri=True)
     ro_cur = ro_conn.cursor()
 
-    card_ids = [r[0] for r in ro_cur.execute("SELECT id FROM cards ORDER BY id")]
-    if not card_ids:
-        print("error: no cards in collection — add some via the UI first",
-              file=sys.stderr)
+    existing_card_ids = [r[0] for r in ro_cur.execute("SELECT id FROM cards ORDER BY id")]
+    if not existing_card_ids and args.add_cards == 0:
+        print("error: no cards in collection — add some via the UI first or "
+              "use --add-cards N", file=sys.stderr)
         return 2
 
     existing_revlog = ro_cur.execute("SELECT COUNT(*) FROM revlog").fetchone()[0]
-    max_existing_id = ro_cur.execute("SELECT COALESCE(MAX(id), 0) FROM revlog").fetchone()[0]
+    max_existing_revlog_id = ro_cur.execute(
+        "SELECT COALESCE(MAX(id), 0) FROM revlog"
+    ).fetchone()[0]
+    max_existing_card_id = ro_cur.execute(
+        "SELECT COALESCE(MAX(id), 0) FROM cards"
+    ).fetchone()[0]
     now_ms = ro_cur.execute("SELECT CAST(strftime('%s','now') AS INTEGER) * 1000").fetchone()[0]
-    base_id_ms = max(now_ms, max_existing_id + 1)
+    revlog_base_id_ms = max(now_ms, max_existing_revlog_id + 1)
+    # Card ids must not collide with existing cards or with revlog ids the
+    # build_review_rows step is about to mint. Park them well past the
+    # latest revlog id so the (id, ms-epoch) interpretation stays sensible.
+    card_base_id_ms = max(now_ms, max_existing_card_id + 1, revlog_base_id_ms + 1)
     ro_conn.close()
 
-    rows = build_review_rows(
-        card_ids, args.reviews_per_card, args.days_ago, base_id_ms, rng,
-        difficulty_mode=args.difficulty_mode,
-    )
-
+    total_cards_after = len(existing_card_ids) + args.add_cards
     print(f"db:        {db_path}")
-    print(f"cards:     {len(card_ids)}")
+    print(f"cards:     {len(existing_card_ids)}"
+          f"{f' (+{args.add_cards} clones planned)' if args.add_cards else ''}")
     print(f"mode:      {args.difficulty_mode}")
     print(f"revlog before: {existing_revlog} (will{' reset' if args.reset else ' append'})")
     if args.reset_cards:
-        print("card state: will reset (queue/type/due/ivl/factor/reps/lapses)")
-    print(f"to insert: {len(rows)} rows over {args.days_ago} days")
-    print(f"id range:  {rows[0][0]} .. {rows[-1][0]}")
+        print("card state: will reset (queue/type/due/ivl/factor/reps/lapses/data)")
+    # Estimate the row count without actually building yet — build_review_rows
+    # needs the full id list and we only know it after cloning. The cap is
+    # reviews_per_card per card.
+    estimated_rows = total_cards_after * args.reviews_per_card
+    print(f"to insert: up to {estimated_rows} rows over {args.days_ago} days "
+          f"({total_cards_after} cards × {args.reviews_per_card} reviews max)")
 
     if args.dry_run:
         print("dry-run: no changes written")
@@ -274,13 +370,25 @@ def main() -> int:
         write_cur = write_conn.cursor()
         if args.reset:
             write_cur.execute("DELETE FROM revlog")
+        if args.add_cards > 0:
+            clone_note_and_card_rows(write_cur, args.add_cards, card_base_id_ms)
         if args.reset_cards:
             # factor=2500 matches Anki's SM-2 default starting ease; FSRS
             # ignores it but keeps cards readable by the legacy scheduler.
+            # data='' wipes any prior FSRS memory state (per-card json blob)
+            # so the post-seed reschedule starts from clean revlog data.
             write_cur.execute(
                 "UPDATE cards SET queue = 0, type = 0, due = 0, "
-                "ivl = 0, factor = 2500, reps = 0, lapses = 0"
+                "ivl = 0, factor = 2500, reps = 0, lapses = 0, data = ''"
             )
+        # Re-fetch the full card list now that clones (if any) exist.
+        all_card_ids = [
+            r[0] for r in write_cur.execute("SELECT id FROM cards ORDER BY id")
+        ]
+        rows = build_review_rows(
+            all_card_ids, args.reviews_per_card, args.days_ago,
+            revlog_base_id_ms, rng, difficulty_mode=args.difficulty_mode,
+        )
         write_cur.executemany(
             "INSERT INTO revlog (id, cid, usn, ease, ivl, lastIvl, factor, time, type) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -292,8 +400,11 @@ def main() -> int:
               file=sys.stderr)
         return 3
 
+    cards_after = write_cur.execute("SELECT COUNT(*) FROM cards").fetchone()[0]
     after = write_cur.execute("SELECT COUNT(*) FROM revlog").fetchone()[0]
-    print(f"revlog after:  {after}")
+    print(f"cards after:   {cards_after}")
+    print(f"revlog after:  {after} ({len(rows)} inserted)")
+    print(f"id range:      {rows[0][0]} .. {rows[-1][0]}")
     write_conn.close()
     return 0
 
