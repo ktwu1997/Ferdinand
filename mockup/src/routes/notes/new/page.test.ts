@@ -23,6 +23,7 @@ vi.mock("$lib/api", async (importOriginal) => {
         fetchDecks: vi.fn(),
         fetchNotetypes: vi.fn(),
         postNote: vi.fn(),
+        postMedia: vi.fn(),
     };
 });
 
@@ -31,7 +32,7 @@ vi.mock("$app/navigation", () => ({
     goto: (path: string) => gotoMock(path),
 }));
 
-import { fetchDecks, fetchNotetypes, postNote } from "$lib/api";
+import { fetchDecks, fetchNotetypes, postMedia, postNote } from "$lib/api";
 
 function deck(id: number, name: string, overrides: Partial<ApiDeckSummary> = {}): ApiDeckSummary {
     return {
@@ -386,6 +387,143 @@ describe("AddNote notetype picker (Phase 13-C)", () => {
                 notetype_id: CLOZE_ID,
             });
             expect(gotoMock).toHaveBeenCalledWith("/");
+        } finally {
+            unmount(instance);
+        }
+    });
+});
+
+// Phase 15-C: drag-drop image upload into a notetype field. Mocks
+// postMedia and dispatches a synthetic DragEvent with a fake DataTransfer
+// payload — jsdom doesn't construct DataTransfer natively so the test
+// builds a minimal object literal that the handler reads (`types` array
+// + `files` indexed access).
+describe("AddNote drag-drop image upload (Phase 15-C)", () => {
+    let container: HTMLDivElement;
+
+    beforeEach(() => {
+        vi.resetAllMocks();
+        resetPageStub();
+        gotoMock.mockReset();
+        vi.mocked(fetchDecks).mockResolvedValue(twoDecks);
+        vi.mocked(fetchNotetypes).mockResolvedValue(threeNotetypes);
+        container = document.createElement("div");
+        document.body.appendChild(container);
+    });
+
+    afterEach(() => {
+        container.remove();
+    });
+
+    function dispatchDrop(target: Element, file: File): void {
+        // Minimal DataTransfer-shaped object — the handler reads only
+        // `.types` and `.files` so we don't need to implement the full
+        // DOM API. jsdom does not expose a DragEvent constructor (it's
+        // a HTML5 spec quirk that some environments skip), so we
+        // dispatch generic Events of type "dragover" / "drop" instead;
+        // the @ondragover / @ondrop directives Svelte compiles still
+        // fire on these because they listen by name, not subclass.
+        const dataTransfer = {
+            types: ["Files"],
+            files: [file],
+        } as unknown as DataTransfer;
+        const dragover = new Event("dragover", {
+            bubbles: true,
+            cancelable: true,
+        });
+        Object.defineProperty(dragover, "dataTransfer", { value: dataTransfer });
+        target.dispatchEvent(dragover);
+        const drop = new Event("drop", { bubbles: true, cancelable: true });
+        Object.defineProperty(drop, "dataTransfer", { value: dataTransfer });
+        target.dispatchEvent(drop);
+    }
+
+    test("drop image on first field: postMedia called; <img src> token appended to that field", async () => {
+        vi.mocked(postMedia).mockResolvedValueOnce({
+            filename: "screenshot.png",
+            size_bytes: 1234,
+        });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            const file = new File([new Uint8Array([1, 2, 3])], "shot.png", {
+                type: "image/png",
+            });
+            const fields = container.querySelectorAll(".field-droppable");
+            expect(fields.length).toBeGreaterThanOrEqual(2);
+            dispatchDrop(fields[0]!, file);
+            await settle();
+
+            expect(vi.mocked(postMedia)).toHaveBeenCalledTimes(1);
+            const [arg] = vi.mocked(postMedia).mock.calls[0]!;
+            expect(arg).toBeInstanceOf(File);
+            expect((arg as File).name).toBe("shot.png");
+
+            // Field value gets the server-canonical filename appended,
+            // NOT the upload-side `shot.png`. Critical: the dedupe
+            // suffix would otherwise be lost.
+            const ta = container.querySelector<HTMLTextAreaElement>(
+                "#field-input-0",
+            );
+            expect(ta?.value).toBe('<img src="/media/screenshot.png">');
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("non-image drop: no network call; inline error surfaces; field value unchanged", async () => {
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            const file = new File(["some text"], "notes.txt", {
+                type: "text/plain",
+            });
+            const fields = container.querySelectorAll(".field-droppable");
+            dispatchDrop(fields[0]!, file);
+            await settle();
+
+            expect(vi.mocked(postMedia)).not.toHaveBeenCalled();
+            const errors = Array.from(
+                container.querySelectorAll(".field-error"),
+            ).map((e) => e.textContent ?? "");
+            expect(errors.some((t) => t.includes("Only image files"))).toBe(true);
+            const ta = container.querySelector<HTMLTextAreaElement>(
+                "#field-input-0",
+            );
+            expect(ta?.value ?? "").toBe("");
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("server reject (e.g. 400 too large): error surfaces; field value unchanged", async () => {
+        vi.mocked(postMedia).mockRejectedValueOnce(
+            new Error("400 file too large (10485761 bytes); max is 10485760 bytes"),
+        );
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            const file = new File([new Uint8Array([0xff, 0xd8, 0xff])], "big.jpg", {
+                type: "image/jpeg",
+            });
+            const fields = container.querySelectorAll(".field-droppable");
+            dispatchDrop(fields[0]!, file);
+            await settle();
+
+            expect(vi.mocked(postMedia)).toHaveBeenCalledTimes(1);
+            const errors = Array.from(
+                container.querySelectorAll(".field-error"),
+            ).map((e) => e.textContent ?? "");
+            expect(errors.some((t) => t.includes("file too large"))).toBe(true);
+            const ta = container.querySelector<HTMLTextAreaElement>(
+                "#field-input-0",
+            );
+            expect(ta?.value ?? "").toBe("");
         } finally {
             unmount(instance);
         }

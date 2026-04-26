@@ -6,6 +6,7 @@
     import {
         fetchDecks,
         fetchNotetypes,
+        postMedia,
         postNote,
         type ApiDeckSummary,
         type ApiNotetypeSummary,
@@ -31,6 +32,60 @@
     let saving = $state(false);
     let error: string | null = $state(null);
     let loadError: string | null = $state(null);
+
+    // Phase 15-C: per-field drag-drop state for image upload. Tracks the
+    // index of the field currently being hovered with a drag (so only that
+    // field shows the highlight) and the index of the field currently
+    // uploading (so only its textarea is disabled, not the whole form).
+    let dragOverFieldIdx = $state<number | null>(null);
+    let uploadingFieldIdx = $state<number | null>(null);
+    let mediaError: string | null = $state(null);
+
+    function handleFieldDragOver(e: DragEvent, idx: number): void {
+        // Must call preventDefault on dragover for the browser to fire
+        // the drop event later. Showing the highlight only when the
+        // payload includes a file means a stray text-drag (selection
+        // drag from another input) doesn't trigger the visual.
+        if (e.dataTransfer?.types?.includes("Files")) {
+            e.preventDefault();
+            dragOverFieldIdx = idx;
+        }
+    }
+
+    function handleFieldDragLeave(idx: number): void {
+        if (dragOverFieldIdx === idx) dragOverFieldIdx = null;
+    }
+
+    async function handleFieldDrop(e: DragEvent, idx: number): Promise<void> {
+        e.preventDefault();
+        dragOverFieldIdx = null;
+        const file = e.dataTransfer?.files?.[0];
+        if (!file) return;
+        if (uploadingFieldIdx !== null) return;
+        // Quick client-side guard so a wrong-file drop fails fast
+        // without a network round-trip. Server still has the
+        // authoritative allow-list.
+        if (!file.type.startsWith("image/")) {
+            mediaError = "Only image files (PNG / JPEG / WEBP / GIF) can be dropped";
+            return;
+        }
+        uploadingFieldIdx = idx;
+        mediaError = null;
+        try {
+            const res = await postMedia(file);
+            // Append at end of the field. Newline before so the token
+            // sits on its own line for readable plain-text editing —
+            // the rendered card flattens whitespace anyway.
+            const current = fieldValues[idx] ?? "";
+            const sep = current.length > 0 && !current.endsWith("\n") ? "\n" : "";
+            fieldValues[idx] = `${current}${sep}<img src="/media/${res.filename}">`;
+        } catch (err) {
+            mediaError =
+                err instanceof Error ? err.message : "Failed to upload image";
+        } finally {
+            uploadingFieldIdx = null;
+        }
+    }
 
     onMount(async () => {
         try {
@@ -204,19 +259,32 @@
 
             {#if selectedNotetype}
                 {#each selectedNotetype.fields as fieldName, i (i)}
-                    <div class="field">
+                    <div
+                        class="field field-droppable"
+                        class:dragging={dragOverFieldIdx === i}
+                        ondragover={(e) => handleFieldDragOver(e, i)}
+                        ondragleave={() => handleFieldDragLeave(i)}
+                        ondrop={(e) => handleFieldDrop(e, i)}
+                        role="presentation"
+                    >
                         <label for="field-input-{i}">{fieldName}</label>
                         <textarea
                             id="field-input-{i}"
                             class="text-input"
                             bind:value={fieldValues[i]}
-                            disabled={saving}
+                            disabled={saving || uploadingFieldIdx === i}
                             rows={i === 0 ? 3 : 4}
                             required={i === 0}
                             placeholder={i === 0 ? "森林" : ""}
                         ></textarea>
+                        {#if uploadingFieldIdx === i}
+                            <span class="hint">Uploading image…</span>
+                        {/if}
                     </div>
                 {/each}
+                {#if mediaError}
+                    <div class="field-error" role="alert">{mediaError}</div>
+                {/if}
             {/if}
 
             <div class="field">
@@ -307,6 +375,19 @@
     textarea.text-input {
         resize: vertical;
         min-height: 4.5rem;
+    }
+    /* Phase 15-C: drop-target highlight. Using a subtle accent ring
+       instead of an aggressive overlay so a stray drag past the form
+       isn't visually disruptive. */
+    .field-droppable {
+        position: relative;
+        transition: background var(--duration-fast) var(--ease);
+    }
+    .field-droppable.dragging {
+        background: color-mix(in oklch, var(--accent) 5%, transparent);
+        border-radius: var(--radius-sm);
+        outline: 2px dashed var(--accent);
+        outline-offset: 2px;
     }
     .hint {
         font-size: var(--text-xs);
