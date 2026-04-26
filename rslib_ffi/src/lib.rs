@@ -3,6 +3,8 @@
 //! v0 surface (Phase 10-D'): `ferdinand_version()` — crate version string.
 //! v1 surface (Phase 11-D): opaque `FerdinandCollection` handle with
 //! `_open`, `_close`, and `_deck_count` for read-only collection access.
+//! v2 surface (Phase 12-D): `_list_decks_json` returns owned heap JSON
+//! that the caller MUST release via `ferdinand_free_string`.
 //!
 //! ## Memory model
 //!
@@ -13,6 +15,11 @@
 //!   `ferdinand_collection_open()`, freed by
 //!   `ferdinand_collection_close()`. Callers MUST close exactly once;
 //!   leaking it leaks the underlying SQLite connection.
+//! - Heap C strings returned by `ferdinand_list_decks_json` (and any
+//!   future `*_json` functions): owned by the caller. Release with
+//!   `ferdinand_free_string` exactly once. Mixing this with
+//!   `ferdinand_version()`'s 'static pointer would double-free / segfault
+//!   — always pair the producer with its documented free function.
 //!
 //! ## Threading
 //!
@@ -29,6 +36,7 @@ use std::ptr;
 use std::sync::OnceLock;
 
 use anki::collection::{Collection, CollectionBuilder};
+use serde::Serialize;
 
 /// Return a pointer to a NUL-terminated UTF-8 string with this crate's
 /// semantic version. The buffer is owned by the library — do not free.
@@ -139,6 +147,104 @@ pub unsafe extern "C" fn ferdinand_deck_count(handle: *const FerdinandCollection
     }
 }
 
+/// One row in the JSON returned by [`ferdinand_list_decks_json`]. Mirrors
+/// what the desktop sidebar would show in the deck-tree top level — id +
+/// human-readable name + assigned preset id (None for filtered decks).
+#[derive(Serialize)]
+struct FfiDeck {
+    id: i64,
+    name: String,
+    preset_id: Option<i64>,
+}
+
+/// Return a heap-allocated NUL-terminated JSON string with every deck in
+/// the collection: `[{"id": ..., "name": "...", "preset_id": ...}, ...]`.
+/// Returns NULL on a NULL handle or any underlying storage error.
+///
+/// The implicit "Default" deck is always present so a successful call
+/// against an empty collection yields a one-element array.
+///
+/// Ownership: the returned pointer is heap-allocated and owned by the
+/// caller. Release with [`ferdinand_free_string`] exactly once. Calling
+/// `free()` from libc would also work for cdylib consumers (it's a
+/// `CString` under the hood), but the dedicated free function is the
+/// supported contract — it's the only ABI that's guaranteed not to break
+/// when the staticlib is used inside a Swift/Objective-C runtime that
+/// has its own allocator.
+///
+/// # Safety
+/// - `handle` must be a non-NULL pointer returned by
+///   [`ferdinand_collection_open`] that has not been closed.
+/// - Must NOT be called concurrently with any other FFI call on the
+///   same handle from another thread.
+#[no_mangle]
+pub unsafe extern "C" fn ferdinand_list_decks_json(
+    handle: *mut FerdinandCollection,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    // SAFETY: caller contract — `handle` is a valid open Collection and
+    // is not concurrently accessed from another thread. We need &mut to
+    // call get_deck (which mutates the deck cache) below; the pattern
+    // mirrors anki_server::routes::decks::convert.
+    let col = unsafe { &mut (*handle).inner };
+
+    // get_all_deck_names(false) keeps the implicit Default deck in.
+    // Returns Vec<(DeckId, String)> sorted by name.
+    let names = match col.get_all_deck_names(false) {
+        Ok(n) => n,
+        Err(_) => return ptr::null_mut(),
+    };
+
+    let mut decks = Vec::with_capacity(names.len());
+    for (did, name) in names {
+        let preset_id = col
+            .get_deck(did)
+            .ok()
+            .flatten()
+            .and_then(|d| d.config_id())
+            .map(|cid| cid.0);
+        decks.push(FfiDeck {
+            id: did.0,
+            name,
+            preset_id,
+        });
+    }
+
+    let json = match serde_json::to_string(&decks) {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+    // CString::new fails on interior NUL — deck names with embedded NULs
+    // would already be rejected at insert time inside Anki, but we still
+    // map it to the documented NULL-on-error sentinel rather than panic.
+    match CString::new(json) {
+        Ok(s) => s.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Release a heap C string previously returned by an `*_json` FFI
+/// function (currently only [`ferdinand_list_decks_json`]). NULL-safe so
+/// callers can defensively free after a NULL return without branching.
+///
+/// # Safety
+/// - `s` must be either NULL, or a pointer returned by an FFI function
+///   that documents `ferdinand_free_string` as its release path. Passing
+///   any other pointer (including [`ferdinand_version`]'s 'static
+///   pointer) is undefined behaviour.
+/// - After this call returns, `s` is dangling and must not be used.
+#[no_mangle]
+pub unsafe extern "C" fn ferdinand_free_string(s: *mut c_char) {
+    if s.is_null() {
+        return;
+    }
+    // SAFETY: caller contract — `s` was produced by CString::into_raw
+    // and has not been freed.
+    drop(unsafe { CString::from_raw(s) });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -232,6 +338,79 @@ mod tests {
         unsafe { ferdinand_collection_close(handle) };
 
         // Cleanup; ignore errors since the next test run would clobber.
+        let _ = std::fs::remove_file(&tmpdir);
+    }
+
+    #[test]
+    fn list_decks_json_returns_null_for_null_handle() {
+        // SAFETY: NULL is the documented sentinel for "no collection".
+        let p = unsafe { ferdinand_list_decks_json(ptr::null_mut()) };
+        assert!(p.is_null());
+    }
+
+    #[test]
+    fn free_string_is_null_safe() {
+        // Defensive callers should be able to free unconditionally
+        // after a possible NULL return without branching.
+        // SAFETY: NULL is documented as a no-op.
+        unsafe { ferdinand_free_string(ptr::null_mut()) };
+    }
+
+    #[test]
+    fn list_decks_json_round_trip_against_real_collection() {
+        // Open a fresh collection, list its decks, parse the JSON, and
+        // verify the implicit Default deck shape (id + name + preset_id).
+        // Use a unique tempfile per run so parallel `cargo test` doesn't
+        // race against the open_count_close test on the same path.
+        let tmpdir = std::env::temp_dir().join(format!(
+            "ferdinand_ffi_list_decks_test_{}_{}.anki2",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        ));
+        let cpath = CString::new(tmpdir.to_str().unwrap()).unwrap();
+
+        // SAFETY: `cpath` outlives the call.
+        let handle = unsafe { ferdinand_collection_open(cpath.as_ptr()) };
+        assert!(!handle.is_null(), "open should succeed for fresh path");
+
+        // SAFETY: `handle` is a freshly opened, single-threaded handle.
+        let json_ptr = unsafe { ferdinand_list_decks_json(handle) };
+        assert!(!json_ptr.is_null(), "list should succeed for fresh col");
+
+        // SAFETY: `json_ptr` was just produced by CString::into_raw and
+        // has not been freed; it points to a NUL-terminated UTF-8 buffer.
+        let json = unsafe { CStr::from_ptr(json_ptr) }
+            .to_str()
+            .expect("list_decks_json must return valid UTF-8");
+        let decks: Vec<serde_json::Value> = serde_json::from_str(json)
+            .expect("list_decks_json must return a valid JSON array");
+        assert!(!decks.is_empty(), "Default deck always present");
+        // Shape check: every entry has id (i64), name (String),
+        // preset_id (i64 or null).
+        for d in &decks {
+            assert!(d["id"].is_i64(), "deck id must be i64, got {d}");
+            assert!(d["name"].is_string(), "deck name must be string, got {d}");
+            let pid = &d["preset_id"];
+            assert!(
+                pid.is_i64() || pid.is_null(),
+                "preset_id must be i64 or null, got {pid}"
+            );
+        }
+        // The Default deck has a stable id of 1; this is the contract
+        // anki_server::routes::decks relies on too.
+        assert!(
+            decks.iter().any(|d| d["id"] == 1),
+            "Default deck id=1 must appear in list, got {decks:?}"
+        );
+
+        // SAFETY: produced by ferdinand_list_decks_json which documents
+        // ferdinand_free_string as the release path.
+        unsafe { ferdinand_free_string(json_ptr) };
+        // SAFETY: `handle` was opened above and not yet closed.
+        unsafe { ferdinand_collection_close(handle) };
         let _ = std::fs::remove_file(&tmpdir);
     }
 }
