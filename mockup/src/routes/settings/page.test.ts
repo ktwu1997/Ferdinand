@@ -637,6 +637,87 @@ describe("SettingsPage FSRS optimize wiring contract (Phase 9-O3)", () => {
         }
     });
 
+    // Phase 14-B: per-preset optimize routes the selected preset id to
+    // the server. The default-preset path now POSTs ?preset_id=1
+    // explicitly (not the v1 omitted-preset behavior) so the
+    // per-preset code path is exercised uniformly across presets.
+    test("Phase 14-B: clicking Re-optimize passes selectedPresetId to postFsrsOptimize", async () => {
+        // Multi-preset list so we can verify the *selected* (not just the
+        // default) id reaches the server. preset_id=2 is "Spanish".
+        vi.mocked(fetchDeckConfigs).mockResolvedValueOnce({
+            configs: [
+                { id: 1, name: "Default" },
+                { id: 2, name: "Spanish" },
+            ],
+        });
+        // First mount load: Default conf (auto-selected as preset id=1).
+        vi.mocked(fetchDeckConfigById).mockResolvedValueOnce(defaultConf);
+        // Switch-preset reload: Spanish conf with id=2.
+        const spanishConf: ApiDeckConfigDefault = {
+            ...defaultConf,
+            id: 2,
+            name: "Spanish",
+        };
+        vi.mocked(fetchDeckConfigById).mockResolvedValueOnce(spanishConf);
+        vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce({ enabled: true });
+        vi.mocked(postFsrsOptimize).mockResolvedValueOnce({
+            fsrs_items: 7,
+            params: [0.4],
+        });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            // Switch the preset selector to Spanish (id=2).
+            const select = container.querySelector<HTMLSelectElement>(
+                "#preset-select",
+            );
+            if (!select) throw new Error("preset-select not found");
+            select.value = "2";
+            select.dispatchEvent(new Event("change", { bubbles: true }));
+            await settle();
+
+            clickReoptimize();
+            await settle();
+
+            expect(vi.mocked(postFsrsOptimize)).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(postFsrsOptimize)).toHaveBeenCalledWith(2);
+            // Hint copy should mention the preset name.
+            const hint = container.querySelector(".card-head + .hint");
+            expect(hint?.textContent).toMatch(/Trained on\s+7 reviews\s+on Spanish/);
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("Phase 14-B: server 400 (preset has no decks) surfaces field-error", async () => {
+        vi.mocked(fetchDeckConfigById).mockResolvedValueOnce(defaultConf);
+        vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce({ enabled: true });
+        vi.mocked(postFsrsOptimize).mockRejectedValueOnce(
+            new Error(
+                "400 no decks use preset 1777200000000; assign it to at least one deck before optimizing",
+            ),
+        );
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            clickReoptimize();
+            await settle();
+
+            const err = container.querySelector(".field-error");
+            expect(err).not.toBeNull();
+            expect(err?.textContent).toContain("no decks use preset");
+            // No params updated on failure — weights grid stays empty
+            // (defaultConf has fsrs_params=[]).
+            expect(container.querySelectorAll(".w-cell").length).toBe(0);
+        } finally {
+            unmount(instance);
+        }
+    });
+
     test("button shows 'Optimizing…' and is disabled while the request is in flight", async () => {
         vi.mocked(fetchDeckConfigById).mockResolvedValueOnce(defaultConf);
         vi.mocked(fetchFsrsEnabled).mockResolvedValueOnce({ enabled: true });

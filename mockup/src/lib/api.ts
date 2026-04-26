@@ -466,8 +466,21 @@ export async function putFsrsEnabled(req: ApiFsrsEnabled): Promise<ApiFsrsEnable
     return putJson<ApiFsrsEnabled>("/api/fsrs/enabled", req);
 }
 
-export async function postFsrsOptimize(): Promise<ApiFsrsOptimizeResponse> {
-    return postJson<ApiFsrsOptimizeResponse>("/api/fsrs/optimize", {});
+/**
+ * Phase 14-B: per-preset optimize. When `presetId` is undefined, the
+ * server keeps the v1 Default-preset behavior (Phase 9-O3 backward
+ * compat). When supplied, the server validates the id (400 for
+ * non-positive), looks up the preset (404 on miss), and refuses to
+ * train a preset with no decks assigned (400 — see commit body).
+ */
+export async function postFsrsOptimize(
+    presetId?: number,
+): Promise<ApiFsrsOptimizeResponse> {
+    const path =
+        presetId === undefined
+            ? "/api/fsrs/optimize"
+            : `/api/fsrs/optimize?preset_id=${presetId}`;
+    return postJson<ApiFsrsOptimizeResponse>(path, {});
 }
 
 export interface ApiDeckRenameResponse {
