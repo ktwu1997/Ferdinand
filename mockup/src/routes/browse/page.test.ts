@@ -28,10 +28,12 @@ vi.mock("$lib/api", async (importOriginal) => {
         patchDeckName: vi.fn(),
         patchDeckPreset: vi.fn(),
         postCardSuspend: vi.fn(),
+        deleteNote: vi.fn(),
     };
 });
 
 import {
+    deleteNote,
     fetchCards,
     fetchDecks,
     fetchDeckConfigs,
@@ -1103,6 +1105,162 @@ describe("BrowsePage server search wiring (Phase 12-A)", () => {
             expect(
                 container.querySelector(".count-tag")?.textContent?.trim(),
             ).toBe("1 of 3");
+        } finally {
+            unmount(instance);
+        }
+    });
+});
+
+// Phase 13-A: contract tests for the delete-note flow. The Delete button
+// in the editor footer was a placeholder pre-13-A; once wired, it goes
+// through window.confirm → deleteNote → liveCards filter + liveTotal
+// decrement. Failure surfaces in the same .error-banner slot as the
+// other editor mutations (rename / suspend / preset).
+describe("BrowsePage delete-note flow (Phase 13-A)", () => {
+    let container: HTMLDivElement;
+    let confirmSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+        vi.resetAllMocks();
+        resetPageStub();
+        // Same default fallbacks as the outer describe so the editor
+        // gets liveCards/liveDecks for the click target.
+        vi.mocked(fetchDecks).mockRejectedValue(
+            new Error("decks unreachable"),
+        );
+        vi.mocked(fetchTags).mockRejectedValue(new Error("tags unreachable"));
+        vi.mocked(fetchDeckConfigs).mockRejectedValue(
+            new Error("preset list unreachable"),
+        );
+        // Default to "user clicked OK" so test bodies don't repeat the
+        // spy install. Tests that need cancellation override per-call.
+        confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+        container = document.createElement("div");
+        document.body.appendChild(container);
+    });
+
+    afterEach(() => {
+        confirmSpy.mockRestore();
+        container.remove();
+    });
+
+    function clickDeleteButton(root: HTMLElement): void {
+        const btn = Array.from(
+            root.querySelectorAll<HTMLButtonElement>(".editor-footer .ghost-btn"),
+        ).find((b) => b.textContent?.trim().startsWith("Delete"));
+        if (!btn) throw new Error("Delete button not found in editor-footer");
+        btn.click();
+        flushSync();
+    }
+
+    test("clicking Delete fires window.confirm + deleteNote with the selected card's note_id", async () => {
+        vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+        vi.mocked(deleteNote).mockResolvedValueOnce({ removed_card_count: 1 });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            // First card in liveThree is id=101, note_id=101.
+            clickDeleteButton(container);
+            await settle();
+
+            expect(confirmSpy).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(deleteNote)).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(deleteNote)).toHaveBeenCalledWith(101);
+
+            // Row dropped from list — 3 → 2 visible. count-tag also updates
+            // to reflect the new total (3 - 1 = 2).
+            expect(
+                container.querySelectorAll(".list button.row").length,
+            ).toBe(2);
+            expect(
+                container.querySelector(".count-tag")?.textContent?.trim(),
+            ).toBe("1–2 of 2");
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("cancelling the confirm prompt does not call deleteNote (rows unchanged)", async () => {
+        confirmSpy.mockReturnValue(false);
+        vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            clickDeleteButton(container);
+            await settle();
+
+            expect(confirmSpy).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(deleteNote)).not.toHaveBeenCalled();
+            // List intact at 3 rows.
+            expect(
+                container.querySelectorAll(".list button.row").length,
+            ).toBe(3);
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("server reject (e.g. 404) surfaces inline error-banner; rows untouched", async () => {
+        vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+        vi.mocked(deleteNote).mockRejectedValueOnce(
+            new Error("404 note 101 not found"),
+        );
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            clickDeleteButton(container);
+            await settle();
+
+            const banner = container.querySelector(".error-banner");
+            expect(banner).not.toBeNull();
+            expect(banner?.textContent).toContain("404");
+            // No rows removed since the server rejected.
+            expect(
+                container.querySelectorAll(".list button.row").length,
+            ).toBe(3);
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("multi-card note: liveTotal subtracts removed_card_count from the server response", async () => {
+        // A Cloze note with 3 generated cards: server returns
+        // removed_card_count=3 even though only 2 of those happen to be
+        // on the current page. liveTotal must drop by the full 3.
+        const totalFiveWithCloze: ApiCardListResponse = {
+            total: 5,
+            cards: [
+                { ...card(201, "<p>{{c1}}</p>", "<p>cloze</p>"), note_id: 999 },
+                { ...card(202, "<p>{{c2}}</p>", "<p>cloze</p>"), note_id: 999 },
+                card(301, "<p>other</p>", "<p>note</p>"),
+            ],
+        };
+        vi.mocked(fetchCards).mockResolvedValueOnce(totalFiveWithCloze);
+        vi.mocked(deleteNote).mockResolvedValueOnce({ removed_card_count: 3 });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            // Selecting first row picks up note_id=999.
+            clickDeleteButton(container);
+            await settle();
+
+            expect(vi.mocked(deleteNote)).toHaveBeenCalledWith(999);
+            // 2 of 3 cards for note 999 were on this page; 1 unrelated
+            // card remains. count-tag reflects total = 5 - 3 = 2.
+            expect(
+                container.querySelectorAll(".list button.row").length,
+            ).toBe(1);
+            expect(
+                container.querySelector(".count-tag")?.textContent?.trim(),
+            ).toBe("1–1 of 2");
         } finally {
             unmount(instance);
         }

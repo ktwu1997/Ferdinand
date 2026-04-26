@@ -3,6 +3,7 @@
     import { cards as fakeCards, decks as fakeDecks, savedSearches, tags as fakeTags } from "$lib/data";
     import Kbd from "$lib/components/Kbd.svelte";
     import {
+        deleteNote,
         fetchCards,
         fetchDecks,
         fetchDeckConfigs,
@@ -57,6 +58,7 @@
     let deckNameDraft = $state("");
     let isMutatingDeck = $state(false);
     let isMutatingSuspend = $state(false);
+    let isMutatingDelete = $state(false);
     let deckInput = $state<HTMLInputElement | null>(null);
 
     // Phase 9-S: tree-sidebar inline rename. Per-row edit state (only one row
@@ -434,6 +436,55 @@
         }
     }
 
+    async function deleteSelectedNote() {
+        if (!selected || !liveCards) return;
+        const targetCard = liveCards.find((c) => String(c.id) === selected.id);
+        if (!targetCard) {
+            errorBanner = "Delete unavailable on fake data";
+            return;
+        }
+        // Two-step delete via native confirm() — keeps the dependency
+        // surface minimal and matches the settings-page Delete preset
+        // pattern (Phase 13-B). Copy includes the card's first-field
+        // snippet so a slip on the row list can't take out the wrong
+        // note.
+        const snippet = (selected.frontSnippet || "(empty)").slice(0, 60);
+        if (
+            typeof window !== "undefined" &&
+            !window.confirm(
+                `Delete this note? "${snippet}" — its ${targetCard.template_idx + 1} or more cards will be removed too.`,
+            )
+        ) {
+            return;
+        }
+        isMutatingDelete = true;
+        errorBanner = null;
+        try {
+            const res = await deleteNote(targetCard.note_id);
+            // Drop every card belonging to the deleted note from the
+            // local list — server returns a card count but not the ids,
+            // so we filter by note_id (cheaper than refetching the page).
+            const removedNoteId = targetCard.note_id;
+            liveCards = liveCards.filter((c) => c.note_id !== removedNoteId);
+            if (liveTotal !== null) {
+                // Server's removed_card_count is the truth across the
+                // whole match set; subtract it directly so "X-Y of Z"
+                // stays accurate even if some siblings were paginated
+                // off the current page.
+                liveTotal = Math.max(0, liveTotal - res.removed_card_count);
+            }
+            // Clamp selection — if we just deleted the bottom row, slide
+            // up; otherwise the next card naturally takes the slot.
+            if (selectedIdx >= liveCards.length && selectedIdx > 0) {
+                selectedIdx = Math.max(0, liveCards.length - 1);
+            }
+        } catch (e) {
+            errorBanner = e instanceof Error ? e.message : "Delete failed";
+        } finally {
+            isMutatingDelete = false;
+        }
+    }
+
     async function toggleSuspend() {
         if (!selected || !liveCards) return;
         const targetCard = liveCards.find((c) => String(c.id) === selected.id);
@@ -703,7 +754,13 @@
             >
                 {selected?.state === "suspended" ? "Unsuspend" : "Suspend"}
             </button>
-            <button class="ghost-btn danger">Delete</button>
+            <button
+                class="ghost-btn danger"
+                disabled={isMutatingDelete}
+                onclick={deleteSelectedNote}
+            >
+                {isMutatingDelete ? "Deleting…" : "Delete"}
+            </button>
         </div>
     </aside>
 </div>

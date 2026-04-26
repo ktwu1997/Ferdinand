@@ -334,6 +334,38 @@ export async function postNote(
     return postJson<ApiNoteCreateResponse>("/api/notes", req);
 }
 
+export interface ApiNoteDeleteResponse {
+    /**
+     * Number of cards removed alongside the note. Varies by notetype
+     * (Basic = 1, Basic+Reverse = 2, Cloze = N). Useful for an undo
+     * toast like "Deleted note (3 cards)".
+     */
+    removed_card_count: number;
+}
+
+/**
+ * Phase 13-A: delete a note (and its generated cards) by id. Server
+ * validates id positive (400) and existence (404). Note id is the
+ * note_id field on ApiCardSummary, NOT the card id.
+ */
+export async function deleteNote(id: number): Promise<ApiNoteDeleteResponse> {
+    const res = await fetch(`${apiBase()}/api/notes/${id}`, {
+        method: "DELETE",
+        headers: { accept: "application/json" },
+    });
+    if (!res.ok) {
+        let detail = res.statusText;
+        try {
+            const parsed = (await res.json()) as { message?: string };
+            if (parsed?.message) detail = parsed.message;
+        } catch {
+            // body wasn't JSON — fall through with statusText
+        }
+        throw new Error(`${res.status} ${detail}`);
+    }
+    return (await res.json()) as ApiNoteDeleteResponse;
+}
+
 export async function fetchDeckConfigById(id: number): Promise<ApiDeckConfigDefault> {
     return getJson<ApiDeckConfigDefault>(`/api/deck_config/${id}`);
 }
