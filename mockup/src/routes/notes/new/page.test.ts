@@ -3,17 +3,25 @@ import { flushSync, mount, unmount } from "svelte";
 
 import Page from "./+page.svelte";
 import { resetPageStub } from "../../../test/stubs/app-stores";
-import type { ApiDeckListResponse, ApiDeckSummary } from "$lib/api";
+import type {
+    ApiDeckListResponse,
+    ApiDeckSummary,
+    ApiNotetypeListResponse,
+} from "$lib/api";
 
 // Phase 12-C: contract tests for the Add Note flow. The page calls
 // fetchDecks on mount to populate the deck dropdown, then postNote on
 // submit. goto is stubbed so we can assert the redirect-to-home
 // behaviour without touching SvelteKit's actual navigation machinery.
+// Phase 13-C: fetchNotetypes joins the parallel mount load; the form
+// now renders one textarea per notetype field instead of a fixed
+// Front/Back pair.
 vi.mock("$lib/api", async (importOriginal) => {
     const actual = await importOriginal<typeof import("$lib/api")>();
     return {
         ...actual,
         fetchDecks: vi.fn(),
+        fetchNotetypes: vi.fn(),
         postNote: vi.fn(),
     };
 });
@@ -23,7 +31,7 @@ vi.mock("$app/navigation", () => ({
     goto: (path: string) => gotoMock(path),
 }));
 
-import { fetchDecks, postNote } from "$lib/api";
+import { fetchDecks, fetchNotetypes, postNote } from "$lib/api";
 
 function deck(id: number, name: string, overrides: Partial<ApiDeckSummary> = {}): ApiDeckSummary {
     return {
@@ -52,6 +60,27 @@ const twoDecks: ApiDeckListResponse = {
     ],
 };
 
+// Phase 13-C: real-collection notetype ids are epoch-ms — the test
+// fixture mirrors that so we'd catch a 32-bit overflow / hardcoded-id
+// regression in either direction.
+const BASIC_ID = 1776837237908;
+const REVERSE_ID = 1776837237909;
+const CLOZE_ID = 1776837237910;
+
+const threeNotetypes: ApiNotetypeListResponse = {
+    notetypes: [
+        { id: BASIC_ID, name: "Basic", fields: ["Front", "Back"] },
+        {
+            id: REVERSE_ID,
+            name: "Basic (and reversed card)",
+            fields: ["Front", "Back"],
+        },
+        // Cloze field names differ from Basic — labels must reflect
+        // what the picker selected, not a hardcoded Front/Back pair.
+        { id: CLOZE_ID, name: "Cloze", fields: ["Text", "Back Extra"] },
+    ],
+};
+
 async function settle(): Promise<void> {
     for (let i = 0; i < 10; i++) await Promise.resolve();
     flushSync();
@@ -66,6 +95,7 @@ describe("AddNote page contract (Phase 12-C)", () => {
         // Default: fetchDecks resolves so the form is interactive on
         // mount. Tests that need the load-error branch override.
         vi.mocked(fetchDecks).mockResolvedValue(twoDecks);
+        vi.mocked(fetchNotetypes).mockResolvedValue(threeNotetypes);
         container = document.createElement("div");
         document.body.appendChild(container);
     });
@@ -97,7 +127,7 @@ describe("AddNote page contract (Phase 12-C)", () => {
         }
     });
 
-    test("Save submits trimmed-tag postNote and redirects to /", async () => {
+    test("Save submits trimmed-tag postNote with notetype_id and redirects to /", async () => {
         vi.mocked(postNote).mockResolvedValueOnce({
             note_id: 1777215902150,
             card_count: 1,
@@ -107,16 +137,16 @@ describe("AddNote page contract (Phase 12-C)", () => {
         try {
             await settle();
 
-            const front = container.querySelector(
-                "#front-input",
+            const f0 = container.querySelector(
+                "#field-input-0",
             ) as HTMLTextAreaElement;
-            front.value = "森林";
-            front.dispatchEvent(new Event("input", { bubbles: true }));
-            const back = container.querySelector(
-                "#back-input",
+            f0.value = "森林";
+            f0.dispatchEvent(new Event("input", { bubbles: true }));
+            const f1 = container.querySelector(
+                "#field-input-1",
             ) as HTMLTextAreaElement;
-            back.value = "shinrin — forest";
-            back.dispatchEvent(new Event("input", { bubbles: true }));
+            f1.value = "shinrin — forest";
+            f1.dispatchEvent(new Event("input", { bubbles: true }));
             const tags = container.querySelector(
                 "#tags-input",
             ) as HTMLInputElement;
@@ -139,6 +169,7 @@ describe("AddNote page contract (Phase 12-C)", () => {
                 deck_id: 101,
                 fields: ["森林", "shinrin — forest"],
                 tags: ["vocab", "nature"],
+                notetype_id: BASIC_ID,
             });
             expect(gotoMock).toHaveBeenCalledTimes(1);
             expect(gotoMock).toHaveBeenCalledWith("/");
@@ -159,11 +190,11 @@ describe("AddNote page contract (Phase 12-C)", () => {
             // Whitespace-only front should already make canSubmit=false,
             // but the server-side guard is the source of truth — we
             // still want to verify what happens when the request lands.
-            const front = container.querySelector(
-                "#front-input",
+            const f0 = container.querySelector(
+                "#field-input-0",
             ) as HTMLTextAreaElement;
-            front.value = "x"; // bypass client guard so we hit postNote
-            front.dispatchEvent(new Event("input", { bubbles: true }));
+            f0.value = "x"; // bypass client guard so we hit postNote
+            f0.dispatchEvent(new Event("input", { bubbles: true }));
             flushSync();
 
             const form = container.querySelector(
@@ -202,6 +233,159 @@ describe("AddNote page contract (Phase 12-C)", () => {
             expect(banner?.textContent).toContain("decks unreachable");
             // No deck select rendered (decks=null after rejection).
             expect(container.querySelector("#deck-select")).toBeNull();
+        } finally {
+            unmount(instance);
+        }
+    });
+});
+
+describe("AddNote notetype picker (Phase 13-C)", () => {
+    let container: HTMLDivElement;
+
+    beforeEach(() => {
+        vi.resetAllMocks();
+        resetPageStub();
+        vi.mocked(fetchDecks).mockResolvedValue(twoDecks);
+        vi.mocked(fetchNotetypes).mockResolvedValue(threeNotetypes);
+        container = document.createElement("div");
+        document.body.appendChild(container);
+    });
+
+    afterEach(() => {
+        container.remove();
+    });
+
+    test("notetype picker renders all three options; Basic preselected by name", async () => {
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            const select = container.querySelector(
+                "#notetype-select",
+            ) as HTMLSelectElement | null;
+            expect(select).not.toBeNull();
+            const options = Array.from(
+                select?.querySelectorAll("option") ?? [],
+            );
+            // 3 options, all in server-returned order (Basic / Reverse / Cloze).
+            expect(options.length).toBe(3);
+            const labels = options.map((o) => o.textContent?.trim());
+            expect(labels).toEqual([
+                "Basic (2 fields)",
+                "Basic (and reversed card) (2 fields)",
+                "Cloze (2 fields)",
+            ]);
+            // "Basic" preselected by name (server-side fallback parity).
+            expect(select?.value).toBe(String(BASIC_ID));
+
+            // Default field labels reflect Basic's "Front" / "Back".
+            const labels0 = container.querySelector(
+                'label[for="field-input-0"]',
+            )?.textContent?.trim();
+            const labels1 = container.querySelector(
+                'label[for="field-input-1"]',
+            )?.textContent?.trim();
+            expect(labels0).toBe("Front");
+            expect(labels1).toBe("Back");
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("switching to Cloze relabels fields to Text/Back Extra and resets values", async () => {
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            // Type something into Basic's Front so we can verify the
+            // reset on notetype switch.
+            const f0 = container.querySelector(
+                "#field-input-0",
+            ) as HTMLTextAreaElement;
+            f0.value = "森林";
+            f0.dispatchEvent(new Event("input", { bubbles: true }));
+            flushSync();
+
+            // Flip to Cloze.
+            const select = container.querySelector(
+                "#notetype-select",
+            ) as HTMLSelectElement;
+            select.value = String(CLOZE_ID);
+            select.dispatchEvent(new Event("change", { bubbles: true }));
+            await settle();
+
+            // Labels updated.
+            expect(
+                container
+                    .querySelector('label[for="field-input-0"]')
+                    ?.textContent?.trim(),
+            ).toBe("Text");
+            expect(
+                container
+                    .querySelector('label[for="field-input-1"]')
+                    ?.textContent?.trim(),
+            ).toBe("Back Extra");
+
+            // Field 0 cleared — desktop Add-Card parity (no carry-over).
+            const reset0 = container.querySelector(
+                "#field-input-0",
+            ) as HTMLTextAreaElement;
+            expect(reset0.value).toBe("");
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("save after switching notetype submits the new notetype_id and the new field values", async () => {
+        vi.mocked(postNote).mockResolvedValueOnce({
+            note_id: 1777300000000,
+            card_count: 3,
+        });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            // Switch to Cloze first.
+            const select = container.querySelector(
+                "#notetype-select",
+            ) as HTMLSelectElement;
+            select.value = String(CLOZE_ID);
+            select.dispatchEvent(new Event("change", { bubbles: true }));
+            await settle();
+
+            // Fill the Cloze fields.
+            const f0 = container.querySelector(
+                "#field-input-0",
+            ) as HTMLTextAreaElement;
+            f0.value = "The capital of {{c1::France}} is {{c2::Paris}}.";
+            f0.dispatchEvent(new Event("input", { bubbles: true }));
+            const f1 = container.querySelector(
+                "#field-input-1",
+            ) as HTMLTextAreaElement;
+            f1.value = "Geography fact.";
+            f1.dispatchEvent(new Event("input", { bubbles: true }));
+            flushSync();
+
+            const form = container.querySelector(
+                "form",
+            ) as HTMLFormElement;
+            form.dispatchEvent(
+                new Event("submit", { bubbles: true, cancelable: true }),
+            );
+            await settle();
+
+            expect(vi.mocked(postNote)).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(postNote)).toHaveBeenCalledWith({
+                deck_id: 101,
+                fields: [
+                    "The capital of {{c1::France}} is {{c2::Paris}}.",
+                    "Geography fact.",
+                ],
+                tags: [],
+                notetype_id: CLOZE_ID,
+            });
+            expect(gotoMock).toHaveBeenCalledWith("/");
         } finally {
             unmount(instance);
         }

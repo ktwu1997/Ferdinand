@@ -309,6 +309,26 @@ export async function deleteDeckConfig(
     return (await res.json()) as ApiDeckConfigDeleteResponse;
 }
 
+export interface ApiNotetypeSummary {
+    id: number;
+    name: string;
+    /** Field names in template order. Length == field count. */
+    fields: string[];
+}
+
+export interface ApiNotetypeListResponse {
+    notetypes: ApiNotetypeSummary[];
+}
+
+/**
+ * Phase 13-C: list every notetype on the collection. Sorted by name
+ * (case-insensitive) to match the desktop "Manage Note Types" dialog
+ * ordering. Used by the Add Note picker.
+ */
+export async function fetchNotetypes(): Promise<ApiNotetypeListResponse> {
+    return getJson<ApiNotetypeListResponse>("/api/notetypes");
+}
+
 export interface ApiNoteCreateRequest {
     deck_id: number;
     /** Field values in template order; first is the sort field. */

@@ -5,20 +5,28 @@
     import Button from "$lib/components/Button.svelte";
     import {
         fetchDecks,
+        fetchNotetypes,
         postNote,
         type ApiDeckSummary,
+        type ApiNotetypeSummary,
     } from "$lib/api";
 
     // Phase 12-C: minimal Add-Note flow. Wires the home page's existing
-    // "Add note" button to a real server endpoint via /api/notes. v1
-    // assumes the server-side default notetype ("Basic") so the form
-    // is just deck + Front + Back + tags. Future: notetype picker for
-    // Cloze and custom notetypes.
+    // "Add note" button to a real server endpoint via /api/notes.
+    // Phase 13-C: notetype picker + dynamic fields. The server returns
+    // every notetype's field names so the form labels each input row
+    // by name (Cloze "Text", Basic "Front" etc.) instead of generic
+    // Front/Back. Switching notetype resets every field — matching the
+    // desktop Add-Card screen, where field content doesn't carry over
+    // between notetypes either.
 
     let decks = $state<ApiDeckSummary[] | null>(null);
     let deckId = $state<number | null>(null);
-    let front = $state("");
-    let back = $state("");
+    let notetypes = $state<ApiNotetypeSummary[] | null>(null);
+    let notetypeId = $state<number | null>(null);
+    // Field values, indexed by template order. Always sized to match
+    // the selected notetype's `fields.length`. Reset on notetype change.
+    let fieldValues = $state<string[]>([]);
     let tagsRaw = $state("");
     let saving = $state(false);
     let error: string | null = $state(null);
@@ -26,23 +34,61 @@
 
     onMount(async () => {
         try {
-            const res = await fetchDecks();
+            // Decks + notetypes load in parallel — neither depends on
+            // the other. If one fails we surface the same generic
+            // banner; per-source granularity isn't useful since the
+            // form is unsubmittable in either failure mode.
+            const [decksRes, ntRes] = await Promise.all([
+                fetchDecks(),
+                fetchNotetypes(),
+            ]);
             // Filter out the implicit root and skip filtered decks
             // (server rejects them anyway; making the option un-selectable
             // here saves the user from a 400 round-trip).
-            decks = res.decks.filter(
+            decks = decksRes.decks.filter(
                 (d) => d.id !== 0 && d.level >= 1 && !d.filtered,
             );
             if (decks.length > 0) {
-                // Default to the first non-filtered deck so the form is
-                // immediately submittable on a fresh load.
                 deckId = decks[0].id;
+            }
+            notetypes = ntRes.notetypes;
+            if (notetypes.length > 0) {
+                // Default to "Basic" by name if present (server seeds it
+                // on every fresh collection); else fall back to the first
+                // listed notetype. Matches the Phase 12-C server-side
+                // "Basic" fallback so default form submissions are
+                // round-trip stable.
+                const basic = notetypes.find((n) => n.name === "Basic");
+                const initial = basic ?? notetypes[0];
+                notetypeId = initial.id;
+                fieldValues = new Array(initial.fields.length).fill("");
             }
         } catch (e) {
             loadError =
-                e instanceof Error ? e.message : "Couldn't load decks";
+                e instanceof Error ? e.message : "Couldn't load form data";
         }
     });
+
+    // Currently-selected notetype, derived from the dropdown value. Drives
+    // the dynamic field rendering below.
+    let selectedNotetype = $derived.by(() => {
+        if (!notetypes || notetypeId === null) return null;
+        return notetypes.find((n) => n.id === notetypeId) ?? null;
+    });
+
+    function onNotetypeChange(e: Event): void {
+        const target = e.target as HTMLSelectElement;
+        const next = Number(target.value);
+        if (Number.isNaN(next) || !notetypes) return;
+        const nt = notetypes.find((n) => n.id === next);
+        if (!nt) return;
+        notetypeId = next;
+        // Reset fields — the previous notetype's content has no
+        // semantic mapping to this one's templates. Matches desktop
+        // Add-Card behaviour.
+        fieldValues = new Array(nt.fields.length).fill("");
+        error = null;
+    }
 
     function parseTags(raw: string): string[] {
         // Accept comma-or-whitespace-separated tags, drop blanks.
@@ -56,18 +102,23 @@
 
     let parsedTags = $derived(parseTags(tagsRaw));
     let canSubmit = $derived(
-        deckId !== null && front.trim() !== "" && !saving,
+        deckId !== null &&
+            notetypeId !== null &&
+            fieldValues.length > 0 &&
+            (fieldValues[0] ?? "").trim() !== "" &&
+            !saving,
     );
 
     async function save(): Promise<void> {
-        if (!canSubmit || deckId === null) return;
+        if (!canSubmit || deckId === null || notetypeId === null) return;
         saving = true;
         error = null;
         try {
             await postNote({
                 deck_id: deckId,
-                fields: [front, back],
+                fields: fieldValues,
                 tags: parsedTags,
+                notetype_id: notetypeId,
             });
             // Land back on home; the live counts there will pick up the
             // new card on next mount via fetchDecks.
@@ -88,7 +139,7 @@
 
     {#if loadError}
         <div class="error-banner" role="alert">
-            <strong>Couldn't load decks.</strong>
+            <strong>Couldn't load form data.</strong>
             {loadError}
         </div>
     {/if}
@@ -122,29 +173,51 @@
             </div>
 
             <div class="field">
-                <label for="front-input">Front</label>
-                <textarea
-                    id="front-input"
-                    class="text-input"
-                    bind:value={front}
-                    disabled={saving}
-                    rows="3"
-                    required
-                    placeholder="森林"
-                ></textarea>
+                <label for="notetype-select">Notetype</label>
+                {#if loadError}
+                    <!-- Suppressed when decks/notetypes load failed. -->
+                {:else if notetypes === null}
+                    <span class="hint">Loading notetypes…</span>
+                {:else if notetypes.length === 0}
+                    <span class="hint"
+                        >No notetypes available on this collection.</span
+                    >
+                {:else}
+                    <select
+                        id="notetype-select"
+                        class="text-input"
+                        value={notetypeId}
+                        onchange={onNotetypeChange}
+                        disabled={saving}
+                    >
+                        {#each notetypes as n (n.id)}
+                            <option value={n.id}
+                                >{n.name} ({n.fields.length} field{n.fields
+                                    .length === 1
+                                    ? ""
+                                    : "s"})</option
+                            >
+                        {/each}
+                    </select>
+                {/if}
             </div>
 
-            <div class="field">
-                <label for="back-input">Back</label>
-                <textarea
-                    id="back-input"
-                    class="text-input"
-                    bind:value={back}
-                    disabled={saving}
-                    rows="4"
-                    placeholder="しんりん — forest, woods"
-                ></textarea>
-            </div>
+            {#if selectedNotetype}
+                {#each selectedNotetype.fields as fieldName, i (i)}
+                    <div class="field">
+                        <label for="field-input-{i}">{fieldName}</label>
+                        <textarea
+                            id="field-input-{i}"
+                            class="text-input"
+                            bind:value={fieldValues[i]}
+                            disabled={saving}
+                            rows={i === 0 ? 3 : 4}
+                            required={i === 0}
+                            placeholder={i === 0 ? "森林" : ""}
+                        ></textarea>
+                    </div>
+                {/each}
+            {/if}
 
             <div class="field">
                 <label for="tags-input">Tags</label>
