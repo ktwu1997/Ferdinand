@@ -407,6 +407,32 @@ export interface ApiNotePatchResponse {
     modified: number;
 }
 
+export interface ApiDeckCreateRequest {
+    /** Human-readable name. Use `::` to nest under existing parents
+     * (auto-creates missing ancestors server-side). Server validates
+     * trim non-empty + ≤100 chars + no leading/trailing/consecutive
+     * `::` (Phase 14-C). */
+    name: string;
+}
+
+export interface ApiDeckCreateResponse {
+    id: number;
+    /** Server-canonical name (may differ from request when a duplicate
+     * is auto-suffixed to "Foo (1)"). */
+    name: string;
+}
+
+/**
+ * Phase 14-C: create a new (non-filtered) deck. Server validates the
+ * name shape (400) — empty / >100 chars / `::` edge cases — then
+ * returns the assigned epoch-ms id.
+ */
+export async function postDeck(
+    name: string,
+): Promise<ApiDeckCreateResponse> {
+    return postJson<ApiDeckCreateResponse>("/api/decks", { name });
+}
+
 /**
  * Phase 14-A: partial-update a note's fields and/or tags. Server
  * validates id positive (400), at-least-one-of-fields-or-tags (400),

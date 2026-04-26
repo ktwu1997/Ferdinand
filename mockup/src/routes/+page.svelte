@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onMount } from "svelte";
+    import { onMount, tick } from "svelte";
     import Card from "$lib/components/Card.svelte";
     import Button from "$lib/components/Button.svelte";
     import Sparkline from "$lib/components/Sparkline.svelte";
@@ -11,7 +11,12 @@
         totalDue,
         type Deck,
     } from "$lib/data";
-    import { fetchDecks, fetchStatsRecent, type ApiDayCount } from "$lib/api";
+    import {
+        fetchDecks,
+        fetchStatsRecent,
+        postDeck,
+        type ApiDayCount,
+    } from "$lib/api";
 
     let liveDecks: Deck[] | null = $state(null);
     // Phase 10-B: explicit error banner on fetch failure. Read-only page,
@@ -27,6 +32,19 @@
     // blanks, but the user is told their counts are stale.
     let liveHistory: ApiDayCount[] | null = $state(null);
     let statsError = $state<string | null>(null);
+
+    // Phase 14-C: inline "+ New deck" form. Mirrors the settings-page
+    // "+ New preset" pattern (Phase 12-B): button reveals input, Enter
+    // commits, Escape cancels. liveDecks must be non-null to commit so
+    // we never lie about persisting against fake data — server-side
+    // 400s surface inline rather than as a global error banner so the
+    // create form keeps focus and the user can fix-and-retry without
+    // scrolling.
+    let isCreatingDeck = $state(false);
+    let newDeckName = $state("");
+    let isMutatingNewDeck = $state(false);
+    let newDeckError = $state<string | null>(null);
+    let newDeckInput = $state<HTMLInputElement | null>(null);
 
     onMount(async () => {
         try {
@@ -58,6 +76,66 @@
 
     let decks = $derived(liveDecks ?? fakeDecks);
     let resume = $derived(decks[0] ?? fakeDecks[0]);
+
+    async function startCreateDeck(): Promise<void> {
+        if (liveDecks === null) {
+            newDeckError = "Create unavailable — backend offline";
+            return;
+        }
+        isCreatingDeck = true;
+        newDeckName = "";
+        newDeckError = null;
+        await tick();
+        newDeckInput?.focus();
+    }
+
+    function cancelCreateDeck(): void {
+        isCreatingDeck = false;
+        newDeckName = "";
+        newDeckError = null;
+    }
+
+    // Commit a new deck. Empty inputs short-circuit to cancel so a
+    // mash-Enter on a fresh form doesn't pile up no-op POSTs. On
+    // success the deck list refetches because Anki may have created
+    // missing parents (e.g. "Spanish::Verbs::Irregular" auto-creates
+    // "Spanish" + "Spanish::Verbs") and the canonical sort comes from
+    // the server.
+    async function commitCreateDeck(): Promise<void> {
+        const trimmed = newDeckName.trim();
+        if (trimmed === "") {
+            cancelCreateDeck();
+            return;
+        }
+        if (liveDecks === null) {
+            newDeckError = "Create unavailable — backend offline";
+            return;
+        }
+        isMutatingNewDeck = true;
+        newDeckError = null;
+        try {
+            await postDeck(trimmed);
+            const res = await fetchDecks();
+            liveDecks = res.decks
+                .filter((d) => d.id !== 0 && d.level >= 1)
+                .map((d) => ({
+                    id: String(d.id),
+                    name: d.name,
+                    emoji: "📚",
+                    new: d.new_count,
+                    learning: d.learn_count,
+                    review: d.review_count,
+                    totalCards: d.total_in_deck,
+                    lastStudied: new Date().toISOString(),
+                }));
+            cancelCreateDeck();
+        } catch (e) {
+            newDeckError =
+                e instanceof Error ? e.message : "Couldn't create deck";
+        } finally {
+            isMutatingNewDeck = false;
+        }
+    }
     let history = $derived(liveHistory ?? fakeHistory);
     let totalReviews = $derived(history.reduce((a, d) => a + d.reviews, 0));
     let totalDueAll = $derived(decks.reduce((a, d) => a + totalDue(d), 0));
@@ -124,8 +202,48 @@
     <section class="section">
         <div class="section-head">
             <h3>All decks</h3>
-            <a class="ghost-link" href="/browse">Browse all →</a>
+            <div class="head-actions">
+                {#if isCreatingDeck}
+                    <input
+                        bind:this={newDeckInput}
+                        bind:value={newDeckName}
+                        class="new-deck-input"
+                        type="text"
+                        placeholder="Spanish::Verbs::Irregular"
+                        disabled={isMutatingNewDeck}
+                        aria-label="New deck name"
+                        onkeydown={(e) => {
+                            if (e.key === "Enter") commitCreateDeck();
+                            else if (e.key === "Escape") cancelCreateDeck();
+                        }}
+                    />
+                    <button
+                        type="button"
+                        class="ghost-link"
+                        disabled={isMutatingNewDeck}
+                        onclick={commitCreateDeck}
+                    >Save</button>
+                    <button
+                        type="button"
+                        class="ghost-link subtle-link"
+                        disabled={isMutatingNewDeck}
+                        onclick={cancelCreateDeck}
+                    >Cancel</button>
+                {:else}
+                    <button
+                        type="button"
+                        class="ghost-link new-deck-btn"
+                        disabled={liveDecks === null}
+                        onclick={startCreateDeck}
+                        aria-label="Create new deck"
+                    >+ New deck</button>
+                {/if}
+                <a class="ghost-link" href="/browse">Browse all →</a>
+            </div>
         </div>
+        {#if newDeckError}
+            <div class="error-banner" role="alert">{newDeckError}</div>
+        {/if}
         <div class="deck-grid">
             {#each decks as deck (deck.id)}
                 {@const due = totalDue(deck)}
@@ -299,6 +417,45 @@
     }
     .ghost-link:hover {
         color: var(--accent);
+    }
+    .ghost-link:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+    }
+    /* Phase 14-C: + New deck button + inline form share the section
+       header row so the action lives next to "Browse all →". The form
+       uses the same ghost-link tokens for visual continuity. */
+    .head-actions {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--space-3);
+    }
+    .new-deck-btn {
+        font-size: var(--text-sm);
+        color: var(--text-muted);
+        padding: 2px 8px;
+        border: 1px dashed var(--border);
+        border-radius: var(--radius-sm);
+        transition:
+            color var(--duration-fast) var(--ease),
+            border-color var(--duration-fast) var(--ease);
+    }
+    .new-deck-btn:hover {
+        color: var(--accent);
+        border-color: var(--accent);
+    }
+    .new-deck-input {
+        font-size: var(--text-sm);
+        padding: 2px 8px;
+        border: 1px solid var(--accent);
+        border-radius: var(--radius-sm);
+        background: transparent;
+        color: var(--text);
+        outline: none;
+        min-width: 220px;
+    }
+    .subtle-link {
+        opacity: 0.7;
     }
 
     .deck-grid {

@@ -18,7 +18,10 @@ use crate::state::AppState;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/health", get(health))
-        .route("/api/decks", get(decks::list_decks))
+        .route(
+            "/api/decks",
+            get(decks::list_decks).post(decks::post_create),
+        )
         .route("/api/decks/{id}", patch(decks::patch_deck))
         .route("/api/decks/{id}/preset", patch(decks::patch_deck_preset))
         .route("/api/cards", get(cards::list_cards))
