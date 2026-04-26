@@ -4,6 +4,7 @@ pub mod decks;
 pub mod fsrs;
 pub mod media;
 pub mod study;
+pub mod tags;
 
 use axum::routing::{get, patch, post};
 use axum::Router;
@@ -35,6 +36,7 @@ pub fn router() -> Router<AppState> {
             get(fsrs::get_enabled).put(fsrs::put_enabled),
         )
         .route("/api/fsrs/optimize", post(fsrs::post_optimize))
+        .route("/api/tags", get(tags::list_tags))
         // Static media (images, audio) served from <collection-stem>.media/.
         // Not under /api/ so shadow-DOM <base href="/media/"> stays clean and
         // the path reads as a static resource root.
