@@ -1,0 +1,18 @@
+[package]
+name = "rslib_ffi"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "C ABI bridge from rslib to native Ferdinand clients (iOS/macOS first)"
+
+[lib]
+# staticlib for iOS/macOS app bundling (xcodebuild links the .a directly).
+# cdylib for desktop smoke-testing on Linux/macOS via dlopen + nm.
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+
+[build-dependencies]
+cbindgen = "0.27"
