@@ -13,17 +13,19 @@
 
 ---
 
-## Status as of 2026-04-27
+## Status as of 2026-04-27 (post Phase 18 quad)
 
-- **Web + Server**: ~78-87% complete (post Phase 17 quad). home now
-  has 7-day forecast bar; browse has card flag chips + HTML editor;
-  study + settings + notes/new all wired; FSRS / media (image+audio) /
-  tag / preset / notetype rename / new-card-order toggle functional.
+- **Web + Server**: ~82-90% complete (post Phase 18 quad). home has
+  7-day forecast bar + "+ Filtered" inline form; browse editor
+  renders all fields generically (Cloze, Image Occlusion, 3-field
+  Basic-reverse all editable); saved-search CRUD persists to
+  collection-config; clippy `--all-targets --workspace -D warnings`
+  is the standing quality gate.
 - **iOS**: 0% (rslib_ffi v0-v7 surface ready, 12 C ABI symbols incl.
   `tag_list_json` + cbindgen header, but no Xcode project yet —
-  deferred 9 times).
+  deferred 10 times now).
 - **Sync**: 0%, design decision pending (see M4).
-- **Overall**: ~52-67% complete depending on definition.
+- **Overall**: ~58-72% complete depending on definition.
 
 ---
 
@@ -36,7 +38,7 @@
 | Phase quad | Scope                                                                                                                                  | Risk   | Cum. % |
 | ---------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------ | ------ |
 | 17 ✅      | tag_list_json FFI / new_card_order toggle (+ 12-B clippy cleanup) / card flag chips / forecast bar — shipped 2026-04-27                | low    | ~52%   |
-| 18         | Saved searches CRUD / Browse editor all-fields generic / Filtered deck create / Hygiene (`--all-targets` CI gate + residual warnings)  | medium | ~58%   |
+| 18 ✅      | Saved searches CRUD / Browse editor all-fields generic / Filtered deck create / Hygiene (`--all-targets` CI gate) — shipped 2026-04-27 | medium | ~58%   |
 | 19         | Notetype add field / remove field / template HTML edit / card-level move-to-deck                                                       | high   | ~64%   |
 | 20         | Card-level tag override / Burn-recovery flow / Per-card review history viewer / Bulk operations (multi-select in browse)               | medium | ~70%   |
 
