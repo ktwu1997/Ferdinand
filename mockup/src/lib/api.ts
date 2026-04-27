@@ -475,6 +475,39 @@ export async function postNotetypeField(
     });
 }
 
+/**
+ * Phase 19-C: drop a field from a notetype. Destructive — every
+ * note loses that field's content permanently. Server validates id
+ * positive (400), notetype existence (404), ord existence against
+ * the live notetype (400), and refuses to delete the last remaining
+ * field (400 — rslib also rejects `fields.is_empty()` but the route
+ * surfaces a friendlier message). Cards and revlog counts stay
+ * invariant; only the per-note `fields` array length shrinks by one
+ * and any template reference to the removed field is repointed by
+ * Anki's schema-change machinery. Response is the canonical post-
+ * write notetype detail.
+ */
+export async function deleteNotetypeField(
+    id: number,
+    ord: number,
+): Promise<ApiNotetypeDetail> {
+    const res = await fetch(`${apiBase()}/api/notetypes/${id}/fields/${ord}`, {
+        method: "DELETE",
+        headers: { accept: "application/json" },
+    });
+    if (!res.ok) {
+        let detail = res.statusText;
+        try {
+            const body = (await res.json()) as { message?: string };
+            if (body.message) detail = body.message;
+        } catch {
+            // body wasn't JSON — fall through with statusText
+        }
+        throw new Error(`${res.status} ${detail}`);
+    }
+    return (await res.json()) as ApiNotetypeDetail;
+}
+
 export interface ApiNoteCreateRequest {
     deck_id: number;
     /** Field values in template order; first is the sort field. */

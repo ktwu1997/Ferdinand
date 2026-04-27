@@ -22,6 +22,7 @@ vi.mock("$lib/api", async (importOriginal) => {
         postDeckConfig: vi.fn(),
         postNotetypeField: vi.fn(),
         deleteDeckConfig: vi.fn(),
+        deleteNotetypeField: vi.fn(),
         putFsrsEnabled: vi.fn(),
         putFsrsHealthCheck: vi.fn(),
         postFsrsOptimize: vi.fn(),
@@ -31,6 +32,7 @@ vi.mock("$lib/api", async (importOriginal) => {
 import Page from "./+page.svelte";
 import {
     deleteDeckConfig,
+    deleteNotetypeField,
     fetchDeckConfigById,
     fetchDeckConfigs,
     fetchFsrsEnabled,
@@ -2127,6 +2129,202 @@ describe("SettingsPage notetypes add field (Phase 19-B)", () => {
                 .querySelector(".nt-meta")
                 ?.textContent?.trim();
             expect(meta).toBe("2 fields");
+        } finally {
+            unmount(instance);
+        }
+    });
+});
+
+// Phase 19-C: per-field destructive delete with two-step confirm.
+// Same scaffold as the 19-B add-field suite — every test expands the
+// first row, then exercises the ✕ glyph + Confirm/Cancel inline UI.
+describe("SettingsPage notetypes delete field (Phase 19-C)", () => {
+    let container: HTMLDivElement;
+
+    const threeFieldsNotetype: ApiNotetypeListResponse = {
+        notetypes: [
+            {
+                id: 1_776_837_237_908,
+                name: "Basic",
+                fields: ["Front", "Back", "Phase19CTest"],
+            },
+        ],
+    };
+
+    const oneFieldNotetype: ApiNotetypeListResponse = {
+        notetypes: [
+            {
+                id: 1_776_837_237_915,
+                name: "Skinny",
+                fields: ["OnlyField"],
+            },
+        ],
+    };
+
+    beforeEach(() => {
+        vi.resetAllMocks();
+        vi.mocked(fetchDeckConfigs).mockResolvedValue(onlyDefaultList);
+        vi.mocked(fetchDeckConfigById).mockResolvedValue(defaultConf);
+        vi.mocked(fetchFsrsEnabled).mockResolvedValue(fsrsOff);
+        vi.mocked(fetchFsrsHealthCheck).mockResolvedValue(healthCheckOff);
+        container = document.createElement("div");
+        document.body.appendChild(container);
+    });
+
+    afterEach(() => {
+        container.remove();
+    });
+
+    function clickNotetypesTab(): void {
+        const tab = Array.from(
+            container.querySelectorAll<HTMLButtonElement>(".nav-item"),
+        ).find((b) => b.textContent?.trim() === "Notetypes");
+        expect(tab).toBeDefined();
+        tab!.click();
+    }
+
+    function expandFirstRow(): void {
+        const disclose = container.querySelector<HTMLButtonElement>(
+            ".nt-disclose",
+        );
+        if (!disclose) throw new Error(".nt-disclose missing");
+        disclose.click();
+    }
+
+    test("clicking ✕ on a field arms the inline Confirm/Cancel pair; clicking Confirm fires deleteNotetypeField with the right ord", async () => {
+        // Three-field notetype lets us delete the throwaway last field
+        // without the last-field guard kicking in. Server returns the
+        // canonical post-write detail; settings mirrors only `fields`.
+        vi.mocked(fetchNotetypes).mockResolvedValueOnce(threeFieldsNotetype);
+        vi.mocked(deleteNotetypeField).mockResolvedValueOnce({
+            id: 1_776_837_237_908,
+            name: "Basic",
+            fields: ["Front", "Back"],
+            templates: [],
+        });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+            clickNotetypesTab();
+            await settle();
+            expandFirstRow();
+            flushSync();
+
+            // Three field rows render, each with a ✕ button enabled
+            // (count > 1 so the last-field guard doesn't disable any).
+            const xButtons = container.querySelectorAll<HTMLButtonElement>(
+                ".nt-field-x",
+            );
+            expect(xButtons.length).toBe(3);
+            expect(xButtons[2]?.disabled).toBe(false);
+
+            // Click the third row's ✕ — Confirm/Cancel pair replaces
+            // the ✕ inline (the ✕ on that row goes away).
+            xButtons[2]!.click();
+            flushSync();
+
+            const fieldRows = container.querySelectorAll(".nt-field-row");
+            const targetRow = fieldRows[2]!;
+            // Row now shows a "Delete field?" prompt + Confirm + Cancel.
+            expect(
+                targetRow
+                    .querySelector(".nt-field-confirm")
+                    ?.textContent?.trim(),
+            ).toBe("Delete field?");
+            const confirmBtn = Array.from(
+                targetRow.querySelectorAll<HTMLButtonElement>(".ghost-btn"),
+            ).find((b) => b.textContent?.trim().startsWith("Confirm"));
+            expect(confirmBtn).toBeDefined();
+
+            confirmBtn!.click();
+            await settle();
+
+            expect(vi.mocked(deleteNotetypeField)).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(deleteNotetypeField)).toHaveBeenCalledWith(
+                1_776_837_237_908,
+                2,
+            );
+            // Field count meta updates to "2 fields" without a refetch
+            // and the Confirm/Cancel pair clears (pendingDelete reset).
+            expect(
+                container.querySelector(".nt-meta")?.textContent?.trim(),
+            ).toBe("2 fields");
+            expect(container.querySelector(".nt-field-confirm")).toBeNull();
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("✕ stays disabled when a notetype has only one field; the last-field guard message reads from the title attribute", async () => {
+        // The boundary refuses to delete the last field (server returns
+        // 400) — UI mirrors that by disabling the ✕ glyph entirely so
+        // the user never even reaches the Confirm step. Pin: a future
+        // refactor that drops the disable would let the user click,
+        // surface a 400, and lose the field name visibility while the
+        // server roundtrip is in flight.
+        vi.mocked(fetchNotetypes).mockResolvedValueOnce(oneFieldNotetype);
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+            clickNotetypesTab();
+            await settle();
+            expandFirstRow();
+            flushSync();
+
+            const xButtons = container.querySelectorAll<HTMLButtonElement>(
+                ".nt-field-x",
+            );
+            expect(xButtons.length).toBe(1);
+            expect(xButtons[0]?.disabled).toBe(true);
+            // Tooltip explains the disable so a user inspecting the
+            // affordance gets the "why" without firing a request.
+            expect(xButtons[0]?.title).toContain("at least one field");
+            // No deletion ever fires.
+            expect(vi.mocked(deleteNotetypeField)).not.toHaveBeenCalled();
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("Cancel on the inline confirm rolls back without firing deleteNotetypeField; field stays in the list", async () => {
+        // Defensive UX: a misclicked ✕ followed by a Cancel must leave
+        // the row exactly as it was — no stale request, no field
+        // disappearing optimistically.
+        vi.mocked(fetchNotetypes).mockResolvedValueOnce(threeFieldsNotetype);
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+            clickNotetypesTab();
+            await settle();
+            expandFirstRow();
+            flushSync();
+
+            container
+                .querySelectorAll<HTMLButtonElement>(".nt-field-x")[2]!
+                .click();
+            flushSync();
+
+            // Click Cancel (second .ghost-btn inside the confirm row —
+            // the first is "Confirm").
+            const fieldRows = container.querySelectorAll(".nt-field-row");
+            const cancelBtn = Array.from(
+                fieldRows[2]!.querySelectorAll<HTMLButtonElement>(".ghost-btn"),
+            ).find((b) => b.textContent?.trim() === "Cancel");
+            expect(cancelBtn).toBeDefined();
+            cancelBtn!.click();
+            flushSync();
+
+            expect(vi.mocked(deleteNotetypeField)).not.toHaveBeenCalled();
+            // Confirm UI gone, ✕ back, field count unchanged.
+            expect(container.querySelector(".nt-field-confirm")).toBeNull();
+            const xs = container.querySelectorAll(".nt-field-x");
+            expect(xs.length).toBe(3);
+            expect(
+                container.querySelector(".nt-meta")?.textContent?.trim(),
+            ).toBe("3 fields");
         } finally {
             unmount(instance);
         }

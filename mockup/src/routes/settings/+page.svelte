@@ -3,6 +3,7 @@
     import Card from "$lib/components/Card.svelte";
     import {
         deleteDeckConfig,
+        deleteNotetypeField,
         fetchDeckConfigById,
         fetchDeckConfigs,
         fetchFsrsEnabled,
@@ -131,6 +132,19 @@
     let newFieldNameDraft = $state("");
     let savingNewField = $state(false);
     let errorAddField: { id: number; message: string } | null = $state(null);
+
+    // Phase 19-C: per-field delete with two-step confirm. `pendingDelete`
+    // tracks which (notetype id, ord) pair has the inline "Delete field?"
+    // confirm shown — keyed as a tuple so the destructive-adjacent UX
+    // never has more than one row armed at a time. Errors surface via
+    // `errorDeleteField` scoped to the notetype id (not the ord) since
+    // a failed delete on field 0 shouldn't poison the affordance on
+    // field 1.
+    let pendingDelete = $state<{ ntId: number; ord: number } | null>(null);
+    let savingDeleteField = $state(false);
+    let errorDeleteField: { id: number; message: string } | null = $state(
+        null,
+    );
 
     function applyPresetSnapshot(
         conf: {
@@ -524,6 +538,45 @@
         addingFieldNotetypeId = null;
         newFieldNameDraft = "";
         errorAddField = null;
+    }
+
+    function startDeleteField(ntId: number, ord: number): void {
+        pendingDelete = { ntId, ord };
+        errorDeleteField = null;
+    }
+
+    function cancelDeleteField(): void {
+        pendingDelete = null;
+        errorDeleteField = null;
+    }
+
+    /**
+     * Phase 19-C: confirm the pending delete and call the destructive
+     * endpoint. Two-step gate (the inline Confirm/Cancel pair) replaces
+     * a `window.confirm` dialog — keeps the flow on the page so the
+     * field name is still visible while the user makes the call. Server
+     * returns the canonical post-write detail; we mirror just `fields`
+     * back into local state to keep the slim picker shape unchanged.
+     */
+    async function commitDeleteField(): Promise<void> {
+        if (!pendingDelete || !notetypes) return;
+        const { ntId, ord } = pendingDelete;
+        savingDeleteField = true;
+        errorDeleteField = null;
+        try {
+            const res = await deleteNotetypeField(ntId, ord);
+            notetypes = notetypes.map((n) =>
+                n.id === res.id ? { ...n, fields: res.fields } : n,
+            );
+            pendingDelete = null;
+        } catch (e) {
+            errorDeleteField = {
+                id: ntId,
+                message: e instanceof Error ? e.message : "Delete field failed",
+            };
+        } finally {
+            savingDeleteField = false;
+        }
     }
 
     async function commitAddField(): Promise<void> {
@@ -1117,6 +1170,13 @@
                                         <div class="nt-fields">
                                             <ul class="nt-fields-list">
                                                 {#each nt.fields as fieldName, idx (idx)}
+                                                    {@const isPendingDelete =
+                                                        pendingDelete?.ntId ===
+                                                            nt.id &&
+                                                        pendingDelete?.ord ===
+                                                            idx}
+                                                    {@const isLastField =
+                                                        nt.fields.length <= 1}
                                                     <li class="nt-field-row">
                                                         <span
                                                             class="nt-field-ord"
@@ -1124,9 +1184,57 @@
                                                         <span
                                                             class="nt-field-name"
                                                             >{fieldName}</span>
+                                                        {#if isPendingDelete}
+                                                            <span
+                                                                class="nt-field-confirm"
+                                                            >
+                                                                Delete field?
+                                                            </span>
+                                                            <button
+                                                                class="ghost-btn danger"
+                                                                disabled={savingDeleteField}
+                                                                onclick={commitDeleteField}
+                                                            >
+                                                                {savingDeleteField
+                                                                    ? "Deleting…"
+                                                                    : "Confirm"}
+                                                            </button>
+                                                            <button
+                                                                class="ghost-btn"
+                                                                disabled={savingDeleteField}
+                                                                onclick={cancelDeleteField}
+                                                            >
+                                                                Cancel
+                                                            </button>
+                                                        {:else}
+                                                            <button
+                                                                class="nt-field-x"
+                                                                aria-label="Delete field {fieldName}"
+                                                                title={isLastField
+                                                                    ? "A notetype must have at least one field"
+                                                                    : `Delete ${fieldName}`}
+                                                                disabled={isLastField ||
+                                                                    pendingDelete !==
+                                                                        null}
+                                                                onclick={() =>
+                                                                    startDeleteField(
+                                                                        nt.id,
+                                                                        idx,
+                                                                    )}
+                                                            >×</button>
+                                                        {/if}
                                                     </li>
                                                 {/each}
                                             </ul>
+                                            {#if errorDeleteField &&
+                                                errorDeleteField.id === nt.id}
+                                                <p
+                                                    class="field-error"
+                                                    role="alert"
+                                                >
+                                                    {errorDeleteField.message}
+                                                </p>
+                                            {/if}
                                             {#if addingFieldNotetypeId === nt.id}
                                                 <div class="nt-field-add">
                                                     <input
@@ -1743,6 +1851,47 @@
     }
     .nt-field-name {
         flex: 1;
+    }
+    /* Phase 19-C: per-field ✕ glyph + inline confirm UI. The ✕ button
+       sits at the row's tail end; confirm replaces it inline so the
+       field name stays visible while the user makes the destructive
+       call. `.danger` modifier on the Confirm button picks up the
+       danger color that elsewhere indicates destructive intent. */
+    .nt-field-x {
+        width: 1.5rem;
+        height: 1.5rem;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.95rem;
+        background: none;
+        border: 0;
+        border-radius: var(--radius-sm);
+        color: var(--text-subtle);
+        cursor: pointer;
+        transition:
+            color var(--duration-fast) var(--ease, ease),
+            background var(--duration-fast) var(--ease, ease);
+    }
+    .nt-field-x:hover:not(:disabled) {
+        color: var(--danger);
+        background: var(--bg-hover);
+    }
+    .nt-field-x:disabled {
+        opacity: 0.35;
+        cursor: not-allowed;
+    }
+    .nt-field-confirm {
+        font-size: var(--text-xs);
+        color: var(--danger);
+    }
+    .ghost-btn.danger {
+        color: var(--danger);
+        border-color: var(--danger);
+    }
+    .ghost-btn.danger:hover:not(:disabled) {
+        background: var(--danger);
+        color: var(--bg);
     }
     .nt-field-add {
         display: flex;
