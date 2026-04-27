@@ -1,4 +1,6 @@
 use anki::decks::DeckKind;
+use anki::decks::FilteredSearchOrder;
+use anki::decks::FilteredSearchTerm;
 use anki::prelude::*;
 use anki::timestamp::TimestampSecs;
 use anyhow::anyhow;
@@ -310,6 +312,191 @@ pub async fn post_create(
     }))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct FilteredDeckCreateRequest {
+    /// Human-readable filtered deck name. Same shape rules as a normal
+    /// deck name (see `validate_create_name`): trim non-empty, ≤100
+    /// chars, no leading/trailing/consecutive `::`. `::` nesting is
+    /// allowed but rare for filtered decks — the desktop UI doesn't
+    /// expose nesting either.
+    pub name: String,
+    /// Anki search expression evaluated server-side. The same syntax
+    /// the browse search bar accepts (e.g. `deck:Spanish is:due`,
+    /// `tag:hard prop:ivl<7`). Whitespace-only is rejected at the
+    /// boundary; rslib `normalize_search` will reject any further
+    /// syntactic invalidity inside the transaction.
+    pub search: String,
+    /// Per-term cap on how many cards the filtered deck pulls in. The
+    /// desktop default is 100; we cap at 1000 so a runaway filter
+    /// can't hijack the entire collection. Optional — defaults to 100.
+    #[serde(default = "default_filtered_limit")]
+    pub limit: u32,
+    /// Selection order. Lowercase string wire format same as Phase
+    /// 17-C `new_card_order` (`"due"` / `"random"`) so the client
+    /// never has to know the proto SCREAMING_SNAKE_CASE form. v1
+    /// surface deliberately exposes only the two most useful orders;
+    /// the full ten-variant `FilteredSearchOrder` enum can come later
+    /// without a wire-format break.
+    #[serde(default = "default_filtered_order")]
+    pub order: String,
+}
+
+fn default_filtered_limit() -> u32 {
+    100
+}
+
+fn default_filtered_order() -> String {
+    "due".to_string()
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct FilteredDeckCreateResponse {
+    pub id: i64,
+    /// Server-canonical name (may differ from the request when Anki
+    /// auto-suffixes a duplicate to "Foo (1)").
+    pub name: String,
+}
+
+const FILTERED_LIMIT_MAX: u32 = 1000;
+
+/// Pure-shape validation for the `search` field: whitespace-only fails
+/// at the boundary so the rslib transaction never has to grind through
+/// a search-no-cards roll-back. Same `&'static str` extract pattern as
+/// every other create-path validator in this module.
+fn validate_filtered_search(search: &str) -> Result<&str, &'static str> {
+    let trimmed = search.trim();
+    if trimmed.is_empty() {
+        return Err("search must not be empty");
+    }
+    Ok(trimmed)
+}
+
+/// Pure-shape validation for the per-term cap. Zero is rejected
+/// because rslib silently treats a 0-limit term as "match nothing"
+/// which would make the filtered deck unconditionally empty (the
+/// downstream `SearchReturnedNoCards` handler reverts the deck —
+/// surface that as a request-shape error instead of bouncing through
+/// a transaction). 1000-cap matches desktop's "huge filter" guardrail.
+fn validate_filtered_limit(limit: u32) -> Result<u32, &'static str> {
+    if limit == 0 {
+        return Err("limit must be a positive integer");
+    }
+    if limit > FILTERED_LIMIT_MAX {
+        return Err("limit must be at most 1000");
+    }
+    Ok(limit)
+}
+
+/// Lowercase wire string → proto enum, same shape as Phase 17-C
+/// `parse_new_card_order`. v1 surface intentionally exposes only the
+/// two orders that map cleanly onto a daily-driver review filter
+/// ("show me what's due" + "shuffle a random N"); other orders need
+/// extra UI affordances (interval scale labels, retrievability axis)
+/// before they earn a slot.
+fn parse_filtered_order(s: &str) -> Result<FilteredSearchOrder, &'static str> {
+    match s {
+        "due" => Ok(FilteredSearchOrder::Due),
+        "random" => Ok(FilteredSearchOrder::Random),
+        _ => Err("order must be 'due' or 'random'"),
+    }
+}
+
+/// Phase 18-B: create a filtered (cram) deck via a single search term.
+///
+/// Validation order (cheap → expensive, mirrors `post_create`):
+///   1. `validate_create_name` rejects empty / >100 chars / `::` edge
+///      cases at the boundary.
+///   2. `validate_filtered_search` rejects whitespace-only search.
+///   3. `validate_filtered_limit` rejects 0 / >1000 limits.
+///   4. `parse_filtered_order` rejects unknown order strings.
+///   5. `add_or_update_filtered_deck` (transactional) inside rslib:
+///      runs `normalize_search` (invalid Anki search syntax → 400 via
+///      `AnkiError::SearchError`), creates the deck row, rebuilds it,
+///      and on a zero-card match reverts the deck and raises
+///      `AnkiError::FilteredDeckError(SearchReturnedNoCards)` — also
+///      mapped to 400. So we cannot leave a dangling empty deck behind
+///      even on the unhappy path; the rslib transaction guarantees
+///      atomicity. (Phase 14-C `bug_caught` lesson re-applied.)
+///
+/// Wire format uses the proto-level `FilteredDeckForUpdate` so we don't
+/// have to depend on the `pub(crate)` rslib `FilteredDeckForUpdate`
+/// type. `id: 0` is the sentinel for "create new"; `allow_empty: false`
+/// matches the desktop default — empty filters are usually a typo, not
+/// an intent.
+#[utoipa::path(
+    post,
+    path = "/api/decks/filtered",
+    request_body = inline(serde_json::Value),
+    responses(
+        (status = 200, body = FilteredDeckCreateResponse),
+        (status = 400, body = crate::error::ApiError),
+    )
+)]
+pub async fn post_filtered(
+    State(state): State<AppState>,
+    Json(req): Json<FilteredDeckCreateRequest>,
+) -> ApiResult<Json<FilteredDeckCreateResponse>> {
+    let trimmed_name = validate_create_name(&req.name).map_err(ServerError::bad_request)?;
+    let trimmed_search = validate_filtered_search(&req.search).map_err(ServerError::bad_request)?;
+    let limit = validate_filtered_limit(req.limit).map_err(ServerError::bad_request)?;
+    let order = parse_filtered_order(&req.order).map_err(ServerError::bad_request)?;
+
+    // Borrow the rslib defaults via `Deck::new_filtered()` for the
+    // preview-secs / reschedule fields rather than hard-coding values
+    // that may drift away from desktop parity. Keep only one search
+    // term — the v1 surface deliberately doesn't expose the dual-term
+    // affordance (rslib supports up to 2; we trim to 1).
+    let template = anki::decks::Deck::new_filtered();
+    let mut filt = match template.kind {
+        DeckKind::Filtered(f) => f,
+        DeckKind::Normal(_) => unreachable!("Deck::new_filtered() returns a filtered kind"),
+    };
+    filt.search_terms.clear();
+    filt.search_terms.push(FilteredSearchTerm {
+        search: trimmed_search.to_string(),
+        limit,
+        order: order as i32,
+    });
+
+    let mut col = state.col.lock().await;
+
+    // Round-trip through the proto `FilteredDeckForUpdate` because
+    // rslib's `pub(crate) mod filtered` keeps the inherent
+    // `FilteredDeckForUpdate` type out of the public path. The
+    // `From<proto::FilteredDeckForUpdate> for FilteredDeckForUpdate`
+    // conversion lives inside rslib (decks/service.rs) and is the
+    // only way to construct a value the inherent method accepts
+    // without poking through the crate boundary.
+    let proto_input = anki_proto::decks::FilteredDeckForUpdate {
+        id: 0,
+        name: trimmed_name.to_string(),
+        config: Some(filt),
+        allow_empty: false,
+    };
+    let result = col
+        .add_or_update_filtered_deck(proto_input.into())
+        .map_err(|e| match e {
+            AnkiError::SearchError { .. } => {
+                ServerError::bad_request(format!("invalid search query: {e}"))
+            }
+            AnkiError::FilteredDeckError { .. } => {
+                ServerError::bad_request(format!("filtered deck rejected: {e}"))
+            }
+            other => ServerError::from(other),
+        })?;
+    let did = result.output;
+    // The deck row was just written inside the transaction, so the
+    // cache lookup must succeed — surface a 500 if it doesn't (the
+    // collection is in an unexpected state).
+    let deck = col
+        .get_deck(did)?
+        .ok_or_else(|| ServerError::from(anyhow!("deck {} disappeared post-create", did.0)))?;
+    Ok(Json(FilteredDeckCreateResponse {
+        id: did.0,
+        name: deck.human_name(),
+    }))
+}
+
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DeckDeleteResponse {
     pub removed_deck_id: i64,
@@ -516,6 +703,80 @@ mod tests {
             validate_create_name("A::::B").unwrap_err(),
             "name must not contain consecutive '::' separators"
         );
+    }
+
+    #[test]
+    fn validate_filtered_search_rejects_blank_and_whitespace() {
+        // Same boundary rule as `validate_create_name` — rejecting
+        // whitespace-only at the wire keeps rslib's `normalize_search`
+        // out of the no-op-then-roll-back path that
+        // `SearchReturnedNoCards` would otherwise exercise.
+        for blank in ["", "   ", "\t\n", "  \r\n  "] {
+            assert_eq!(
+                validate_filtered_search(blank).unwrap_err(),
+                "search must not be empty",
+                "blank={blank:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_filtered_search_accepts_real_anki_query() {
+        // Trim leading/trailing whitespace and pass the inner expression
+        // through verbatim — `normalize_search` inside rslib gets to
+        // judge syntactic validity.
+        assert_eq!(
+            validate_filtered_search("  deck:Spanish is:due  ").unwrap(),
+            "deck:Spanish is:due"
+        );
+        assert_eq!(
+            validate_filtered_search("tag:hard prop:ivl<7").unwrap(),
+            "tag:hard prop:ivl<7"
+        );
+    }
+
+    #[test]
+    fn validate_filtered_limit_enforces_bounds() {
+        // 0 is rejected at the boundary because rslib's filter loop
+        // would silently iterate zero cards and surface
+        // `SearchReturnedNoCards` — surface the boundary error here
+        // instead of round-tripping through a transaction.
+        assert_eq!(
+            validate_filtered_limit(0).unwrap_err(),
+            "limit must be a positive integer"
+        );
+        // 1..=1000 is accepted; 1001+ rejected at the cap.
+        assert_eq!(validate_filtered_limit(1).unwrap(), 1);
+        assert_eq!(validate_filtered_limit(100).unwrap(), 100);
+        assert_eq!(validate_filtered_limit(1000).unwrap(), 1000);
+        assert_eq!(
+            validate_filtered_limit(1001).unwrap_err(),
+            "limit must be at most 1000"
+        );
+        assert_eq!(
+            validate_filtered_limit(u32::MAX).unwrap_err(),
+            "limit must be at most 1000"
+        );
+    }
+
+    #[test]
+    fn parse_filtered_order_accepts_lowercase_only() {
+        // Same wire-format rule as Phase 17-C `parse_new_card_order`:
+        // proto SCREAMING_SNAKE_CASE intentionally does not round-trip
+        // so misuse fails fast at the request boundary instead of
+        // silently coercing into a wrong order.
+        assert_eq!(parse_filtered_order("due").unwrap(), FilteredSearchOrder::Due);
+        assert_eq!(
+            parse_filtered_order("random").unwrap(),
+            FilteredSearchOrder::Random
+        );
+        for bad in ["DUE", "Random", "added", "lapses", "", " due "] {
+            assert_eq!(
+                parse_filtered_order(bad).unwrap_err(),
+                "order must be 'due' or 'random'",
+                "bad={bad:?}"
+            );
+        }
     }
 
     #[test]

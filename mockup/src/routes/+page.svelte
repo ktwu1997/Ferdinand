@@ -16,6 +16,7 @@
         fetchForecast,
         fetchStatsRecent,
         postDeck,
+        postFilteredDeck,
         type ApiDayCount,
         type ApiForecastDay,
     } from "$lib/api";
@@ -72,6 +73,19 @@
     let isMutatingNewDeck = $state(false);
     let newDeckError = $state<string | null>(null);
     let newDeckInput = $state<HTMLInputElement | null>(null);
+
+    // Phase 18-B: parallel "+ Filtered deck" form. Same start/cancel/
+    // commit lifecycle as "+ New deck" so users get one consistent
+    // affordance pattern, but accepts a name + search expression
+    // (Anki search syntax, e.g. `deck:Spanish is:due`). Limit and
+    // order use server defaults (100 / "due"); the v1 surface keeps
+    // the form to two inputs so it doesn't outgrow the section header.
+    let isCreatingFilteredDeck = $state(false);
+    let newFilteredName = $state("");
+    let newFilteredSearch = $state("");
+    let isMutatingNewFilteredDeck = $state(false);
+    let newFilteredError = $state<string | null>(null);
+    let newFilteredNameInput = $state<HTMLInputElement | null>(null);
 
     onMount(async () => {
         try {
@@ -170,6 +184,71 @@
             isMutatingNewDeck = false;
         }
     }
+
+    async function startCreateFilteredDeck(): Promise<void> {
+        if (liveDecks === null) {
+            newFilteredError = "Create unavailable — backend offline";
+            return;
+        }
+        isCreatingFilteredDeck = true;
+        newFilteredName = "";
+        newFilteredSearch = "";
+        newFilteredError = null;
+        await tick();
+        newFilteredNameInput?.focus();
+    }
+
+    function cancelCreateFilteredDeck(): void {
+        isCreatingFilteredDeck = false;
+        newFilteredName = "";
+        newFilteredSearch = "";
+        newFilteredError = null;
+    }
+
+    // Filtered-deck commit. Two required fields (name + search): both
+    // empty → cancel (mash-Enter no-op); only one filled → server-side
+    // 400 surfaces inline. On success the deck list refetches because
+    // a brand-new filtered deck appears at top level and we want it in
+    // the visible grid without a hard reload.
+    async function commitCreateFilteredDeck(): Promise<void> {
+        const trimmedName = newFilteredName.trim();
+        const trimmedSearch = newFilteredSearch.trim();
+        if (trimmedName === "" && trimmedSearch === "") {
+            cancelCreateFilteredDeck();
+            return;
+        }
+        if (liveDecks === null) {
+            newFilteredError = "Create unavailable — backend offline";
+            return;
+        }
+        isMutatingNewFilteredDeck = true;
+        newFilteredError = null;
+        try {
+            await postFilteredDeck({
+                name: trimmedName,
+                search: trimmedSearch,
+            });
+            const res = await fetchDecks();
+            liveDecks = res.decks
+                .filter((d) => d.id !== 0 && d.level >= 1)
+                .map((d) => ({
+                    id: String(d.id),
+                    name: d.name,
+                    emoji: "📚",
+                    new: d.new_count,
+                    learning: d.learn_count,
+                    review: d.review_count,
+                    totalCards: d.total_in_deck,
+                    lastStudied: new Date().toISOString(),
+                }));
+            cancelCreateFilteredDeck();
+        } catch (e) {
+            newFilteredError =
+                e instanceof Error ? e.message : "Couldn't create filtered deck";
+        } finally {
+            isMutatingNewFilteredDeck = false;
+        }
+    }
     let history = $derived(liveHistory ?? fakeHistory);
     let totalReviews = $derived(history.reduce((a, d) => a + d.reviews, 0));
     let totalDueAll = $derived(decks.reduce((a, d) => a + totalDue(d), 0));
@@ -263,6 +342,44 @@
                         disabled={isMutatingNewDeck}
                         onclick={cancelCreateDeck}
                     >Cancel</button>
+                {:else if isCreatingFilteredDeck}
+                    <input
+                        bind:this={newFilteredNameInput}
+                        bind:value={newFilteredName}
+                        class="new-deck-input"
+                        type="text"
+                        placeholder="Cram session"
+                        disabled={isMutatingNewFilteredDeck}
+                        aria-label="New filtered deck name"
+                        onkeydown={(e) => {
+                            if (e.key === "Enter") commitCreateFilteredDeck();
+                            else if (e.key === "Escape") cancelCreateFilteredDeck();
+                        }}
+                    />
+                    <input
+                        bind:value={newFilteredSearch}
+                        class="new-filtered-search-input"
+                        type="text"
+                        placeholder="deck:Spanish is:due"
+                        disabled={isMutatingNewFilteredDeck}
+                        aria-label="Filtered deck search expression"
+                        onkeydown={(e) => {
+                            if (e.key === "Enter") commitCreateFilteredDeck();
+                            else if (e.key === "Escape") cancelCreateFilteredDeck();
+                        }}
+                    />
+                    <button
+                        type="button"
+                        class="ghost-link"
+                        disabled={isMutatingNewFilteredDeck}
+                        onclick={commitCreateFilteredDeck}
+                    >Save</button>
+                    <button
+                        type="button"
+                        class="ghost-link subtle-link"
+                        disabled={isMutatingNewFilteredDeck}
+                        onclick={cancelCreateFilteredDeck}
+                    >Cancel</button>
                 {:else}
                     <button
                         type="button"
@@ -271,12 +388,22 @@
                         onclick={startCreateDeck}
                         aria-label="Create new deck"
                     >+ New deck</button>
+                    <button
+                        type="button"
+                        class="ghost-link new-filtered-deck-btn"
+                        disabled={liveDecks === null}
+                        onclick={startCreateFilteredDeck}
+                        aria-label="Create new filtered deck"
+                    >+ Filtered</button>
                 {/if}
                 <a class="ghost-link" href="/browse">Browse all →</a>
             </div>
         </div>
         {#if newDeckError}
             <div class="error-banner" role="alert">{newDeckError}</div>
+        {/if}
+        {#if newFilteredError}
+            <div class="error-banner" role="alert">{newFilteredError}</div>
         {/if}
         <div class="deck-grid">
             {#each decks as deck (deck.id)}
@@ -541,6 +668,31 @@
         color: var(--text);
         outline: none;
         min-width: 220px;
+    }
+    .new-filtered-search-input {
+        font-size: var(--text-sm);
+        padding: 2px 8px;
+        border: 1px solid var(--accent);
+        border-radius: var(--radius-sm);
+        background: transparent;
+        color: var(--text);
+        outline: none;
+        min-width: 200px;
+        font-family: var(--font-mono, monospace);
+    }
+    .new-filtered-deck-btn {
+        font-size: var(--text-sm);
+        color: var(--text-muted);
+        padding: 2px 8px;
+        border: 1px dashed var(--border);
+        border-radius: var(--radius-sm);
+        transition:
+            color var(--duration-fast) var(--ease),
+            border-color var(--duration-fast) var(--ease);
+    }
+    .new-filtered-deck-btn:hover {
+        color: var(--accent);
+        border-color: var(--accent);
     }
     .subtle-link {
         opacity: 0.7;

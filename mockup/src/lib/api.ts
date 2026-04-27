@@ -538,6 +538,43 @@ export async function postDeck(
     return postJson<ApiDeckCreateResponse>("/api/decks", { name });
 }
 
+export interface ApiFilteredDeckCreateRequest {
+    /** Same shape rules as a normal deck name (Phase 14-C). */
+    name: string;
+    /** Anki search expression — same syntax the browse search bar
+     * accepts (e.g. `deck:Spanish is:due`, `tag:hard prop:ivl<7`).
+     * Server-side `normalize_search` will reject syntactic invalidity
+     * with 400. */
+    search: string;
+    /** Per-term cap on cards pulled in. Default 100, max 1000. */
+    limit?: number;
+    /** Selection order. Lowercase wire string — `"due"` (default) or
+     * `"random"`. Other proto enum variants are intentionally not
+     * exposed by the v1 surface. */
+    order?: "due" | "random";
+}
+
+export interface ApiFilteredDeckCreateResponse {
+    id: number;
+    /** Server-canonical name (auto-suffixed on duplicate). */
+    name: string;
+}
+
+/**
+ * Phase 18-B: create a filtered (cram) deck from a single search
+ * expression. Server validates name shape, search non-empty, limit
+ * 1..=1000, and order ∈ {"due","random"} at the boundary; rslib's
+ * own `normalize_search` and `SearchReturnedNoCards` errors map back
+ * to 400 so an invalid query or empty match is surfaced as a request
+ * problem rather than a 500. The transaction is atomic — a rejected
+ * deck never lingers in the collection.
+ */
+export async function postFilteredDeck(
+    req: ApiFilteredDeckCreateRequest,
+): Promise<ApiFilteredDeckCreateResponse> {
+    return postJson<ApiFilteredDeckCreateResponse>("/api/decks/filtered", req);
+}
+
 /**
  * Phase 14-A: partial-update a note's fields and/or tags. Server
  * validates id positive (400), at-least-one-of-fields-or-tags (400),
