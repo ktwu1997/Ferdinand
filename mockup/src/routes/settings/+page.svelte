@@ -9,6 +9,7 @@
         fetchFsrsEnabled,
         fetchFsrsHealthCheck,
         fetchNotetypes,
+        getCard,
         patchDeckConfigById,
         patchNotetypeName,
         postDeckConfig,
@@ -16,6 +17,8 @@
         postNotetypeField,
         putFsrsEnabled,
         putFsrsHealthCheck,
+        resetCardToNew,
+        type ApiCardSummary,
         type ApiDeckConfigListItem,
         type ApiNotetypeSummary,
     } from "$lib/api";
@@ -27,6 +30,7 @@
         { id: "scheduling", label: "Scheduling" },
         { id: "fsrs", label: "FSRS" },
         { id: "notetypes", label: "Notetypes" },
+        { id: "recovery", label: "Recovery" },
         { id: "sync", label: "Sync" },
         { id: "appearance", label: "Appearance" },
         { id: "advanced", label: "Advanced" },
@@ -145,6 +149,24 @@
     let errorDeleteField: { id: number; message: string } | null = $state(
         null,
     );
+
+    // Phase 20-C: burn-recovery — per-card reset to new. Card-id input,
+    // a getCard preview, and a two-step destructive confirm matching the
+    // 19-C inline pattern (Confirm/Cancel pair replacing the primary
+    // button so the card detail panel stays visible while the user
+    // makes the call). Errors are scoped to the recovery panel — the
+    // Notetypes / FSRS surfaces never see them.
+    let recoveryCardIdInput = $state("");
+    let recoveryCard: ApiCardSummary | null = $state(null);
+    let lookingUpCard = $state(false);
+    let errorRecoveryLookup: string | null = $state(null);
+    // pendingRecoveryReset gates the Confirm/Cancel pair — same null/
+    // value sentinel approach as `pendingDelete` in 19-C so an explicit
+    // Cancel restores the "Reset to new" button verbatim.
+    let pendingRecoveryReset = $state(false);
+    let savingRecoveryReset = $state(false);
+    let errorRecoveryReset: string | null = $state(null);
+    let recoverySuccess: string | null = $state(null);
 
     function applyPresetSnapshot(
         conf: {
@@ -623,6 +645,84 @@
             ensureNotetypesLoaded();
         }
     });
+
+    /**
+     * Phase 20-C: look up the card for the id currently in the input.
+     * Validates positive-integer parsing client-side so a typo'd "abc"
+     * shows an inline error instead of round-tripping. Server 404s
+     * (missing card) surface via the standard `${status} ${message}`
+     * shape the jsonRequest helper produces — `getCard` uses `getJson`
+     * which throws `${status} ${statusText}` on 4xx, so we surface
+     * that text directly into errorRecoveryLookup.
+     */
+    async function lookupRecoveryCard(): Promise<void> {
+        const trimmed = recoveryCardIdInput.trim();
+        const parsed = Number(trimmed);
+        if (!trimmed || !Number.isInteger(parsed) || parsed <= 0) {
+            errorRecoveryLookup = "Card id must be a positive integer";
+            recoveryCard = null;
+            return;
+        }
+        lookingUpCard = true;
+        errorRecoveryLookup = null;
+        recoverySuccess = null;
+        // Cancel any half-armed confirm so the lookup result lands in a
+        // clean state — a fresh card preview should never inherit the
+        // previous card's "Confirm/Cancel pending" UI.
+        pendingRecoveryReset = false;
+        try {
+            recoveryCard = await getCard(parsed);
+        } catch (e) {
+            recoveryCard = null;
+            errorRecoveryLookup = e instanceof Error
+                ? e.message
+                : "Lookup failed";
+        } finally {
+            lookingUpCard = false;
+        }
+    }
+
+    function startRecoveryReset(): void {
+        if (!recoveryCard) return;
+        pendingRecoveryReset = true;
+        errorRecoveryReset = null;
+        recoverySuccess = null;
+    }
+
+    function cancelRecoveryReset(): void {
+        pendingRecoveryReset = false;
+        errorRecoveryReset = null;
+    }
+
+    /**
+     * Phase 20-C: commit the destructive reset. Mirrors commitDeleteField
+     * (19-C) — server returns the canonical post-write payload; success
+     * surfaces a single-line confirmation that includes the preserved
+     * revlog count so the user has explicit evidence history wasn't
+     * dropped. On success the form clears (id input + card preview)
+     * so the next recovery starts from scratch; on failure the form
+     * stays put so the user can retry without re-typing.
+     */
+    async function commitRecoveryReset(): Promise<void> {
+        if (!recoveryCard) return;
+        const targetId = recoveryCard.id;
+        savingRecoveryReset = true;
+        errorRecoveryReset = null;
+        try {
+            const res = await resetCardToNew(targetId);
+            recoverySuccess =
+                `Reset. State now: ${res.state}. ${res.revlog_preserved} revlog entries preserved.`;
+            recoveryCard = null;
+            recoveryCardIdInput = "";
+            pendingRecoveryReset = false;
+        } catch (e) {
+            errorRecoveryReset = e instanceof Error
+                ? e.message
+                : "Reset failed";
+        } finally {
+            savingRecoveryReset = false;
+        }
+    }
 
     async function runOptimize(): Promise<void> {
         if (disabledControls() || optimizing) return;
@@ -1310,6 +1410,170 @@
                     {/if}
                 </div>
             </Card>
+        {:else if active === "recovery"}
+            <Card padding="lg">
+                <div class="recovery">
+                    <h3 class="recovery-title">
+                        Burn-recovery — reset card to new
+                    </h3>
+                    <p class="hint">
+                        Reset a card's scheduling state back to new.
+                        Revlog history is preserved so you can review
+                        what happened. Use when an accidental rating
+                        has corrupted a card's schedule.
+                    </p>
+
+                    <div class="recovery-lookup">
+                        <label for="recovery-card-id" class="field-label">
+                            Card id
+                        </label>
+                        <div class="recovery-lookup-row">
+                            <input
+                                id="recovery-card-id"
+                                class="text-input recovery-input"
+                                type="text"
+                                inputmode="numeric"
+                                pattern="[0-9]*"
+                                placeholder="e.g. 1714234567890"
+                                bind:value={recoveryCardIdInput}
+                                disabled={lookingUpCard ||
+                                    savingRecoveryReset}
+                            />
+                            <button
+                                type="button"
+                                class="ghost-btn"
+                                onclick={lookupRecoveryCard}
+                                disabled={lookingUpCard ||
+                                    savingRecoveryReset ||
+                                    recoveryCardIdInput.trim() === ""}
+                            >
+                                {lookingUpCard ? "Looking up…" : "Look up"}
+                            </button>
+                        </div>
+                        {#if errorRecoveryLookup}
+                            <p
+                                class="field-error"
+                                role="alert"
+                                data-test="recovery-lookup-error"
+                            >
+                                {errorRecoveryLookup}
+                            </p>
+                        {/if}
+                    </div>
+
+                    {#if recoveryCard}
+                        <div class="recovery-card-detail">
+                            <div class="recovery-detail-row">
+                                <div class="meta-key">Front</div>
+                                <div
+                                    class="recovery-front-preview"
+                                    data-test="recovery-card-front"
+                                >
+                                    {recoveryCard.front_html.length > 240
+                                        ? recoveryCard.front_html.slice(
+                                              0,
+                                              240,
+                                          ) + "…"
+                                        : recoveryCard.front_html}
+                                </div>
+                            </div>
+                            <div class="recovery-detail-row">
+                                <div class="meta-key">Deck</div>
+                                <div data-test="recovery-card-deck">
+                                    {recoveryCard.deck_name}
+                                </div>
+                            </div>
+                            <div class="recovery-detail-row">
+                                <div class="meta-key">Notetype</div>
+                                <div data-test="recovery-card-notetype">
+                                    {recoveryCard.notetype_name}
+                                </div>
+                            </div>
+                            <div class="recovery-detail-row">
+                                <div class="meta-key">Current state</div>
+                                <div data-test="recovery-card-state">
+                                    {recoveryCard.state}
+                                </div>
+                            </div>
+                            <div class="recovery-detail-row">
+                                <div class="meta-key">Ease factor</div>
+                                <div data-test="recovery-card-ease">
+                                    {recoveryCard.ease_factor.toFixed(2)}
+                                </div>
+                            </div>
+                            <div class="recovery-detail-row">
+                                <div class="meta-key">Tags</div>
+                                <div data-test="recovery-card-tags">
+                                    {recoveryCard.tags.length > 0
+                                        ? recoveryCard.tags.join(", ")
+                                        : "(none)"}
+                                </div>
+                            </div>
+
+                            <div class="recovery-actions">
+                                {#if !pendingRecoveryReset}
+                                    <button
+                                        type="button"
+                                        class="ghost-btn danger"
+                                        data-test="recovery-reset-btn"
+                                        onclick={startRecoveryReset}
+                                        disabled={savingRecoveryReset}
+                                    >
+                                        Reset to new
+                                    </button>
+                                {:else}
+                                    <span
+                                        class="nt-field-confirm"
+                                        data-test="recovery-confirm-prompt"
+                                    >
+                                        Reset to new?
+                                    </span>
+                                    <button
+                                        type="button"
+                                        class="ghost-btn danger"
+                                        data-test="recovery-confirm-btn"
+                                        onclick={commitRecoveryReset}
+                                        disabled={savingRecoveryReset}
+                                    >
+                                        {savingRecoveryReset
+                                            ? "Resetting…"
+                                            : "Confirm"}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="ghost-btn"
+                                        data-test="recovery-cancel-btn"
+                                        onclick={cancelRecoveryReset}
+                                        disabled={savingRecoveryReset}
+                                    >
+                                        Cancel
+                                    </button>
+                                {/if}
+                            </div>
+
+                            {#if errorRecoveryReset}
+                                <p
+                                    class="field-error"
+                                    role="alert"
+                                    data-test="recovery-reset-error"
+                                >
+                                    {errorRecoveryReset}
+                                </p>
+                            {/if}
+                        </div>
+                    {/if}
+
+                    {#if recoverySuccess}
+                        <p
+                            class="recovery-success"
+                            role="status"
+                            data-test="recovery-success"
+                        >
+                            ✓ {recoverySuccess}
+                        </p>
+                    {/if}
+                </div>
+            </Card>
         {:else if active === "sync"}
             <Card padding="lg">
                 <div class="sync-status">
@@ -1937,5 +2201,79 @@
     .ghost-btn:disabled {
         opacity: 0.55;
         cursor: not-allowed;
+    }
+
+    /* Phase 20-C: burn-recovery panel. Same vertical-stack layout as the
+       19-B/C notetype list — heading, hint, lookup row, then the card
+       detail block once a card is loaded. The Confirm/Cancel pair sits
+       inline next to a "Reset to new?" prompt so the card preview
+       stays visible while the user makes the destructive call. */
+    .recovery {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-4);
+    }
+    .recovery-title {
+        font-size: var(--text-base);
+        font-weight: 600;
+    }
+    .recovery-lookup {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-2);
+    }
+    .recovery-lookup-row {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+    }
+    .recovery-input {
+        flex: 1;
+        max-width: 22rem;
+        padding: 0.4rem 0.6rem;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        background: var(--bg);
+        color: var(--text);
+        font: inherit;
+    }
+    .recovery-input:focus {
+        outline: none;
+        border-color: var(--accent);
+    }
+    .recovery-input:disabled {
+        opacity: 0.55;
+    }
+    .recovery-card-detail {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-2);
+        padding: var(--space-3);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        background: var(--bg-subtle);
+    }
+    .recovery-detail-row {
+        display: grid;
+        grid-template-columns: 120px 1fr;
+        gap: var(--space-3);
+        font-size: var(--text-sm);
+    }
+    .recovery-front-preview {
+        font-family: var(--font-mono, monospace);
+        font-size: var(--text-xs);
+        color: var(--text);
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+    .recovery-actions {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+        margin-top: var(--space-2);
+    }
+    .recovery-success {
+        font-size: var(--text-xs);
+        color: var(--success, #2a7);
     }
 </style>

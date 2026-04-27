@@ -1038,3 +1038,33 @@ export async function getCardHistory(
 ): Promise<ApiCardHistoryResponse> {
     return getJson<ApiCardHistoryResponse>(`/api/cards/${id}/history`);
 }
+
+/**
+ * Phase 20-C: fetch a single card by id. Same shape as the items
+ * returned by `fetchCards`, but tied to a specific id rather than a
+ * search query — used by the Recovery tab's lookup flow so the user
+ * can preview the card before triggering a destructive reset.
+ */
+export async function getCard(id: number): Promise<ApiCardSummary> {
+    return getJson<ApiCardSummary>(`/api/cards/${id}`);
+}
+
+/**
+ * Phase 20-C: burn-recovery. POST /api/cards/{id}/reset_to_new clears
+ * the card's scheduling state (queue/due/interval/factor/reps/lapses)
+ * via rslib's `reschedule_cards_as_new`. Revlog rows are PRESERVED —
+ * burn-recovery reverts an accidental rating, it doesn't erase
+ * history. Server returns the post-reset state label (always "new" on
+ * success) and the count of preserved revlog entries so the UI can
+ * confirm history wasn't dropped. Missing card → 404; non-positive
+ * id → 400; both surface via jsonRequest's {message} parsing.
+ */
+export interface ApiResetResponse {
+    id: number;
+    state: ApiCardSummary["state"];
+    revlog_preserved: number;
+}
+
+export async function resetCardToNew(id: number): Promise<ApiResetResponse> {
+    return postJson<ApiResetResponse>(`/api/cards/${id}/reset_to_new`, {});
+}

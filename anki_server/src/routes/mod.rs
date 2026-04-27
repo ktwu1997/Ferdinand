@@ -1,3 +1,4 @@
+pub mod burn_recovery;
 pub mod cards;
 pub mod deck_config;
 pub mod decks;
@@ -98,6 +99,14 @@ pub fn router() -> Router<AppState> {
         // accepts multipart uploads for the /notes/new drag-drop surface.
         .route("/media", post(media::post_upload))
         .route("/media/{filename}", get(media::get_media))
+        // Phase 20-C: burn-recovery — per-card reset to new (DESTRUCTIVE).
+        // Appended last so the per-card route block stays grouped at the
+        // tail of the chain (Phase 20-D's /api/cards/{id}/history slot
+        // also lands here on merge).
+        .route(
+            "/api/cards/{id}/reset_to_new",
+            post(burn_recovery::post_reset_to_new),
+        )
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
