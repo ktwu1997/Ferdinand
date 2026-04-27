@@ -120,14 +120,14 @@ pub async fn list_cards(
     // the client can fall back to local filtering without raising the
     // page banner. Other errors (storage, IO) keep the default 500
     // mapping via the blanket From<anyhow::Error> impl.
-    let ids = col.search_cards(search.as_str(), SortMode::NoOrder).map_err(
-        |e| match e {
+    let ids = col
+        .search_cards(search.as_str(), SortMode::NoOrder)
+        .map_err(|e| match e {
             AnkiError::SearchError { .. } => {
                 ServerError::bad_request(format!("invalid search query: {e}"))
             }
             other => ServerError::from(other),
-        },
-    )?;
+        })?;
     let total = ids.len();
     let cards = ids
         .into_iter()
@@ -166,9 +166,13 @@ pub(crate) fn build_summary(col: &mut Collection, cid: CardId) -> anyhow::Result
     let deck = col
         .get_deck(card.deck_id())?
         .ok_or_else(|| anyhow::anyhow!("deck {} not found for card {cid}", card.deck_id()))?;
-    let notetype = col
-        .get_notetype(note.notetype_id)?
-        .ok_or_else(|| anyhow::anyhow!("notetype {} not found for note {}", note.notetype_id, note.id))?;
+    let notetype = col.get_notetype(note.notetype_id)?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "notetype {} not found for note {}",
+            note.notetype_id,
+            note.id
+        )
+    })?;
     let rendered = col.render_existing_card(cid, false, true)?;
     Ok(CardSummary {
         id: cid.0,
@@ -306,7 +310,10 @@ mod tests {
     fn validate_pagination_passes_offset_through_unchanged() {
         // Offset has no upper bound — Anki collections in the wild stay
         // well under usize::MAX, and `.skip(huge)` is just an empty slice.
-        assert_eq!(validate_pagination(usize::MAX, 50).unwrap(), (usize::MAX, 50));
+        assert_eq!(
+            validate_pagination(usize::MAX, 50).unwrap(),
+            (usize::MAX, 50)
+        );
         assert_eq!(validate_pagination(1_000_000, 50).unwrap(), (1_000_000, 50));
     }
 }

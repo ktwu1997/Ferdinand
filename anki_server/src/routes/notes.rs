@@ -109,9 +109,9 @@ pub async fn post_create(
     // the Phase 9-T `bug_caught` lesson — silent fallbacks on missing
     // resources mask client typos.
     let notetype = match req.notetype_id {
-        Some(nid) => col.get_notetype(NotetypeId(nid))?.ok_or_else(|| {
-            ServerError::not_found(format!("notetype {nid} not found"))
-        })?,
+        Some(nid) => col
+            .get_notetype(NotetypeId(nid))?
+            .ok_or_else(|| ServerError::not_found(format!("notetype {nid} not found")))?,
         None => col.get_notetype_by_name("Basic")?.ok_or_else(|| {
             ServerError::not_found(
                 "no notetype named 'Basic' on this collection — pass notetype_id explicitly",

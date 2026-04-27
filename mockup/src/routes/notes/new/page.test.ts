@@ -473,7 +473,7 @@ describe("AddNote drag-drop image upload (Phase 15-C)", () => {
         }
     });
 
-    test("non-image drop: no network call; inline error surfaces; field value unchanged", async () => {
+    test("unsupported drop (e.g. text): no network call; inline error surfaces; field value unchanged", async () => {
         const instance = mount(Page, { target: container, props: {} });
         try {
             await settle();
@@ -489,7 +489,8 @@ describe("AddNote drag-drop image upload (Phase 15-C)", () => {
             const errors = Array.from(
                 container.querySelectorAll(".field-error"),
             ).map((e) => e.textContent ?? "");
-            expect(errors.some((t) => t.includes("Only image files"))).toBe(true);
+            // Phase 16-C: error copy now mentions both image AND audio.
+            expect(errors.some((t) => t.includes("image") && t.includes("audio"))).toBe(true);
             const ta = container.querySelector<HTMLTextAreaElement>(
                 "#field-input-0",
             );
@@ -520,6 +521,118 @@ describe("AddNote drag-drop image upload (Phase 15-C)", () => {
                 container.querySelectorAll(".field-error"),
             ).map((e) => e.textContent ?? "");
             expect(errors.some((t) => t.includes("file too large"))).toBe(true);
+            const ta = container.querySelector<HTMLTextAreaElement>(
+                "#field-input-0",
+            );
+            expect(ta?.value ?? "").toBe("");
+        } finally {
+            unmount(instance);
+        }
+    });
+});
+
+// Phase 16-C: drag-drop audio upload. Same drop-handler path as 15-C
+// images, but the inserted token uses Anki's [sound:...] syntax which
+// the shadow-DOM card renderer (Phase 7-C) hooks into for playback.
+describe("AddNote drag-drop audio upload (Phase 16-C)", () => {
+    let container: HTMLDivElement;
+
+    beforeEach(() => {
+        vi.resetAllMocks();
+        resetPageStub();
+        gotoMock.mockReset();
+        vi.mocked(fetchDecks).mockResolvedValue(twoDecks);
+        vi.mocked(fetchNotetypes).mockResolvedValue(threeNotetypes);
+        container = document.createElement("div");
+        document.body.appendChild(container);
+    });
+
+    afterEach(() => {
+        container.remove();
+    });
+
+    function dispatchDrop(target: Element, file: File): void {
+        const dataTransfer = {
+            types: ["Files"],
+            files: [file],
+        } as unknown as DataTransfer;
+        const dragover = new Event("dragover", {
+            bubbles: true,
+            cancelable: true,
+        });
+        Object.defineProperty(dragover, "dataTransfer", { value: dataTransfer });
+        target.dispatchEvent(dragover);
+        const drop = new Event("drop", { bubbles: true, cancelable: true });
+        Object.defineProperty(drop, "dataTransfer", { value: dataTransfer });
+        target.dispatchEvent(drop);
+    }
+
+    test("drop audio on first field: postMedia called; [sound:filename] token appended", async () => {
+        vi.mocked(postMedia).mockResolvedValueOnce({
+            filename: "pronounce-森林.mp3",
+            size_bytes: 4096,
+        });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            const file = new File([new Uint8Array([0xff, 0xfb, 0x90])], "shinrin.mp3", {
+                type: "audio/mpeg",
+            });
+            const fields = container.querySelectorAll(".field-droppable");
+            expect(fields.length).toBeGreaterThanOrEqual(2);
+            dispatchDrop(fields[0]!, file);
+            await settle();
+
+            expect(vi.mocked(postMedia)).toHaveBeenCalledTimes(1);
+            const [arg] = vi.mocked(postMedia).mock.calls[0]!;
+            expect(arg).toBeInstanceOf(File);
+            expect((arg as File).type).toBe("audio/mpeg");
+
+            // Audio uses [sound:...] syntax (Anki convention) rather
+            // than <img>. The server-canonical filename — including any
+            // " (N)" dedupe suffix — must round-trip through, otherwise
+            // the playback URL would 404.
+            const ta = container.querySelector<HTMLTextAreaElement>(
+                "#field-input-0",
+            );
+            expect(ta?.value).toBe("[sound:pronounce-森林.mp3]");
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("oversize audio (server 400): error surfaces; field value unchanged", async () => {
+        // 50 MiB cap on the server side. Client guard is just MIME-prefix
+        // (lets the file through to the network), so we exercise the
+        // server-rejection path here — same shape as the image version,
+        // pinned to the 50 MiB cap.
+        vi.mocked(postMedia).mockRejectedValueOnce(
+            new Error(
+                "400 file too large (52428801 bytes); max is 52428800 bytes",
+            ),
+        );
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            const file = new File([new Uint8Array([0xff, 0xfb])], "lecture.mp3", {
+                type: "audio/mpeg",
+            });
+            const fields = container.querySelectorAll(".field-droppable");
+            dispatchDrop(fields[0]!, file);
+            await settle();
+
+            expect(vi.mocked(postMedia)).toHaveBeenCalledTimes(1);
+            const errors = Array.from(
+                container.querySelectorAll(".field-error"),
+            ).map((e) => e.textContent ?? "");
+            expect(errors.some((t) => t.includes("file too large"))).toBe(true);
+            // Server rejected — the field stays empty so the user can
+            // retry with a smaller clip without manually deleting a
+            // half-written token.
             const ta = container.querySelector<HTMLTextAreaElement>(
                 "#field-input-0",
             );
