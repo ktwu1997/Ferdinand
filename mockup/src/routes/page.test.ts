@@ -25,6 +25,7 @@ vi.mock("$lib/api", async (importOriginal) => {
         fetchStatsRecent: vi.fn(),
         fetchForecast: vi.fn(),
         postDeck: vi.fn(),
+        postFilteredDeck: vi.fn(),
     };
 });
 
@@ -34,6 +35,7 @@ import {
     fetchHealth,
     fetchStatsRecent,
     postDeck,
+    postFilteredDeck,
 } from "$lib/api";
 
 const decksOk: ApiDeckListResponse = {
@@ -525,6 +527,204 @@ describe("Phase 11-B stats history", () => {
                 expect(btn).not.toBeNull();
                 expect(btn!.disabled).toBe(true);
                 expect(vi.mocked(postDeck)).not.toHaveBeenCalled();
+            } finally {
+                unmount(instance);
+            }
+        });
+    });
+
+    // Phase 18-B: + Filtered deck inline form. Two-input variant of the
+    // 14-C pattern (name + Anki search expression). Defaults for limit
+    // and order are applied server-side (100 / "due") so the v1 surface
+    // stays minimal — clients only send the two required fields.
+    describe("Phase 18-B + Filtered", () => {
+        test("button click reveals two inputs; Enter commits postFilteredDeck + refetches", async () => {
+            vi.mocked(fetchDecks).mockResolvedValueOnce(decksOk);
+            vi.mocked(fetchHealth).mockResolvedValueOnce(healthLive);
+            vi.mocked(postFilteredDeck).mockResolvedValueOnce({
+                id: 1_777_223_500_001,
+                name: "Cram session",
+            });
+            const decksOkPlusCram: ApiDeckListResponse = {
+                decks: [
+                    decksOk.decks[0],
+                    {
+                        id: 1_777_223_500_001,
+                        name: "Cram session",
+                        level: 1,
+                        new_count: 0,
+                        learn_count: 0,
+                        review_count: 7,
+                        total_in_deck: 7,
+                        // filtered: true so the deck-tree contract still
+                        // round-trips — the filter flag is what makes
+                        // this row distinct from a normal deck.
+                        filtered: true,
+                        collapsed: false,
+                        preset_id: null,
+                        children: [],
+                    },
+                ],
+            };
+            vi.mocked(fetchDecks).mockResolvedValueOnce(decksOkPlusCram);
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const filteredBtn =
+                    container.querySelector<HTMLButtonElement>(
+                        "button.new-filtered-deck-btn",
+                    );
+                expect(filteredBtn).not.toBeNull();
+                expect(filteredBtn!.disabled).toBe(false);
+                filteredBtn!.click();
+                flushSync();
+
+                // Both inputs render after click — the name input reuses
+                // .new-deck-input (visual parity with + New deck) and
+                // the search input has its own .new-filtered-search-input
+                // class so tests can target it precisely.
+                const nameInput = container.querySelector<HTMLInputElement>(
+                    "input.new-deck-input",
+                );
+                const searchInput =
+                    container.querySelector<HTMLInputElement>(
+                        "input.new-filtered-search-input",
+                    );
+                expect(nameInput).not.toBeNull();
+                expect(searchInput).not.toBeNull();
+
+                nameInput!.value = "Cram session";
+                nameInput!.dispatchEvent(
+                    new Event("input", { bubbles: true }),
+                );
+                searchInput!.value = "deck:Spanish is:due";
+                searchInput!.dispatchEvent(
+                    new Event("input", { bubbles: true }),
+                );
+                searchInput!.dispatchEvent(
+                    new KeyboardEvent("keydown", {
+                        key: "Enter",
+                        bubbles: true,
+                    }),
+                );
+                await settle();
+
+                expect(vi.mocked(postFilteredDeck)).toHaveBeenCalledTimes(1);
+                // Wire body matches the v1 surface: only name + search,
+                // no limit / order — client trusts server defaults.
+                expect(vi.mocked(postFilteredDeck)).toHaveBeenCalledWith({
+                    name: "Cram session",
+                    search: "deck:Spanish is:due",
+                });
+                // Refetch ran (initial + post-create refresh).
+                expect(vi.mocked(fetchDecks)).toHaveBeenCalledTimes(2);
+                // Form collapses back to the buttons.
+                expect(
+                    container.querySelector("input.new-filtered-search-input"),
+                ).toBeNull();
+                expect(
+                    container.querySelector("button.new-filtered-deck-btn"),
+                ).not.toBeNull();
+                // New filtered deck appears in the grid.
+                const deckNames = Array.from(
+                    container.querySelectorAll(".deck-name"),
+                ).map((el) => el.textContent?.trim());
+                expect(deckNames).toContain("Cram session");
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("server 400 (invalid search) surfaces inline error; form stays open", async () => {
+            vi.mocked(fetchDecks).mockResolvedValueOnce(decksOk);
+            vi.mocked(fetchHealth).mockResolvedValueOnce(healthLive);
+            // rslib `normalize_search` rejects unmatched parens; the
+            // server maps AnkiError::SearchError → 400 with the
+            // "invalid search query" prefix.
+            vi.mocked(postFilteredDeck).mockRejectedValueOnce(
+                new Error("400 invalid search query: bad expression"),
+            );
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                container
+                    .querySelector<HTMLButtonElement>(
+                        "button.new-filtered-deck-btn",
+                    )!
+                    .click();
+                flushSync();
+
+                const nameInput = container.querySelector<HTMLInputElement>(
+                    "input.new-deck-input",
+                )!;
+                const searchInput =
+                    container.querySelector<HTMLInputElement>(
+                        "input.new-filtered-search-input",
+                    )!;
+                nameInput.value = "Bad cram";
+                nameInput.dispatchEvent(new Event("input", { bubbles: true }));
+                searchInput.value = "((((";
+                searchInput.dispatchEvent(
+                    new Event("input", { bubbles: true }),
+                );
+                searchInput.dispatchEvent(
+                    new KeyboardEvent("keydown", {
+                        key: "Enter",
+                        bubbles: true,
+                    }),
+                );
+                await settle();
+
+                expect(vi.mocked(postFilteredDeck)).toHaveBeenCalledTimes(1);
+                // Form stays open so user can fix-and-retry the search
+                // without losing the typed name.
+                expect(
+                    container.querySelector(
+                        "input.new-filtered-search-input",
+                    ),
+                ).not.toBeNull();
+                // Error banner surfaces the server message verbatim.
+                const banners = Array.from(
+                    container.querySelectorAll(".error-banner"),
+                );
+                expect(banners.length).toBeGreaterThan(0);
+                expect(
+                    banners.some((b) =>
+                        b.textContent?.includes("invalid search query"),
+                    ),
+                ).toBe(true);
+                // Refetch should NOT have fired on failure.
+                expect(vi.mocked(fetchDecks)).toHaveBeenCalledTimes(1);
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("button is disabled when liveDecks is null (backend offline)", async () => {
+            // Same offline-guard as the + New deck button. Without a
+            // live deck list we can't refresh after the POST, so we'd
+            // be lying about whether the create persisted.
+            vi.mocked(fetchDecks).mockRejectedValueOnce(
+                new Error("backend unreachable"),
+            );
+            vi.mocked(fetchHealth).mockRejectedValueOnce(
+                new Error("backend unreachable"),
+            );
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const btn = container.querySelector<HTMLButtonElement>(
+                    "button.new-filtered-deck-btn",
+                );
+                expect(btn).not.toBeNull();
+                expect(btn!.disabled).toBe(true);
+                expect(vi.mocked(postFilteredDeck)).not.toHaveBeenCalled();
             } finally {
                 unmount(instance);
             }

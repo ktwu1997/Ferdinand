@@ -22,6 +22,7 @@ pub fn router() -> Router<AppState> {
             "/api/decks",
             get(decks::list_decks).post(decks::post_create),
         )
+        .route("/api/decks/filtered", post(decks::post_filtered))
         .route(
             "/api/decks/{id}",
             patch(decks::patch_deck).delete(decks::delete_by_id),
