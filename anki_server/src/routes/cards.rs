@@ -40,6 +40,11 @@ pub struct CardSummary {
     pub tags: Vec<String>,
     pub state: &'static str,
     pub ease_factor: f32,
+    /// Phase 17-A: user-visible flag colour (0=none, 1..=7 the seven
+    /// supported colours). Only the lower 3 bits of `card.flags` are
+    /// the user flag — the upper bits encode "needs sync" markers and
+    /// are intentionally NOT exposed.
+    pub flag: u32,
     pub notetype_id: i64,
     pub notetype_name: String,
     pub notetype_css: String,
@@ -174,6 +179,13 @@ pub(crate) fn build_summary(col: &mut Collection, cid: CardId) -> anyhow::Result
         )
     })?;
     let rendered = col.render_existing_card(cid, false, true)?;
+    // Route through the proto conversion so we don't have to touch
+    // `Card`'s pub(crate) `flags` field directly. Same trick 16-D used
+    // for `card_get_json` — `From<Card> for anki_proto::cards::Card`
+    // lives inside rslib and has the access we lack out here. The
+    // proto packs the same byte: lower 3 bits = user flag (0..=7),
+    // upper bits = sync markers we deliberately mask off.
+    let flag = card_user_flag(&card);
     Ok(CardSummary {
         id: cid.0,
         note_id: card.note_id().0,
@@ -185,10 +197,18 @@ pub(crate) fn build_summary(col: &mut Collection, cid: CardId) -> anyhow::Result
         tags: note.tags.clone(),
         state: card_state_label(&card),
         ease_factor: card.ease_factor(),
+        flag,
         notetype_id: notetype.id.0,
         notetype_name: notetype.name.clone(),
         notetype_css: notetype.config.css.clone(),
     })
+}
+
+/// Extract the user-visible flag value (0..=7) from a `Card`. The proto
+/// conversion is the only public path to `flags` from outside rslib —
+/// see the comment at the call site above.
+fn card_user_flag(card: &Card) -> u32 {
+    anki_proto::cards::Card::from(card.clone()).flags & 0b111
 }
 
 fn flatten_nodes(nodes: &[RenderedNode]) -> String {
@@ -278,6 +298,78 @@ pub async fn post_suspend(
     }))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct FlagRequest {
+    /// Flag value in the 0..=7 range. 0 clears the flag; 1..=7 set one
+    /// of the seven supported colours (red, orange, green, blue, pink,
+    /// turquoise, purple — same colour ordering as the desktop browse
+    /// pane).
+    pub flag: u32,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct FlagResponse {
+    pub id: i64,
+    /// Post-action flag value (echo of the requested flag, modulo any
+    /// future server-side capping). Lets the UI update its row without
+    /// re-fetching the full `CardSummary`.
+    pub flag: u32,
+}
+
+/// Set or clear a card's flag colour. POST `{"flag": 0}` clears,
+/// POST `{"flag": N}` for N in 1..=7 sets the colour. Idempotent under
+/// repeated calls with the same value (rslib `set_card_flag` no-ops
+/// when the byte is unchanged). Missing card → 404; out-of-range flag
+/// → 400.
+#[utoipa::path(
+    post,
+    path = "/api/cards/{id}/flag",
+    request_body = inline(serde_json::Value),
+    responses(
+        (status = 200, body = FlagResponse),
+        (status = 400, body = crate::error::ApiError),
+        (status = 404, body = crate::error::ApiError),
+    ),
+    params(("id" = i64, Path, description = "Card id"))
+)]
+pub async fn post_flag(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(req): Json<FlagRequest>,
+) -> ApiResult<Json<FlagResponse>> {
+    let flag = validate_flag(req.flag).map_err(ServerError::bad_request)?;
+    let mut col = state.col.lock().await;
+    let cid = CardId(id);
+    if col.storage.get_card(cid)?.is_none() {
+        return Err(ServerError::not_found(format!("card {id} not found")));
+    }
+    // rslib's set_card_flag takes a slice — single-card flips reuse the
+    // bulk path with a one-element vec, mirroring how /suspend wraps
+    // bury_or_suspend_cards. The lower-3-bits check matches rslib's
+    // own `require!(flag < 8)`, but we re-validate at the API boundary
+    // so a malformed request gets a clean 400 rather than a 500 from
+    // the rslib panic-style require.
+    col.set_card_flag(&[cid], flag)?;
+    let card = col
+        .storage
+        .get_card(cid)?
+        .ok_or_else(|| ServerError::from(anyhow!("card {id} disappeared post-flag")))?;
+    Ok(Json(FlagResponse {
+        id: cid.0,
+        flag: card_user_flag(&card),
+    }))
+}
+
+/// Pure validation surface for `FlagRequest`. The desktop browse pane
+/// uses the same 0..=7 numeric range; flag 0 means "no flag" and is the
+/// way to clear a previously-set colour.
+fn validate_flag(flag: u32) -> Result<u32, &'static str> {
+    if flag > 7 {
+        return Err("flag must be between 0 and 7");
+    }
+    Ok(flag)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,5 +407,45 @@ mod tests {
             (usize::MAX, 50)
         );
         assert_eq!(validate_pagination(1_000_000, 50).unwrap(), (1_000_000, 50));
+    }
+
+    #[test]
+    fn validate_flag_accepts_zero_and_seven() {
+        // 0 clears the flag (the documented "no flag" sentinel). 7 is
+        // the upper bound — rslib's set_card_flag rejects 8+ via
+        // `require!(flag < 8)`, so we mirror the boundary at the API
+        // edge to fail fast with a clean 400.
+        assert_eq!(validate_flag(0).unwrap(), 0);
+        assert_eq!(validate_flag(7).unwrap(), 7);
+    }
+
+    #[test]
+    fn validate_flag_accepts_each_documented_colour() {
+        // The desktop browse pane has 7 colours (red/orange/green/blue/
+        // pink/turquoise/purple); pinning every value catches an
+        // accidental off-by-one in a future range tweak.
+        for n in 1..=7u32 {
+            assert!(validate_flag(n).is_ok(), "flag {n} must be accepted");
+        }
+    }
+
+    #[test]
+    fn validate_flag_rejects_above_seven() {
+        // 8 is the first rejected value (matches rslib's `flag < 8`
+        // require); larger values hit the same human-readable error so
+        // a clueless client doesn't leak the rslib-internal panic
+        // message via a 500.
+        assert_eq!(
+            validate_flag(8).unwrap_err(),
+            "flag must be between 0 and 7"
+        );
+        assert_eq!(
+            validate_flag(99).unwrap_err(),
+            "flag must be between 0 and 7"
+        );
+        assert_eq!(
+            validate_flag(u32::MAX).unwrap_err(),
+            "flag must be between 0 and 7"
+        );
     }
 }

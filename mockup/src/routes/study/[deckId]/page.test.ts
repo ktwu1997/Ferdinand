@@ -38,6 +38,10 @@ function card(id: number, front: string, back: string): ApiCardSummary {
         tags: [],
         state: "new",
         ease_factor: 2500,
+        // Phase 17-A: flag=0 (no flag) is the default for fixtures that
+        // don't exercise the chip strip. ApiCardSummary requires the field
+        // post-17-A so omitting it would be a type error (8-E lesson).
+        flag: 0,
         notetype_id: 1,
         notetype_name: "Basic",
         notetype_css: "",
