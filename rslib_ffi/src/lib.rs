@@ -22,6 +22,13 @@
 //! HTML to the server-side `{{Field}}` rendering. Returns NULL for both
 //! "missing handle" and "no such note" — callers distinguish via
 //! [`ferdinand_note_count`] or by remembering the id they asked for.
+//! v6 surface (Phase 16-D): `_card_get_json` returns the full scheduling
+//! state for a given card id (`{id, note_id, deck_id, queue, card_type,
+//! due, interval, reps, lapses, mtime}`) so a native study UI can render
+//! due-vs-suspended/buried distinctions and per-card scheduling stats
+//! without going through the higher-level CardSummary used by the
+//! browse list endpoint. Same NULL-on-missing contract as
+//! [`ferdinand_note_get_json`].
 //!
 //! ## Memory model
 //!
@@ -52,6 +59,7 @@ use std::path::PathBuf;
 use std::ptr;
 use std::sync::OnceLock;
 
+use anki::card::CardId;
 use anki::collection::{Collection, CollectionBuilder};
 use anki::notes::NoteId;
 use anki::timestamp::TimestampSecs;
@@ -526,11 +534,115 @@ pub unsafe extern "C" fn ferdinand_note_get_json(
     }
 }
 
+/// One row in the JSON returned by [`ferdinand_card_get_json`]. Mirrors
+/// the desktop-faithful card row: `id`, owning `note_id` and `deck_id`,
+/// raw scheduling enums (`queue` is `sint32`, `card_type` is `uint32`
+/// in the Anki proto), the FSRS-relevant numeric fields (`due`,
+/// `interval`, `reps`, `lapses`), and the last-modified epoch seconds.
+/// `interval` is in days for review-state cards and seconds for
+/// learning-state cards — same convention as desktop Anki, so a native
+/// UI can branch on `queue` to format the unit. Higher-level state
+/// classifications (new/learning/review/suspended) can still be derived
+/// from `queue` via the same logic the server uses in
+/// [`anki::card::Card::queue_number`].
+#[derive(Serialize)]
+struct FfiCard {
+    id: i64,
+    note_id: i64,
+    deck_id: i64,
+    queue: i32,
+    card_type: u32,
+    due: i32,
+    interval: u32,
+    reps: u32,
+    lapses: u32,
+    mtime: i64,
+}
+
+/// Return a heap-allocated NUL-terminated JSON object describing a
+/// single card: `{"id":..., "note_id":..., "deck_id":..., "queue":...,
+/// "card_type":..., "due":..., "interval":..., "reps":...,
+/// "lapses":..., "mtime":...}`. Returns NULL on a NULL handle, a
+/// non-positive `cid`, an unknown card id, or any underlying storage
+/// error.
+///
+/// Field semantics match the Anki proto representation
+/// (`anki_proto::cards::Card`): `queue` is a signed int that can go
+/// negative for suspended/buried states (-1, -2, -3), `card_type`
+/// follows the unsigned `New=0 / Learn=1 / Review=2 / Relearn=3`
+/// convention, and `interval` flips unit from "seconds" (queue == Learn)
+/// to "days" (queue == Review) — clients should branch on `queue` to
+/// format it. `due` is also queue-dependent (timestamp for learning,
+/// days-since-creation for review).
+///
+/// Ownership: the returned pointer is heap-allocated and owned by the
+/// caller. Release with [`ferdinand_free_string`] exactly once — same
+/// contract as every other `*_json` FFI function.
+///
+/// # Safety
+/// - `handle` must be a non-NULL pointer returned by
+///   [`ferdinand_collection_open`] that has not been closed.
+/// - Must NOT be called concurrently with any other FFI call on the
+///   same handle from another thread.
+#[no_mangle]
+pub unsafe extern "C" fn ferdinand_card_get_json(
+    handle: *mut FerdinandCollection,
+    cid: i64,
+) -> *mut c_char {
+    if handle.is_null() || cid <= 0 {
+        return ptr::null_mut();
+    }
+    // SAFETY: caller contract — `handle` is a valid open Collection and
+    // is not concurrently accessed from another thread. `storage.get_card`
+    // takes &self via storage; we still need &mut to satisfy the
+    // borrow chain because `inner` is reached through `(*handle).inner`.
+    let col = unsafe { &mut (*handle).inner };
+
+    let card = match col.storage.get_card(CardId(cid)) {
+        Ok(Some(c)) => c,
+        // Missing card id and any underlying storage error both fold to
+        // NULL — same single-pointer-return contract as
+        // [`ferdinand_note_get_json`]. Callers that need to distinguish
+        // "no such card" from "transient I/O error" can re-check via
+        // [`ferdinand_collection_stats_json`] for the card count.
+        _ => return ptr::null_mut(),
+    };
+
+    // Convert via the public proto representation so we don't need to
+    // touch `Card`'s pub(crate) fields directly. `From<Card> for
+    // anki_proto::cards::Card` lives inside rslib and has the access
+    // rights we lack here.
+    let proto: anki_proto::cards::Card = card.into();
+
+    let payload = FfiCard {
+        id: proto.id,
+        note_id: proto.note_id,
+        deck_id: proto.deck_id,
+        queue: proto.queue,
+        card_type: proto.ctype,
+        due: proto.due,
+        interval: proto.interval,
+        reps: proto.reps,
+        lapses: proto.lapses,
+        mtime: proto.mtime_secs,
+    };
+
+    let json = match serde_json::to_string(&payload) {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+    match CString::new(json) {
+        Ok(s) => s.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
 /// Release a heap C string previously returned by an `*_json` FFI
 /// function ([`ferdinand_list_decks_json`],
 /// [`ferdinand_deck_tree_json`], [`ferdinand_collection_stats_json`],
-/// or [`ferdinand_note_get_json`]). NULL-safe so callers can
-/// defensively free after a NULL return without branching.
+/// [`ferdinand_note_get_json`], or [`ferdinand_card_get_json`]).
+/// NULL-safe so callers can defensively free after a NULL return
+/// without branching.
 ///
 /// # Safety
 /// - `s` must be either NULL, or a pointer returned by an FFI function
@@ -1002,6 +1114,170 @@ mod tests {
         );
 
         // SAFETY: produced by ferdinand_note_get_json; documented release path.
+        unsafe { ferdinand_free_string(json_ptr) };
+        // SAFETY: `handle` was opened above and not yet closed.
+        unsafe { ferdinand_collection_close(handle) };
+        let _ = std::fs::remove_file(&tmpdir);
+    }
+
+    #[test]
+    fn card_get_json_returns_null_for_null_handle() {
+        // SAFETY: NULL is the documented sentinel for "no collection".
+        let p = unsafe { ferdinand_card_get_json(ptr::null_mut(), 1) };
+        assert!(p.is_null());
+    }
+
+    #[test]
+    fn card_get_json_returns_null_for_non_positive_or_missing_cid() {
+        // 0/-1/i64::MIN never correspond to a real card id; rejecting
+        // them before the storage hit keeps the contract symmetric with
+        // [`ferdinand_note_get_json`] and the path-addressed handlers
+        // in anki_server.
+        let tmpdir = std::env::temp_dir().join(format!(
+            "ferdinand_ffi_card_get_neg_test_{}_{}.anki2",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        ));
+        let cpath = CString::new(tmpdir.to_str().unwrap()).unwrap();
+
+        // SAFETY: `cpath` outlives the call.
+        let handle = unsafe { ferdinand_collection_open(cpath.as_ptr()) };
+        assert!(!handle.is_null(), "open should succeed for fresh path");
+
+        for bad in [0_i64, -1, i64::MIN] {
+            // SAFETY: `handle` is a freshly opened, single-threaded handle.
+            let p = unsafe { ferdinand_card_get_json(handle, bad) };
+            assert!(p.is_null(), "non-positive cid {bad} must return NULL");
+        }
+        // Missing card (positive id but no row) folds to the same NULL
+        // sentinel — the contract is "NULL means no payload", not
+        // "NULL means specifically id<=0".
+        // SAFETY: `handle` valid; cid>0.
+        let p = unsafe { ferdinand_card_get_json(handle, 999_999_999_999) };
+        assert!(p.is_null(), "missing card id must return NULL");
+
+        // SAFETY: `handle` was opened above and not yet closed.
+        unsafe { ferdinand_collection_close(handle) };
+        let _ = std::fs::remove_file(&tmpdir);
+    }
+
+    #[test]
+    fn card_get_json_round_trip_against_real_collection() {
+        // Build a fresh collection, add one note via the high-level
+        // Collection API (which auto-creates one card per template), then
+        // ask for that card back via the FFI and verify every documented
+        // field. Mirrors `note_get_json_round_trip_against_real_collection`
+        // but pinned to the card payload shape.
+        use anki::notes::Note;
+        use anki::notetype::NotetypeKind;
+
+        let tmpdir = std::env::temp_dir().join(format!(
+            "ferdinand_ffi_card_get_test_{}_{}.anki2",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        ));
+        let cpath = CString::new(tmpdir.to_str().unwrap()).unwrap();
+
+        // SAFETY: `cpath` outlives the call.
+        let handle = unsafe { ferdinand_collection_open(cpath.as_ptr()) };
+        assert!(!handle.is_null(), "open should succeed for fresh path");
+
+        // Seed a Basic note. add_note auto-creates a single card per
+        // notetype template (Basic has one template), so we can recover
+        // its cid via storage.all_searched_cards-style query — easier to
+        // just walk the cards table directly.
+        let (nid, did) = {
+            // SAFETY: single-threaded; we do not call into FFI again
+            // until this borrow ends.
+            let col = unsafe { &mut (*handle).inner };
+            let basic = col
+                .get_notetype_by_name("Basic")
+                .expect("Basic notetype lookup must succeed")
+                .expect("Basic notetype always seeded on a fresh collection");
+            assert!(matches!(basic.config.kind(), NotetypeKind::Normal));
+            let mut note = Note::new(&basic);
+            note.set_field(0, "Front").expect("set Front field");
+            note.set_field(1, "Back").expect("set Back field");
+            // Default deck (id=1) always exists on a fresh collection.
+            let did = anki::decks::DeckId(1);
+            col.add_note(&mut note, did)
+                .expect("add_note must succeed against fresh collection");
+            (note.id.0, did.0)
+        };
+        assert!(nid > 0, "added note must have a positive id, got {nid}");
+
+        // Fetch the auto-generated card id. A Basic notetype produces
+        // exactly one card per note, so the first row matching this
+        // note id is the one we want.
+        let cid: i64 = {
+            // SAFETY: single-threaded; we do not call into FFI again
+            // until this borrow ends.
+            let col = unsafe { &(*handle).inner };
+            col.storage
+                .db()
+                .query_row(
+                    "SELECT id FROM cards WHERE nid = ?1 LIMIT 1",
+                    [nid],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("Basic add_note must auto-create one card row")
+        };
+        assert!(
+            cid > 0,
+            "auto-created card must have a positive id, got {cid}"
+        );
+
+        // SAFETY: `handle` is a freshly opened, single-threaded handle.
+        let json_ptr = unsafe { ferdinand_card_get_json(handle, cid) };
+        assert!(
+            !json_ptr.is_null(),
+            "card_get_json should succeed for seeded card"
+        );
+
+        // SAFETY: produced by CString::into_raw above; not yet freed.
+        let json = unsafe { CStr::from_ptr(json_ptr) }
+            .to_str()
+            .expect("card_get_json must return valid UTF-8");
+        let payload: serde_json::Value =
+            serde_json::from_str(json).expect("card_get_json must return a valid JSON object");
+
+        assert_eq!(payload["id"], cid);
+        assert_eq!(payload["note_id"], nid);
+        assert_eq!(payload["deck_id"], did);
+        // Fresh-add cards land in the New queue (queue == 0,
+        // card_type == 0). Use the documented proto constants here so
+        // the test is honest about what the FFI returns rather than
+        // dressing it up via CardQueueNumber.
+        assert_eq!(payload["queue"], 0, "fresh card must be in New queue");
+        assert_eq!(payload["card_type"], 0, "fresh card must be New type");
+        // reps/lapses must be 0 on a never-reviewed card; interval
+        // defaults to 0 for New cards.
+        assert_eq!(payload["reps"], 0);
+        assert_eq!(payload["lapses"], 0);
+        assert_eq!(payload["interval"], 0);
+        // mtime must be a positive epoch second — same invariant as
+        // note_get_json's mtime assertion.
+        assert!(
+            payload["mtime"].as_i64().unwrap() > 0,
+            "mtime must be a positive epoch second, got {}",
+            payload["mtime"]
+        );
+        // due is u32 in the proto for New cards (queue position) — assert
+        // it's present and non-negative without pinning a magic number,
+        // because Anki picks the next free position.
+        assert!(
+            payload["due"].is_i64(),
+            "due must be an i64, got {}",
+            payload["due"]
+        );
+
+        // SAFETY: produced by ferdinand_card_get_json; documented release path.
         unsafe { ferdinand_free_string(json_ptr) };
         // SAFETY: `handle` was opened above and not yet closed.
         unsafe { ferdinand_collection_close(handle) };
