@@ -18,6 +18,7 @@
         patchNote,
         postCardFlag,
         postCardSuspend,
+        postMoveCards,
         postSavedSearch,
         type ApiCardSummary,
         type ApiDeckConfigListItem,
@@ -86,6 +87,10 @@
     // in the editor footer disables itself while a flag PATCH is in
     // flight so a rapid double-click can't race the server response.
     let isMutatingFlag = $state(false);
+    // Phase 19-D: card-level move-to-deck. The "Move to" select in the
+    // editor footer disables itself while a move is in flight so the
+    // user can't fire a second move at a stale row mid-update.
+    let isMutatingMove = $state(false);
     let deckInput = $state<HTMLInputElement | null>(null);
 
     // Phase 9-S: tree-sidebar inline rename. Per-row edit state (only one row
@@ -471,6 +476,27 @@
         if (!selected || !liveDecks || selected.deckId === null) return null;
         const deck = liveDecks.find((d) => d.id === selected.deckId);
         return deck?.preset_id ?? null;
+    });
+
+    // Phase 19-D: candidate decks for the move-to-deck dropdown. The
+    // server endpoint accepts any non-filtered deck id; the UI hides
+    // the current deck (no-op move) and any filtered deck (rejected at
+    // rslib layer with FilteredDeckError::CanNotMoveCardsInto). liveDecks
+    // is the top-level array; flatten() walks the nested `children` so a
+    // user can move into a sub-deck like "Spanish::Verbs::Irregular".
+    function flattenDecks(decks: ApiDeckSummary[]): ApiDeckSummary[] {
+        const out: ApiDeckSummary[] = [];
+        for (const d of decks) {
+            out.push(d);
+            out.push(...flattenDecks(d.children));
+        }
+        return out;
+    }
+    let moveCandidates = $derived.by<ApiDeckSummary[]>(() => {
+        if (!liveDecks || !selected || selected.deckId === null) return [];
+        return flattenDecks(liveDecks).filter(
+            (d) => !d.filtered && d.id !== selected.deckId,
+        );
     });
 
     function toggle(section: string) {
@@ -1018,6 +1044,52 @@
             isMutatingFlag = false;
         }
     }
+
+    /**
+     * Phase 19-D: move the selected card into a different deck. Posts
+     * a one-element list to the bulk endpoint (forward-compat with
+     * Phase 20 multi-select). Mirrors the deck change into liveCards
+     * so the row's deck-name and the editor's deck pill update without
+     * a refetch. Server's `moved=0` means the card was already in the
+     * target deck (or it didn't exist) — treat as no-op rather than
+     * surfacing an error, since the dropdown filter already excludes
+     * the current deck.
+     */
+    async function moveSelectedToDeck(targetDeckId: number) {
+        if (!selected || !liveCards || !liveDecks) return;
+        const targetCard = liveCards.find((c) => String(c.id) === selected.id);
+        if (!targetCard) {
+            errorBanner = "Move unavailable on fake data";
+            return;
+        }
+        const targetDeck = flattenDecks(liveDecks).find(
+            (d) => d.id === targetDeckId,
+        );
+        if (!targetDeck) {
+            errorBanner = "Target deck not found";
+            return;
+        }
+        if (targetDeck.id === targetCard.deck_id) return;
+        isMutatingMove = true;
+        errorBanner = null;
+        try {
+            const res = await postMoveCards({
+                card_ids: [targetCard.id],
+                deck_id: targetDeckId,
+            });
+            if (res.moved > 0) {
+                liveCards = liveCards.map((c) =>
+                    c.id === targetCard.id
+                        ? { ...c, deck_id: targetDeckId, deck_name: targetDeck.name }
+                        : c,
+                );
+            }
+        } catch (e) {
+            errorBanner = e instanceof Error ? e.message : "Move failed";
+        } finally {
+            isMutatingMove = false;
+        }
+    }
 </script>
 
 <svelte:head><title>Browse — Anki</title></svelte:head>
@@ -1337,6 +1409,34 @@
                     >
                         {#each presets as p (p.id)}
                             <option value={p.id}>{p.name}</option>
+                        {/each}
+                    </select>
+                {/if}
+            </div>
+            <div class="meta-row">
+                <span class="meta-key">Move to</span>
+                {#if liveDecks === null || selected?.deckId == null}
+                    <span class="meta-val subtle">Offline — move locked</span>
+                {:else if moveCandidates.length === 0}
+                    <span class="meta-val subtle">No other decks</span>
+                {:else}
+                    <select
+                        class="preset-sel"
+                        value=""
+                        disabled={isMutatingMove}
+                        onchange={(e) => {
+                            const target = e.currentTarget;
+                            const id = Number(target.value);
+                            if (Number.isFinite(id) && id > 0) {
+                                moveSelectedToDeck(id);
+                            }
+                            target.value = "";
+                        }}
+                        aria-label="Move card to another deck"
+                    >
+                        <option value="" disabled>Pick a deck…</option>
+                        {#each moveCandidates as d (d.id)}
+                            <option value={d.id}>{d.name}</option>
                         {/each}
                     </select>
                 {/if}

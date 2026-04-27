@@ -370,6 +370,113 @@ fn validate_flag(flag: u32) -> Result<u32, &'static str> {
     Ok(flag)
 }
 
+#[derive(Debug, Deserialize)]
+pub struct MoveRequest {
+    /// Target card ids. Must be non-empty; ids are deduplicated server-side
+    /// before the rslib call so passing the same id twice is a safe no-op.
+    /// Cards already in the target deck are silently skipped (rslib's
+    /// `set_deck` short-circuits same-deck updates), and unknown card ids
+    /// are silently dropped (rslib `all_cards_for_ids` returns only the
+    /// rows that exist) — both cases simply lower the response `moved`
+    /// count rather than failing the whole batch.
+    pub card_ids: Vec<i64>,
+    /// Target deck id. Must be a positive id of an existing non-filtered
+    /// deck; filtered decks reject incoming card moves at the rslib layer
+    /// (`FilteredDeckError::CanNotMoveCardsInto`).
+    pub deck_id: i64,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MoveResponse {
+    /// Count of cards re-parented in this call. Excludes cards that were
+    /// already in the target deck and any unknown card ids that rslib
+    /// silently skipped. Compare with the request's `card_ids.len()`
+    /// client-side to detect a mismatch.
+    pub moved: usize,
+}
+
+/// Per-request hard ceiling on `card_ids`. Anki collections in the wild
+/// rarely have a single bulk operation over a few hundred cards, and the
+/// rslib path holds the collection lock for the whole transaction, so a
+/// runaway 100k batch would freeze every other request. 1000 leaves
+/// plenty of headroom for Phase 20's bulk-select-in-browse without
+/// risking a hung session.
+const MOVE_MAX_CARDS: usize = 1000;
+
+/// Pure validation for a `MoveRequest`. Mirrors the
+/// `validate_pagination` / `validate_flag` `&'static str`-on-error pattern
+/// so unit tests can cover every boundary without touching a Collection.
+/// Returns the deduplicated, sorted card-id list so the handler doesn't
+/// have to redo the work.
+fn validate_move(card_ids: &[i64], deck_id: i64) -> Result<(Vec<i64>, i64), &'static str> {
+    if card_ids.is_empty() {
+        return Err("card_ids must not be empty");
+    }
+    if card_ids.len() > MOVE_MAX_CARDS {
+        return Err("card_ids must contain at most 1000 entries");
+    }
+    if card_ids.iter().any(|&id| id <= 0) {
+        return Err("card_ids must all be positive integers");
+    }
+    if deck_id <= 0 {
+        return Err("deck_id must be a positive integer");
+    }
+    let mut deduped = card_ids.to_vec();
+    deduped.sort_unstable();
+    deduped.dedup();
+    Ok((deduped, deck_id))
+}
+
+/// Bulk-move a set of cards into a target deck. Wraps rslib's
+/// `Collection::set_deck` (atomic via `transact(Op::SetCardDeck)`).
+///
+/// Validation order (cheap → expensive):
+///   1. Request shape via `validate_move` — catches empty list,
+///      over-limit batches, non-positive ids before any Collection access.
+///   2. Target deck lookup — 404 if missing. Done explicitly here even
+///      though rslib's `set_deck` would also error, so the response
+///      status is "404 deck not found" rather than 500-from-AnkiError.
+///   3. `set_deck` — does the rest: refuses filtered targets
+///      (`FilteredDeckError::CanNotMoveCardsInto` → 400), silently skips
+///      cards already in the target deck, silently drops unknown ids.
+///
+/// Forward-compat with Phase 20 bulk-select-in-browse: the wire shape
+/// already takes a list, so multi-select just sends N ids instead of
+/// 1. The 19-D UI sends a single-element list per move click.
+#[utoipa::path(
+    post,
+    path = "/api/cards/move",
+    request_body = inline(serde_json::Value),
+    responses(
+        (status = 200, body = MoveResponse),
+        (status = 400, body = crate::error::ApiError),
+        (status = 404, body = crate::error::ApiError),
+    )
+)]
+pub async fn post_move_cards(
+    State(state): State<AppState>,
+    Json(req): Json<MoveRequest>,
+) -> ApiResult<Json<MoveResponse>> {
+    let (deduped_ids, deck_id) =
+        validate_move(&req.card_ids, req.deck_id).map_err(ServerError::bad_request)?;
+    let mut col = state.col.lock().await;
+    let did = DeckId(deck_id);
+    if col.get_deck(did)?.is_none() {
+        return Err(ServerError::not_found(format!("deck {deck_id} not found")));
+    }
+    let cids: Vec<CardId> = deduped_ids.into_iter().map(CardId).collect();
+    let result = col.set_deck(&cids, did).map_err(|e| match e {
+        AnkiError::FilteredDeckError { .. } => {
+            ServerError::bad_request(format!("target deck rejects card moves: {e}"))
+        }
+        AnkiError::NotFound { .. } => ServerError::not_found(format!("deck {deck_id} not found")),
+        other => ServerError::from(other),
+    })?;
+    Ok(Json(MoveResponse {
+        moved: result.output,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -447,5 +554,78 @@ mod tests {
             validate_flag(u32::MAX).unwrap_err(),
             "flag must be between 0 and 7"
         );
+    }
+
+    #[test]
+    fn validate_move_rejects_empty_card_ids() {
+        assert_eq!(
+            validate_move(&[], 1).unwrap_err(),
+            "card_ids must not be empty"
+        );
+    }
+
+    #[test]
+    fn validate_move_rejects_oversize_batch() {
+        // MOVE_MAX_CARDS + 1 trips the ceiling; usize::MAX guards against
+        // an integer-overflow style attempt to bypass the cap.
+        let oversize = vec![1_i64; MOVE_MAX_CARDS + 1];
+        assert_eq!(
+            validate_move(&oversize, 1).unwrap_err(),
+            "card_ids must contain at most 1000 entries"
+        );
+    }
+
+    #[test]
+    fn validate_move_accepts_max_batch_at_boundary() {
+        let at_limit = vec![1_i64; MOVE_MAX_CARDS];
+        assert!(validate_move(&at_limit, 1).is_ok());
+    }
+
+    #[test]
+    fn validate_move_rejects_non_positive_card_id() {
+        // 0 is reserved (no real Anki id is 0); negatives are nonsense.
+        // Either taints the whole batch — fail fast at the boundary so
+        // the rslib path doesn't have to deal with it.
+        assert_eq!(
+            validate_move(&[0], 1).unwrap_err(),
+            "card_ids must all be positive integers"
+        );
+        assert_eq!(
+            validate_move(&[-1], 1).unwrap_err(),
+            "card_ids must all be positive integers"
+        );
+        assert_eq!(
+            validate_move(&[1, 2, -3], 1).unwrap_err(),
+            "card_ids must all be positive integers"
+        );
+    }
+
+    #[test]
+    fn validate_move_rejects_non_positive_deck_id() {
+        assert_eq!(
+            validate_move(&[1], 0).unwrap_err(),
+            "deck_id must be a positive integer"
+        );
+        assert_eq!(
+            validate_move(&[1], -1).unwrap_err(),
+            "deck_id must be a positive integer"
+        );
+    }
+
+    #[test]
+    fn validate_move_dedupes_card_ids() {
+        // Duplicate ids are dropped so the rslib transaction doesn't
+        // process the same row twice. Sort keeps the output deterministic
+        // for downstream call-site expectations.
+        let (ids, deck_id) = validate_move(&[3, 1, 2, 1, 3], 5).unwrap();
+        assert_eq!(ids, vec![1, 2, 3]);
+        assert_eq!(deck_id, 5);
+    }
+
+    #[test]
+    fn validate_move_passes_through_singleton() {
+        let (ids, deck_id) = validate_move(&[42], 7).unwrap();
+        assert_eq!(ids, vec![42]);
+        assert_eq!(deck_id, 7);
     }
 }
