@@ -301,7 +301,9 @@ pub async fn get_by_id(
     Ok(Json(notetype_detail_response(&arc)))
 }
 
-fn notetype_detail_response(nt: &anki::notetype::Notetype) -> NotetypeDetailResponse {
+pub(super) fn notetype_detail_response(
+    nt: &anki::notetype::Notetype,
+) -> NotetypeDetailResponse {
     NotetypeDetailResponse {
         id: nt.id.0,
         name: nt.name.clone(),

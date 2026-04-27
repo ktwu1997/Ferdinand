@@ -20,6 +20,7 @@ vi.mock("$lib/api", async (importOriginal) => {
         patchDeckConfigById: vi.fn(),
         patchNotetypeName: vi.fn(),
         postDeckConfig: vi.fn(),
+        postNotetypeField: vi.fn(),
         deleteDeckConfig: vi.fn(),
         putFsrsEnabled: vi.fn(),
         putFsrsHealthCheck: vi.fn(),
@@ -39,6 +40,7 @@ import {
     patchNotetypeName,
     postDeckConfig,
     postFsrsOptimize,
+    postNotetypeField,
     putFsrsEnabled,
     putFsrsHealthCheck,
     type ApiDeckConfigDefault,
@@ -1900,6 +1902,231 @@ describe("SettingsPage notetypes rename (Phase 16-B)", () => {
             // Still in edit mode so the user can shorten the name and
             // retry without re-clicking Rename.
             expect(firstRow.querySelector(".nt-input")).not.toBeNull();
+        } finally {
+            unmount(instance);
+        }
+    });
+});
+
+// Phase 19-B: per-notetype add field. Uses the same Notetypes tab as
+// the rename suite — the header row stays the same shape, but expanding
+// a row reveals the fields list and a "+ New field" inline form.
+describe("SettingsPage notetypes add field (Phase 19-B)", () => {
+    let container: HTMLDivElement;
+
+    const threeNotetypes: ApiNotetypeListResponse = {
+        notetypes: [
+            { id: 1_776_837_237_908, name: "Basic", fields: ["Front", "Back"] },
+            {
+                id: 1_776_837_237_909,
+                name: "Basic (and reversed card)",
+                fields: ["Front", "Back"],
+            },
+            {
+                id: 1_776_837_237_910,
+                name: "Cloze",
+                fields: ["Text", "Back Extra"],
+            },
+        ],
+    };
+
+    beforeEach(() => {
+        vi.resetAllMocks();
+        vi.mocked(fetchDeckConfigs).mockResolvedValue(onlyDefaultList);
+        vi.mocked(fetchDeckConfigById).mockResolvedValue(defaultConf);
+        vi.mocked(fetchFsrsEnabled).mockResolvedValue(fsrsOff);
+        vi.mocked(fetchFsrsHealthCheck).mockResolvedValue(healthCheckOff);
+        container = document.createElement("div");
+        document.body.appendChild(container);
+    });
+
+    afterEach(() => {
+        container.remove();
+    });
+
+    function clickNotetypesTab(): void {
+        const tab = Array.from(
+            container.querySelectorAll<HTMLButtonElement>(".nav-item"),
+        ).find((b) => b.textContent?.trim() === "Notetypes");
+        expect(tab).toBeDefined();
+        tab!.click();
+    }
+
+    function firstNotetypeRow(): HTMLLIElement {
+        const row = container.querySelector<HTMLLIElement>(".nt-row");
+        if (!row) throw new Error(".nt-row not found — load fetchNotetypes?");
+        return row;
+    }
+
+    function expandFirstRow(): void {
+        const disclose = firstNotetypeRow().querySelector<HTMLButtonElement>(
+            ".nt-disclose",
+        );
+        if (!disclose) throw new Error(".nt-disclose missing");
+        disclose.click();
+    }
+
+    test("expanding a notetype row reveals the fields list and a + New field button; collapsed rows show no list", async () => {
+        // Lazy-render contract: the fields-list <ul> only renders when
+        // the row is expanded. Mount with three notetypes, expand only
+        // the first, assert the second row has neither the fields list
+        // nor the add button — same scoping rule the rename UI uses.
+        vi.mocked(fetchNotetypes).mockResolvedValueOnce(threeNotetypes);
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+            clickNotetypesTab();
+            await settle();
+
+            // Pre-expansion: no fields lists rendered.
+            expect(
+                container.querySelectorAll(".nt-fields-list").length,
+            ).toBe(0);
+
+            expandFirstRow();
+            flushSync();
+
+            // Only the first row's fields list shows.
+            const lists = container.querySelectorAll(".nt-fields-list");
+            expect(lists.length).toBe(1);
+            const items = lists[0]!.querySelectorAll(".nt-field-row");
+            expect(items.length).toBe(2);
+            const fieldNames = Array.from(items).map(
+                (li) => li.querySelector(".nt-field-name")?.textContent?.trim(),
+            );
+            expect(fieldNames).toEqual(["Front", "Back"]);
+            // The "+ New field" button shows on the expanded row only.
+            const addBtns = container.querySelectorAll(".nt-add-btn");
+            expect(addBtns.length).toBe(1);
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("typing a field name and clicking Add fires postNotetypeField; row reflects the new field count and name", async () => {
+        vi.mocked(fetchNotetypes).mockResolvedValueOnce(threeNotetypes);
+        // Server returns the full updated notetype detail — settings
+        // mirrors only the `fields` array into local state to keep the
+        // ApiNotetypeSummary picker shape slim.
+        vi.mocked(postNotetypeField).mockResolvedValueOnce({
+            id: 1_776_837_237_908,
+            name: "Basic",
+            fields: ["Front", "Back", "Phase19BTest"],
+            templates: [],
+        });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+            clickNotetypesTab();
+            await settle();
+            expandFirstRow();
+            flushSync();
+
+            // Open the inline + New field form.
+            const addBtn = container.querySelector<HTMLButtonElement>(
+                ".nt-add-btn",
+            );
+            addBtn!.click();
+            flushSync();
+
+            const firstRow = firstNotetypeRow();
+            // Two `.nt-input` candidates exist while the rename UI is
+            // off and the field-add UI is on; the field-add input is
+            // the one inside `.nt-field-add`.
+            const input = firstRow.querySelector<HTMLInputElement>(
+                ".nt-field-add .nt-input",
+            );
+            expect(input, "nt-field-add input must render").not.toBeNull();
+            input!.value = "  Phase19BTest  ";
+            input!.dispatchEvent(new Event("input", { bubbles: true }));
+            flushSync();
+
+            // Click Add (the button inside .nt-field-add — Cancel is
+            // the second button, Add is the first).
+            const addCommit = firstRow.querySelector<HTMLButtonElement>(
+                ".nt-field-add .ghost-btn",
+            );
+            addCommit!.click();
+            await settle();
+
+            expect(vi.mocked(postNotetypeField)).toHaveBeenCalledTimes(1);
+            // Trim happens at the boundary so the server gets the
+            // canonical name without surrounding whitespace.
+            expect(vi.mocked(postNotetypeField)).toHaveBeenCalledWith(
+                1_776_837_237_908,
+                "Phase19BTest",
+            );
+
+            // Field count meta updated to "3 fields" without a
+            // refetch.
+            const meta = firstRow.querySelector(".nt-meta")?.textContent?.trim();
+            expect(meta).toBe("3 fields");
+            // Re-expand should still be open; new field appears in the
+            // list (post-mutation re-render kept the disclosure open).
+            const listItems = firstRow.querySelectorAll(".nt-field-row");
+            expect(listItems.length).toBe(3);
+            expect(
+                listItems[2]?.querySelector(".nt-field-name")?.textContent
+                    ?.trim(),
+            ).toBe("Phase19BTest");
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("server 400 (e.g. duplicate name) surfaces inline on the row; row stays expanded so the user can correct and retry", async () => {
+        vi.mocked(fetchNotetypes).mockResolvedValueOnce(threeNotetypes);
+        vi.mocked(postNotetypeField).mockRejectedValueOnce(
+            new Error("400 field name \"Front\" already exists on this notetype"),
+        );
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+            clickNotetypesTab();
+            await settle();
+            expandFirstRow();
+            flushSync();
+            container
+                .querySelector<HTMLButtonElement>(".nt-add-btn")!
+                .click();
+            flushSync();
+
+            const firstRow = firstNotetypeRow();
+            const input = firstRow.querySelector<HTMLInputElement>(
+                ".nt-field-add .nt-input",
+            );
+            input!.value = "Front";
+            input!.dispatchEvent(new Event("input", { bubbles: true }));
+            flushSync();
+
+            firstRow
+                .querySelector<HTMLButtonElement>(".nt-field-add .ghost-btn")!
+                .click();
+            await settle();
+
+            // Inline error scoped to the row — assertion is on the row's
+            // `.field-error`, NOT a global banner.
+            const rowErrors = Array.from(
+                firstRow.querySelectorAll(".field-error"),
+            ).map((e) => e.textContent ?? "");
+            expect(rowErrors.some((t) => t.includes("already exists"))).toBe(
+                true,
+            );
+            // Field-add input still rendered so the user can fix the
+            // name and retry. Pin: we don't auto-clear the draft on
+            // error (would lose the user's typed content for a server
+            // hiccup that may be transient).
+            expect(
+                firstRow.querySelector(".nt-field-add .nt-input"),
+            ).not.toBeNull();
+            // Row's persisted field count unchanged on the rejected add.
+            const meta = firstRow
+                .querySelector(".nt-meta")
+                ?.textContent?.trim();
+            expect(meta).toBe("2 fields");
         } finally {
             unmount(instance);
         }

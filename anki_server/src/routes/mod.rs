@@ -4,6 +4,7 @@ pub mod decks;
 pub mod fsrs;
 pub mod media;
 pub mod notes;
+pub mod notetype_fields;
 pub mod notetypes;
 pub mod saved_searches;
 pub mod stats;
@@ -45,6 +46,10 @@ pub fn router() -> Router<AppState> {
         .route(
             "/api/notetypes/{id}",
             get(notetypes::get_by_id).patch(notetypes::patch_by_id),
+        )
+        .route(
+            "/api/notetypes/{id}/fields",
+            post(notetype_fields::post_add_field),
         )
         .route("/api/study/queue", get(study::get_queue))
         .route("/api/study/answer", post(study::post_answer))

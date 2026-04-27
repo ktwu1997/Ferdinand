@@ -456,6 +456,25 @@ export async function patchNotetypeName(
     return patchNotetype(id, { name });
 }
 
+/**
+ * Phase 19-B: append a new field to a notetype. Server validates id
+ * positive (400), name non-empty + ≤100 chars (400), no `:` / `{` /
+ * `}` / `"` characters (400), uniqueness within the notetype's
+ * existing fields (400), and notetype existence (404). On success
+ * every existing note for this notetype is silently padded with an
+ * empty string in the new slot — schema-mutation safe so cards and
+ * revlog counts stay invariant. Response is the canonical post-write
+ * notetype detail.
+ */
+export async function postNotetypeField(
+    id: number,
+    name: string,
+): Promise<ApiNotetypeDetail> {
+    return postJson<ApiNotetypeDetail>(`/api/notetypes/${id}/fields`, {
+        name,
+    });
+}
+
 export interface ApiNoteCreateRequest {
     deck_id: number;
     /** Field values in template order; first is the sort field. */

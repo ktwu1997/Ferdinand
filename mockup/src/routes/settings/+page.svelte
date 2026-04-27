@@ -12,6 +12,7 @@
         patchNotetypeName,
         postDeckConfig,
         postFsrsOptimize,
+        postNotetypeField,
         putFsrsEnabled,
         putFsrsHealthCheck,
         type ApiDeckConfigListItem,
@@ -116,6 +117,20 @@
     let notetypeNameDraft = $state("");
     let savingNotetypeRename = $state(false);
     let errorNotetypeRename: string | null = $state(null);
+
+    // Phase 19-B: per-notetype field management. `expandedNotetypeId`
+    // gates which row's fields list is visible (one-at-a-time mirrors
+    // the rename pattern). `addingFieldNotetypeId` separately tracks
+    // the row whose "+ New field" inline form is open — distinct from
+    // expansion so a user can keep multiple fields lists collapsed
+    // while typing into one. Errors are scoped per-row in
+    // `errorAddField` so a failed save on one notetype doesn't poison
+    // sibling rows' UI.
+    let expandedNotetypeId = $state<number | null>(null);
+    let addingFieldNotetypeId = $state<number | null>(null);
+    let newFieldNameDraft = $state("");
+    let savingNewField = $state(false);
+    let errorAddField: { id: number; message: string } | null = $state(null);
 
     function applyPresetSnapshot(
         conf: {
@@ -481,6 +496,68 @@
                 e instanceof Error ? e.message : "Rename failed";
         } finally {
             savingNotetypeRename = false;
+        }
+    }
+
+    // Phase 19-B: notetype field expansion + add. Expansion just toggles
+    // visibility of the fields list; lazy-load isn't needed because
+    // `notetypes` already carries `fields: string[]` on every row.
+    function toggleNotetypeExpanded(id: number): void {
+        expandedNotetypeId = expandedNotetypeId === id ? null : id;
+        // Closing the expansion also closes the +New field form to
+        // avoid abandoned drafts. Errors clear with the form so the
+        // re-open shows a fresh state.
+        if (expandedNotetypeId === null) {
+            addingFieldNotetypeId = null;
+            newFieldNameDraft = "";
+            errorAddField = null;
+        }
+    }
+
+    function startAddField(id: number): void {
+        addingFieldNotetypeId = id;
+        newFieldNameDraft = "";
+        errorAddField = null;
+    }
+
+    function cancelAddField(): void {
+        addingFieldNotetypeId = null;
+        newFieldNameDraft = "";
+        errorAddField = null;
+    }
+
+    async function commitAddField(): Promise<void> {
+        if (addingFieldNotetypeId === null || !notetypes) return;
+        const trimmed = newFieldNameDraft.trim();
+        if (trimmed === "") {
+            errorAddField = {
+                id: addingFieldNotetypeId,
+                message: "name must not be empty",
+            };
+            return;
+        }
+        const targetId = addingFieldNotetypeId;
+        savingNewField = true;
+        errorAddField = null;
+        try {
+            const res = await postNotetypeField(targetId, trimmed);
+            // Server returns the canonical post-write notetype detail
+            // including the appended field. Mirror just the fields
+            // array into local state — preserving the picker's slim
+            // ApiNotetypeSummary shape in `notetypes` keeps unrelated
+            // tabs from re-rendering with extra payload.
+            notetypes = notetypes.map((n) =>
+                n.id === res.id ? { ...n, fields: res.fields } : n,
+            );
+            addingFieldNotetypeId = null;
+            newFieldNameDraft = "";
+        } catch (e) {
+            errorAddField = {
+                id: targetId,
+                message: e instanceof Error ? e.message : "Add field failed",
+            };
+        } finally {
+            savingNewField = false;
         }
     }
 
@@ -948,10 +1025,10 @@
                         <div>
                             <span class="field-label">Notetypes</span>
                             <p class="hint">
-                                Rename the templates that drive your cards.
-                                Field add/remove is coming later — for now
-                                you can keep your "Basic" / "Cloze" labels
-                                tidy.
+                                Rename the templates that drive your cards
+                                and manage their fields. Field changes
+                                affect every note sharing the notetype, so
+                                expand a row before editing.
                             </p>
                         </div>
                     </div>
@@ -964,57 +1041,150 @@
                     {:else if notetypes && notetypes.length > 0}
                         <ul class="nt-list">
                             {#each notetypes as nt (nt.id)}
+                                {@const isExpanded =
+                                    expandedNotetypeId === nt.id}
                                 <li class="nt-row">
-                                    {#if editingNotetypeId === nt.id}
-                                        <input
-                                            class="text-input nt-input"
-                                            type="text"
-                                            bind:value={notetypeNameDraft}
-                                            disabled={savingNotetypeRename}
-                                            aria-label="Notetype name"
-                                            onkeydown={(e) => {
-                                                if (e.key === "Enter") {
-                                                    e.preventDefault();
-                                                    commitEditNotetype();
-                                                } else if (e.key === "Escape") {
-                                                    cancelEditNotetype();
-                                                }
-                                            }}
-                                        />
-                                        <button
-                                            class="ghost-btn"
-                                            onclick={commitEditNotetype}
-                                            disabled={savingNotetypeRename}
-                                        >
-                                            {savingNotetypeRename
-                                                ? "Saving…"
-                                                : "Save"}
-                                        </button>
-                                        <button
-                                            class="ghost-btn"
-                                            onclick={cancelEditNotetype}
-                                            disabled={savingNotetypeRename}
-                                        >
-                                            Cancel
-                                        </button>
-                                    {:else}
-                                        <span class="nt-name">{nt.name}</span>
-                                        <span class="nt-meta">
-                                            {nt.fields.length} field{nt.fields
-                                                .length === 1
-                                                ? ""
-                                                : "s"}
-                                        </span>
-                                        <button
-                                            class="ghost-btn"
-                                            onclick={() =>
-                                                startEditNotetype(
-                                                    nt.id,
-                                                    nt.name,
-                                                )}
-                                        >
-                                            Rename
-                                        </button>
+                                    <div class="nt-row-head">
+                                        {#if editingNotetypeId === nt.id}
+                                            <input
+                                                class="text-input nt-input"
+                                                type="text"
+                                                bind:value={notetypeNameDraft}
+                                                disabled={savingNotetypeRename}
+                                                aria-label="Notetype name"
+                                                onkeydown={(e) => {
+                                                    if (e.key === "Enter") {
+                                                        e.preventDefault();
+                                                        commitEditNotetype();
+                                                    } else if (e.key === "Escape") {
+                                                        cancelEditNotetype();
+                                                    }
+                                                }}
+                                            />
+                                            <button
+                                                class="ghost-btn"
+                                                onclick={commitEditNotetype}
+                                                disabled={savingNotetypeRename}
+                                            >
+                                                {savingNotetypeRename
+                                                    ? "Saving…"
+                                                    : "Save"}
+                                            </button>
+                                            <button
+                                                class="ghost-btn"
+                                                onclick={cancelEditNotetype}
+                                                disabled={savingNotetypeRename}
+                                            >
+                                                Cancel
+                                            </button>
+                                        {:else}
+                                            <button
+                                                class="nt-disclose"
+                                                aria-expanded={isExpanded}
+                                                aria-label="Toggle fields for {nt.name}"
+                                                onclick={() =>
+                                                    toggleNotetypeExpanded(
+                                                        nt.id,
+                                                    )}
+                                            >
+                                                <span
+                                                    class="nt-chev"
+                                                    class:open={isExpanded}
+                                                >›</span>
+                                                <span class="nt-name">
+                                                    {nt.name}
+                                                </span>
+                                            </button>
+                                            <span class="nt-meta">
+                                                {nt.fields.length} field{nt
+                                                    .fields.length === 1
+                                                    ? ""
+                                                    : "s"}
+                                            </span>
+                                            <button
+                                                class="ghost-btn"
+                                                onclick={() =>
+                                                    startEditNotetype(
+                                                        nt.id,
+                                                        nt.name,
+                                                    )}
+                                            >
+                                                Rename
+                                            </button>
+                                        {/if}
+                                    </div>
+                                    {#if isExpanded}
+                                        <div class="nt-fields">
+                                            <ul class="nt-fields-list">
+                                                {#each nt.fields as fieldName, idx (idx)}
+                                                    <li class="nt-field-row">
+                                                        <span
+                                                            class="nt-field-ord"
+                                                            >{idx + 1}.</span>
+                                                        <span
+                                                            class="nt-field-name"
+                                                            >{fieldName}</span>
+                                                    </li>
+                                                {/each}
+                                            </ul>
+                                            {#if addingFieldNotetypeId === nt.id}
+                                                <div class="nt-field-add">
+                                                    <input
+                                                        class="text-input nt-input"
+                                                        type="text"
+                                                        placeholder="New field name"
+                                                        bind:value={newFieldNameDraft}
+                                                        disabled={savingNewField}
+                                                        aria-label="New field name for {nt.name}"
+                                                        onkeydown={(e) => {
+                                                            if (
+                                                                e.key === "Enter"
+                                                            ) {
+                                                                e.preventDefault();
+                                                                commitAddField();
+                                                            } else if (
+                                                                e.key === "Escape"
+                                                            ) {
+                                                                cancelAddField();
+                                                            }
+                                                        }}
+                                                    />
+                                                    <button
+                                                        class="ghost-btn"
+                                                        onclick={commitAddField}
+                                                        disabled={savingNewField}
+                                                    >
+                                                        {savingNewField
+                                                            ? "Adding…"
+                                                            : "Add"}
+                                                    </button>
+                                                    <button
+                                                        class="ghost-btn"
+                                                        onclick={cancelAddField}
+                                                        disabled={savingNewField}
+                                                    >
+                                                        Cancel
+                                                    </button>
+                                                </div>
+                                            {:else}
+                                                <button
+                                                    class="ghost-btn nt-add-btn"
+                                                    onclick={() =>
+                                                        startAddField(nt.id)}
+                                                >
+                                                    + New field
+                                                </button>
+                                            {/if}
+                                            {#if errorAddField &&
+                                                errorAddField.id === nt.id}
+                                                <p
+                                                    class="field-error"
+                                                    role="alert"
+                                                >
+                                                    {errorAddField.message}
+                                                </p>
+                                            {/if}
+                                        </div>
                                     {/if}
                                 </li>
                             {/each}
@@ -1497,18 +1667,90 @@
     }
     .nt-row {
         display: flex;
-        align-items: center;
-        gap: var(--space-3);
+        flex-direction: column;
+        gap: var(--space-2);
         padding: var(--space-2) 0;
         border-top: 1px solid var(--border);
     }
     .nt-row:first-child {
         border-top: 0;
     }
+    .nt-row-head {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+    }
+    /* Phase 19-B: disclosure button replaces the static name span when
+       the row is collapsible. Reset button styling so the affordance
+       reads as text + chevron, not a button shape. */
+    .nt-disclose {
+        flex: 1;
+        display: inline-flex;
+        align-items: center;
+        gap: var(--space-2);
+        padding: 0;
+        background: none;
+        border: 0;
+        text-align: left;
+        cursor: pointer;
+        color: inherit;
+        font: inherit;
+    }
+    .nt-disclose:hover .nt-name {
+        color: var(--accent);
+    }
+    .nt-chev {
+        display: inline-flex;
+        width: 1rem;
+        font-size: 0.85rem;
+        color: var(--text-subtle);
+        transition: transform var(--duration-fast) var(--ease, ease);
+    }
+    .nt-chev.open {
+        transform: rotate(90deg);
+    }
     .nt-name {
         flex: 1;
         font-size: var(--text-sm);
         color: var(--text);
+    }
+    .nt-fields {
+        margin-left: 1.5rem;
+        padding: var(--space-2) 0 var(--space-3);
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-2);
+    }
+    .nt-fields-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-1);
+    }
+    .nt-field-row {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+        font-size: var(--text-sm);
+        color: var(--text);
+    }
+    .nt-field-ord {
+        width: 1.5rem;
+        color: var(--text-subtle);
+        font-variant-numeric: tabular-nums;
+    }
+    .nt-field-name {
+        flex: 1;
+    }
+    .nt-field-add {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+    }
+    .nt-add-btn {
+        align-self: flex-start;
     }
     .nt-meta {
         font-size: var(--text-xs);
