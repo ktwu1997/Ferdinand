@@ -226,6 +226,28 @@ export async function fetchStatsRecent(days = 30): Promise<ApiStatsRecent> {
 }
 
 /**
+ * Phase 17-B: per-day forecast of review-due cards for the next N days.
+ * Server pre-pads zero-due gaps so the array always has exactly `days`
+ * entries (offset=0..days-1, oldest first). Overdue cards collapse into
+ * offset=0 so the home page bar chart's "today" bucket reflects the
+ * actual review backlog rather than hiding it behind a future window.
+ */
+export interface ApiForecastDay {
+    offset: number;
+    reviews: number;
+}
+
+export interface ApiForecastResponse {
+    days: number;
+    history: ApiForecastDay[];
+}
+
+export async function fetchForecast(days = 7): Promise<ApiForecastResponse> {
+    const query = new URLSearchParams({ days: String(days) });
+    return getJson<ApiForecastResponse>(`/api/study/forecast?${query}`);
+}
+
+/**
  * List cards via /api/cards. Phase 11-C: pagination via (offset, limit);
  * `total` in the response reflects the unfiltered match count so callers
  * can render "X-Y of Z" without an extra round-trip. Server caps limit

@@ -42,6 +42,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/notetypes/{id}", patch(notetypes::patch_by_id))
         .route("/api/study/queue", get(study::get_queue))
         .route("/api/study/answer", post(study::post_answer))
+        .route("/api/study/forecast", get(study::get_forecast))
         .route(
             "/api/deck_config",
             get(deck_config::list_deck_configs).post(deck_config::post_create),

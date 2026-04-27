@@ -13,9 +13,11 @@
     } from "$lib/data";
     import {
         fetchDecks,
+        fetchForecast,
         fetchStatsRecent,
         postDeck,
         type ApiDayCount,
+        type ApiForecastDay,
     } from "$lib/api";
 
     let liveDecks: Deck[] | null = $state(null);
@@ -32,6 +34,31 @@
     // blanks, but the user is told their counts are stale.
     let liveHistory: ApiDayCount[] | null = $state(null);
     let statsError = $state<string | null>(null);
+
+    // Phase 17-B: per-day forecast of review-due cards for the next 7
+    // days. Default 7-day window matches the desktop graphs page; the
+    // bar chart degrades silently to a hidden section when forecast
+    // load fails (no fake fallback — a synthetic forecast would
+    // mislead the user about real review load).
+    let forecast: ApiForecastDay[] | null = $state(null);
+    let forecastError: string | null = $state(null);
+
+    // Bars scale to the peak day in the window, not to the seven-day
+    // sum — same convention desktop graphs use. Floor of 1 keeps the
+    // CSS `height: ...%` calculation safe when the forecast is all
+    // zeros (no future reviews → no bars, but no NaN either).
+    let forecastPeak: number = $derived(
+        Math.max(
+            1,
+            ...((forecast ?? []) as ApiForecastDay[]).map((d) => d.reviews),
+        ),
+    );
+    let forecastTotal: number = $derived(
+        ((forecast ?? []) as ApiForecastDay[]).reduce(
+            (s, d) => s + d.reviews,
+            0,
+        ),
+    );
 
     // Phase 14-C: inline "+ New deck" form. Mirrors the settings-page
     // "+ New preset" pattern (Phase 12-B): button reveals input, Enter
@@ -71,6 +98,13 @@
             liveHistory = stats.history;
         } catch (e) {
             statsError = e instanceof Error ? e.message : "Couldn't load stats";
+        }
+
+        try {
+            const fc = await fetchForecast(7);
+            forecast = fc.history;
+        } catch (e) {
+            forecastError = e instanceof Error ? e.message : "Couldn't load forecast";
         }
     });
 
@@ -269,6 +303,60 @@
             {/each}
         </div>
     </section>
+
+    {#if forecast}
+        <section class="section forecast-section" aria-labelledby="forecast-heading">
+            <div class="section-head">
+                <h3 id="forecast-heading">Next 7 days</h3>
+                <span class="ghost-link" aria-hidden="true">forecast</span>
+            </div>
+            {#if forecastError}
+                <div class="stats-error-banner" role="alert">
+                    Couldn't load forecast — chart hidden. ({forecastError})
+                </div>
+            {/if}
+            <Card padding="lg">
+                <div class="forecast-head">
+                    <div>
+                        <div class="forecast-total">{forecastTotal.toLocaleString()}</div>
+                        <div class="stat-label">cards due</div>
+                    </div>
+                    <div class="forecast-meta">
+                        Bars scale to peak day in window.
+                    </div>
+                </div>
+                <div class="forecast-grid" role="img" aria-label="Per-day review forecast">
+                    {#each forecast as day (day.offset)}
+                        <div class="forecast-col">
+                            <div class="forecast-bar-track">
+                                <div
+                                    class="forecast-bar"
+                                    class:zero={day.reviews === 0}
+                                    style="height: {(day.reviews / forecastPeak) * 100}%"
+                                    title={day.offset === 0
+                                        ? `Today: ${day.reviews} due`
+                                        : `+${day.offset}d: ${day.reviews} due`}
+                                ></div>
+                            </div>
+                            <div class="forecast-count">{day.reviews}</div>
+                            <div class="forecast-label">
+                                {day.offset === 0 ? "Today" : `+${day.offset}d`}
+                            </div>
+                        </div>
+                    {/each}
+                </div>
+            </Card>
+        </section>
+    {:else if forecastError}
+        <section class="section forecast-section">
+            <div class="section-head">
+                <h3>Next 7 days</h3>
+            </div>
+            <div class="stats-error-banner" role="alert">
+                Couldn't load forecast. ({forecastError})
+            </div>
+        </section>
+    {/if}
 
     <section class="section">
         <div class="section-head">
@@ -565,5 +653,73 @@
         border-radius: var(--radius-sm);
         padding: 0.4rem 0.6rem;
         margin-bottom: var(--space-3);
+    }
+
+    /* Phase 17-B forecast bar chart. 7-column grid with absolute-
+       positioned bars inside a fixed-height track. Uses the same
+       --accent gradient as the rest of the home page so the chart
+       reads as one piece with the deck cards. .forecast-total is
+       deliberately distinct from .stat-value so the existing
+       Last-30-days assertions on .stat-value stay scoped. */
+    .forecast-total {
+        font-size: var(--text-display);
+        line-height: 1;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+    }
+    .forecast-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        margin-bottom: var(--space-4);
+    }
+    .forecast-meta {
+        font-size: var(--text-xs);
+        color: var(--text-subtle);
+    }
+    .forecast-grid {
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        gap: var(--space-2);
+        align-items: end;
+    }
+    .forecast-col {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.35rem;
+    }
+    .forecast-bar-track {
+        width: 100%;
+        height: 6rem;
+        display: flex;
+        align-items: flex-end;
+        background: color-mix(in oklch, var(--accent) 8%, transparent);
+        border-radius: var(--radius-sm);
+        overflow: hidden;
+    }
+    .forecast-bar {
+        width: 100%;
+        background: linear-gradient(
+            to top,
+            var(--accent),
+            color-mix(in oklch, var(--accent) 70%, white)
+        );
+        border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+        min-height: 2px;
+        transition: height var(--duration-normal) var(--ease);
+    }
+    .forecast-bar.zero {
+        background: transparent;
+        min-height: 0;
+    }
+    .forecast-count {
+        font-size: var(--text-xs);
+        color: var(--text);
+        font-variant-numeric: tabular-nums;
+    }
+    .forecast-label {
+        font-size: var(--text-xs);
+        color: var(--text-subtle);
     }
 </style>
