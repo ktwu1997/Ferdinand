@@ -47,7 +47,7 @@
 | 17 ✅      | tag_list_json FFI / new_card_order toggle (+ 12-B clippy cleanup) / card flag chips / forecast bar — shipped 2026-04-27                | low    | ~52%   |
 | 18 ✅      | Saved searches CRUD / Browse editor all-fields generic / Filtered deck create / Hygiene (`--all-targets` CI gate) — shipped 2026-04-27 | medium | ~58%   |
 | 19 ✅      | Card-level move-to-deck (19-D LOW) / Template HTML edit (19-A MED) / Notetype add field (19-B MED-HIGH, additive) / Notetype remove field (19-C HIGH, destructive). Risk-gradient ordering proven; FFI v8 surface for notetype ops deferred to M2 Phase 21. Shipped 2026-04-27 commit 21ec7d654. | high   | ~64%   |
-| 20         | Card-level tag override / Burn-recovery flow / Per-card review history viewer / Bulk operations (multi-select in browse)               | medium | ~70%   |
+| 20 ◐ 2/4   | Wave 1 ✅: 20-D Per-card review history viewer (LOW, read-only) + 20-C Burn-recovery (MED-HIGH, destructive — single-card reset_to_new). Dispatched in parallel via Agent worktree isolation; both merged 2026-04-27 commits 4e7ba4ee3 + 1d5ace64e. Hygiene mini-phase folded in: `cargo fmt --check` now part of standing gate. **Wave 2 pending**: 20-A Card-level tag override (review-time tag edit on browse editor) + 20-B Bulk operations multi-select. | medium | ~67%   |
 
 🟢 **Milestone exit**: web is `kt`'s daily driver, desktop Anki retired.
 
