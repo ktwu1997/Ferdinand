@@ -33,6 +33,7 @@ vi.mock("$lib/api", async (importOriginal) => {
         patchNote: vi.fn(),
         postCardSuspend: vi.fn(),
         postCardFlag: vi.fn(),
+        postMoveCards: vi.fn(),
         postSavedSearch: vi.fn(),
         deleteNote: vi.fn(),
         deleteDeck: vi.fn(),
@@ -56,6 +57,7 @@ import {
     patchNote,
     postCardFlag,
     postCardSuspend,
+    postMoveCards,
     postSavedSearch,
 } from "$lib/api";
 
@@ -911,6 +913,126 @@ describe("BrowsePage contract", () => {
                 expect(placeholder?.textContent).toContain(
                     "Offline — preset locked",
                 );
+            } finally {
+                unmount(instance);
+            }
+        });
+    });
+
+    describe("Phase 19-D card-level move-to-deck", () => {
+        // Each fixture seeds liveDecks with three decks: the card's
+        // current deck (id=42), a second normal deck, and a filtered
+        // deck. Asserts the dropdown filtering rules: current deck
+        // hidden (no-op move), filtered hidden (rslib rejects).
+        const threeDecks = {
+            decks: [
+                deck(42, "Spanish", { preset_id: 1 }),
+                deck(99, "French", { preset_id: 1 }),
+                deck(7, "FilteredCustom", {
+                    filtered: true,
+                    preset_id: null as unknown as number,
+                }),
+            ],
+        };
+
+        test("dropdown lists candidate decks; current deck and filtered deck excluded", async () => {
+            vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+            vi.mocked(fetchDecks).mockResolvedValueOnce(threeDecks);
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const moveSelect = container.querySelector<HTMLSelectElement>(
+                    'select[aria-label="Move card to another deck"]',
+                );
+                expect(moveSelect).not.toBeNull();
+                const optionValues = Array.from(
+                    moveSelect!.querySelectorAll("option"),
+                ).map((o) => o.value);
+                // First option is the empty "Pick a deck…" placeholder;
+                // remaining options are the candidate deck ids. Current
+                // deck (42) and filtered deck (7) must NOT appear.
+                expect(optionValues).toEqual(["", "99"]);
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("onchange success: postMoveCards called with [card_id], deck_id; row deck_name updates optimistically", async () => {
+            vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+            vi.mocked(fetchDecks).mockResolvedValueOnce(threeDecks);
+            vi.mocked(postMoveCards).mockResolvedValueOnce({ moved: 1 });
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const moveSelect = container.querySelector<HTMLSelectElement>(
+                    'select[aria-label="Move card to another deck"]',
+                );
+                expect(moveSelect).not.toBeNull();
+
+                // Simulate user picking French (id=99) for the first card
+                // in liveThree (id=101, deck_id defaults to 42).
+                moveSelect!.value = "99";
+                moveSelect!.dispatchEvent(
+                    new Event("change", { bubbles: true }),
+                );
+                await settle();
+
+                expect(vi.mocked(postMoveCards)).toHaveBeenCalledTimes(1);
+                expect(vi.mocked(postMoveCards)).toHaveBeenCalledWith({
+                    card_ids: [101],
+                    deck_id: 99,
+                });
+
+                // Editor's eyebrow shows the deck name. After the
+                // optimistic mirror update, it should reflect "French".
+                const eyebrow = container.querySelector(".editor .eyebrow");
+                expect(eyebrow?.textContent).toContain("French");
+                // No error banner on success.
+                expect(container.querySelector(".error-banner")).toBeNull();
+                // After the move the select resets to the placeholder
+                // (empty value) so the next pick still fires onchange
+                // even when targeting the same deck a second time.
+                expect(moveSelect!.value).toBe("");
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("onchange rejects: errorBanner surfaces server message; row deck_name unchanged", async () => {
+            vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+            vi.mocked(fetchDecks).mockResolvedValueOnce(threeDecks);
+            vi.mocked(postMoveCards).mockRejectedValueOnce(
+                new Error("404 deck 99 not found"),
+            );
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const moveSelect = container.querySelector<HTMLSelectElement>(
+                    'select[aria-label="Move card to another deck"]',
+                );
+                moveSelect!.value = "99";
+                moveSelect!.dispatchEvent(
+                    new Event("change", { bubbles: true }),
+                );
+                await settle();
+
+                expect(vi.mocked(postMoveCards)).toHaveBeenCalledTimes(1);
+                const banner = container.querySelector(".error-banner");
+                expect(banner).not.toBeNull();
+                expect(banner?.textContent).toContain(
+                    "404 deck 99 not found",
+                );
+                // Row deck_name must NOT have been mirrored to the target
+                // since the server rejected — the eyebrow still shows
+                // the original deck name (cards default to "Spanish").
+                const eyebrow = container.querySelector(".editor .eyebrow");
+                expect(eyebrow?.textContent).toContain("Spanish");
             } finally {
                 unmount(instance);
             }

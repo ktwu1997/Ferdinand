@@ -839,6 +839,30 @@ export async function postCardFlag(
     return postJson<ApiFlagResponse>(`/api/cards/${id}/flag`, { flag });
 }
 
+/**
+ * Phase 19-D: bulk-move a set of cards into a target deck. Wire shape
+ * already takes a list so Phase 20's multi-select-in-browse can reuse
+ * this without an API change — the 19-D UI just sends a one-element list
+ * per move click. Server validates non-empty list, positive ids, and
+ * `deck_id` existence (404) / non-filtered (400) before the rslib call;
+ * cards already in the target and unknown card ids are silently skipped
+ * (lower the `moved` count rather than fail the batch).
+ */
+export interface ApiCardMoveRequest {
+    card_ids: number[];
+    deck_id: number;
+}
+
+export interface ApiCardMoveResponse {
+    moved: number;
+}
+
+export async function postMoveCards(
+    req: ApiCardMoveRequest,
+): Promise<ApiCardMoveResponse> {
+    return postJson<ApiCardMoveResponse>("/api/cards/move", req);
+}
+
 /** Phase 11-A: per-deck preset assignment. */
 export interface ApiDeckPresetResponse {
     id: number;
