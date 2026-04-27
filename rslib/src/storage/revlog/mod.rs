@@ -112,7 +112,7 @@ impl SqliteStorage {
         Ok(())
     }
 
-    pub(crate) fn get_revlog_entries_for_card(&self, cid: CardId) -> Result<Vec<RevlogEntry>> {
+    pub fn get_revlog_entries_for_card(&self, cid: CardId) -> Result<Vec<RevlogEntry>> {
         self.db
             .prepare_cached(concat!(include_str!("get.sql"), " where cid=?"))?
             .query_and_then([cid], row_to_revlog_entry)?

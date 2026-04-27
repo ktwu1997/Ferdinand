@@ -14,6 +14,7 @@
         fetchNotetypes,
         fetchSavedSearches,
         fetchTags,
+        getCardHistory,
         patchDeckName,
         patchDeckPreset,
         patchNote,
@@ -22,6 +23,7 @@
         postCardSuspend,
         postMoveCards,
         postSavedSearch,
+        type ApiCardHistoryEntry,
         type ApiCardSummary,
         type ApiDeckConfigListItem,
         type ApiDeckSummary,
@@ -168,6 +170,19 @@
     let isMutatingTemplate = $state(false);
     let templatesError = $state<string | null>(null);
     let templateSavingOrd = $state<number | null>(null);
+
+    // Phase 20-D: per-card review history viewer. Read-only — closed by
+    // default disclosure that lazy-fetches /api/cards/{id}/history on
+    // first open. `historyLoadedFor` tracks the card id we last
+    // hydrated for so switching to a different card silently
+    // invalidates the cache without burning a request when the panel
+    // is closed. `historyLoading` and `historyError` are panel-local
+    // so a flaky history fetch never poisons the editor's main banner.
+    let historyEntries = $state<ApiCardHistoryEntry[] | null>(null);
+    let historyPanelOpen = $state(false);
+    let historyLoadedFor = $state<number | null>(null);
+    let historyLoading = $state(false);
+    let historyError = $state<string | null>(null);
     let isAddingTag = $state(false);
     let newTagDraft = $state("");
     let isMutatingNote = $state(false);
@@ -1203,6 +1218,127 @@
             void loadTemplatesIfNeeded();
         }
     });
+
+    // Phase 20-D: in-flight tracker for the history fetch. Plain JS
+    // (not $state) because nothing reactive needs to read it — its
+    // sole job is to prevent the card-switch $effect from firing a
+    // duplicate request while the previous fetch is still pending.
+    // Using $state here would re-trigger the effect on assignment
+    // and defeat the purpose.
+    let historyInFlightFor: number | null = null;
+
+    /**
+     * Phase 20-D: hydrate the Review History panel for the currently
+     * selected card. Lazy — only fires when the disclosure is open
+     * AND we don't already have a fresh snapshot (or a pending
+     * request) for this card. Live mode only: in fake-data mode
+     * there's no numeric card id so the disclosure is hidden via
+     * the markup-level `Number.isFinite` guard. Mirrors the Phase
+     * 19-A loadTemplatesIfNeeded shape so the lazy + stale-discard
+     * logic stays consistent across both panels.
+     */
+    async function loadHistoryIfNeeded() {
+        if (!historyPanelOpen) return;
+        const cardIdStr = selected?.id ?? null;
+        const cardIdNum = cardIdStr === null ? null : Number(cardIdStr);
+        if (cardIdNum === null || !Number.isFinite(cardIdNum)) {
+            historyEntries = null;
+            historyLoadedFor = null;
+            return;
+        }
+        if (historyLoadedFor === cardIdNum && historyEntries) return;
+        // Dedup: if the same card already has a request in flight,
+        // skip the duplicate. This guards the card-switch $effect
+        // from firing twice when it re-runs after `historyLoadedFor`
+        // is reset to null (the reset itself is a tracked write).
+        if (historyInFlightFor === cardIdNum) return;
+        const targetId = cardIdNum;
+        historyInFlightFor = targetId;
+        historyError = null;
+        historyLoading = true;
+        try {
+            const res = await getCardHistory(targetId);
+            // Drop the response if the user navigated to a different
+            // card before the fetch resolved — same stale-response
+            // discard pattern as the templates panel and the 12-A
+            // search debouncer.
+            const stillCardIdStr = selected?.id ?? null;
+            const stillCardIdNum =
+                stillCardIdStr === null ? null : Number(stillCardIdStr);
+            if (stillCardIdNum !== targetId) return;
+            historyEntries = res.entries;
+            historyLoadedFor = targetId;
+        } catch (e) {
+            historyError =
+                e instanceof Error ? e.message : "Failed to load history";
+        } finally {
+            historyLoading = false;
+            if (historyInFlightFor === targetId) historyInFlightFor = null;
+        }
+    }
+
+    // Invalidate the history cache when the selected card changes.
+    // Closed-panel transitions just clear the snapshot —
+    // `loadHistoryIfNeeded` is a no-op until the disclosure opens.
+    $effect(() => {
+        const cardIdStr = selected?.id ?? null;
+        const cardIdNum = cardIdStr === null ? null : Number(cardIdStr);
+        if (cardIdNum !== historyLoadedFor) {
+            historyEntries = null;
+            historyLoadedFor = null;
+            void loadHistoryIfNeeded();
+        }
+    });
+
+    /**
+     * Phase 20-D format helpers — kept inline (not in $lib) because
+     * they're tied to this disclosure's column layout. Tests cover
+     * the disclosure's open/fetch behaviour, not these formatters
+     * directly (the assertion grain is row count + fetch arg).
+     */
+    function formatHistoryTimestamp(idMs: number): string {
+        // Tight YYYY-MM-DD HH:MM. Date is ms-epoch from rslib's
+        // RevlogId. toLocaleString is locale-specific and noisier;
+        // a fixed format keeps the column width stable across rows.
+        const d = new Date(idMs);
+        const pad = (n: number) => String(n).padStart(2, "0");
+        return (
+            `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+            `${pad(d.getHours())}:${pad(d.getMinutes())}`
+        );
+    }
+
+    function formatHistoryInterval(days: number): string {
+        // rslib sign convention: positive = days, negative = seconds
+        // (sub-day reviews stored as negated seconds). Strip the sign
+        // before printing so the unit suffix carries the meaning.
+        if (days === 0) return "—";
+        if (days > 0) return `${days}d`;
+        return `${-days}s`;
+    }
+
+    function formatHistoryEase(percent: number): string {
+        // 0 means the row never carried an ease (manual reschedule,
+        // historical data); print an em-dash instead of "0%" so the
+        // empty case reads as absence rather than a real zero.
+        if (percent === 0) return "—";
+        return `${percent}%`;
+    }
+
+    function formatHistoryTaken(ms: number): string {
+        if (ms <= 0) return "—";
+        if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
+        return `${ms}ms`;
+    }
+
+    // Capitalize wire labels for display in the chip column. The
+    // server ships lowercase (stable enum values); the UI presents
+    // them with first-letter capitalization for readability without
+    // forcing the server to ship two parallel string sets.
+    function formatButtonLabel(label: string): string {
+        if (label.length === 0) return label;
+        return label[0]!.toUpperCase() + label.slice(1);
+    }
 </script>
 
 <svelte:head><title>Browse — Anki</title></svelte:head>
@@ -1702,6 +1838,75 @@
                             </button>
                         </div>
                     {/each}
+                {/if}
+            </details>
+        {/if}
+
+        <!--
+            Phase 20-D: Review History panel. Closed by default — the
+            payload is potentially long and is only useful for the
+            user who explicitly wants to inspect a card's revlog. Shown
+            only in live mode (selected card has a numeric id from the
+            server); fake-data rows have string-prefixed ids so the
+            disclosure stays hidden when there's no real backing card.
+        -->
+        {#if liveCards !== null && selected && Number.isFinite(Number(selected.id))}
+            <details
+                class="history-panel"
+                bind:open={historyPanelOpen}
+                ontoggle={() => {
+                    // Lazy-load on first open. Native <details> flips
+                    // `open` BEFORE firing toggle, so by the time this
+                    // handler runs `historyPanelOpen` already reflects
+                    // the new state — same pattern as the templates
+                    // disclosure above.
+                    if (historyPanelOpen) void loadHistoryIfNeeded();
+                }}
+            >
+                <summary class="history-summary">
+                    <span>Review History</span>
+                    {#if historyEntries}
+                        <span class="history-count">· {historyEntries.length}</span>
+                    {/if}
+                </summary>
+                {#if historyError}
+                    <div class="history-error" role="alert">{historyError}</div>
+                {:else if historyLoading && historyEntries === null}
+                    <div class="history-loading">Loading…</div>
+                {:else if historyEntries === null}
+                    <!-- Panel just opened; load is pending. Render
+                         nothing rather than a flash of "No reviews"
+                         that would be wrong for a card with revlog. -->
+                    <div class="history-loading">Loading…</div>
+                {:else if historyEntries.length === 0}
+                    <div class="history-empty">No reviews yet</div>
+                {:else}
+                    <ul class="history-list">
+                        {#each historyEntries as entry (entry.id)}
+                            <li class="history-row">
+                                <span class="history-time">
+                                    {formatHistoryTimestamp(entry.id)}
+                                </span>
+                                <span
+                                    class="history-button"
+                                    data-button={entry.button_label}
+                                >
+                                    {formatButtonLabel(entry.button_label)} ({entry.button})
+                                </span>
+                                <span class="history-arrow">→</span>
+                                <span class="history-interval">
+                                    {formatHistoryInterval(entry.interval_days)}
+                                </span>
+                                <span class="history-ease">
+                                    ease {formatHistoryEase(entry.ease_percent)}
+                                </span>
+                                <span class="history-taken">
+                                    {formatHistoryTaken(entry.taken_ms)}
+                                </span>
+                                <span class="history-kind">{entry.review_kind}</span>
+                            </li>
+                        {/each}
+                    </ul>
                 {/if}
             </details>
         {/if}
@@ -2390,6 +2595,110 @@
     .template-save {
         align-self: flex-end;
         margin-top: var(--space-2);
+    }
+
+    /* Phase 20-D: Review History disclosure. Same visual rhythm as the
+       templates panel — closed-by-default, low-prominence summary so a
+       casual user isn't drawn into a long log they don't need. The row
+       layout is a single-line grid so a card with hundreds of reviews
+       stays readable without runaway height. */
+    .history-panel {
+        margin-top: var(--space-3);
+        padding: var(--space-3) 0;
+        border-top: 1px solid var(--border);
+    }
+    .history-summary {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--space-1);
+        font-size: var(--text-sm);
+        color: var(--text-muted);
+        cursor: pointer;
+        list-style: none;
+    }
+    .history-summary::-webkit-details-marker {
+        display: none;
+    }
+    .history-summary::before {
+        content: "›";
+        display: inline-block;
+        margin-right: var(--space-1);
+        transition: transform var(--duration-fast) var(--ease);
+    }
+    .history-panel[open] > .history-summary::before {
+        transform: rotate(90deg);
+    }
+    .history-count {
+        color: var(--text-subtle);
+    }
+    .history-error {
+        margin-top: var(--space-2);
+        padding: var(--space-2);
+        font-size: var(--text-xs);
+        color: var(--danger);
+        background: var(--bg-hover);
+        border-radius: var(--radius-sm);
+    }
+    .history-loading,
+    .history-empty {
+        margin-top: var(--space-2);
+        font-size: var(--text-xs);
+        color: var(--text-subtle);
+    }
+    .history-list {
+        list-style: none;
+        padding: 0;
+        margin: var(--space-2) 0 0;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        max-height: 18rem;
+        overflow-y: auto;
+    }
+    .history-row {
+        display: grid;
+        grid-template-columns: auto auto auto auto auto auto 1fr;
+        gap: var(--space-2);
+        align-items: baseline;
+        padding: 2px var(--space-2);
+        font-size: var(--text-xs);
+        color: var(--text-muted);
+        font-family: var(--font-mono, monospace);
+        border-radius: var(--radius-sm);
+    }
+    .history-row:hover {
+        background: var(--bg-hover);
+        color: var(--text);
+    }
+    .history-time {
+        color: var(--text-subtle);
+    }
+    .history-button {
+        font-weight: 500;
+    }
+    .history-button[data-button="again"] {
+        color: var(--danger, #c0392b);
+    }
+    .history-button[data-button="hard"] {
+        color: #c87f3a;
+    }
+    .history-button[data-button="good"] {
+        color: #2e7d32;
+    }
+    .history-button[data-button="easy"] {
+        color: #1565c0;
+    }
+    .history-button[data-button="manual"] {
+        color: var(--text-subtle);
+    }
+    .history-arrow,
+    .history-ease,
+    .history-taken,
+    .history-kind {
+        color: var(--text-subtle);
+    }
+    .history-kind {
+        text-align: right;
     }
 
     .editor-footer {

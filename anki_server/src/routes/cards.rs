@@ -2,6 +2,7 @@ use std::sync::LazyLock;
 
 use anki::card::{Card, CardQueueNumber};
 use anki::prelude::*;
+use anki::revlog::RevlogReviewKind;
 use anki::search::SortMode;
 use anki::template::RenderedNode;
 use anki_proto::scheduler::bury_or_suspend_cards_request::Mode as BuryOrSuspendMode;
@@ -477,6 +478,120 @@ pub async fn post_move_cards(
     }))
 }
 
+/// Phase 20-D: per-card review history viewer. Read-only — returns the
+/// card's revlog entries newest-first so the browse editor's disclosure
+/// can render a chronological list without sorting client-side. The
+/// rslib primitive (`get_revlog_entries_for_card`) returns rows in
+/// storage order; we reverse to newest-first by sorting on the
+/// millisecond-epoch `id`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CardHistoryEntry {
+    /// Millisecond epoch timestamp of the review.
+    pub id: i64,
+    /// 0=manual/cram, 1=Again, 2=Hard, 3=Good, 4=Easy.
+    pub button: u8,
+    /// Human label: "again" | "hard" | "good" | "easy" | "manual".
+    pub button_label: &'static str,
+    /// Post-review interval in days (negative = seconds for sub-day reviews).
+    pub interval_days: i32,
+    /// Pre-review interval in days (same sign convention).
+    pub last_interval_days: i32,
+    /// Ease factor in percent (e.g. 250 means 2.50). 0 if unset.
+    pub ease_percent: u32,
+    /// Time taken to answer, in milliseconds.
+    pub taken_ms: u32,
+    /// "learning" | "review" | "relearning" | "filtered" | "manual" | "rescheduled".
+    pub review_kind: &'static str,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CardHistoryResponse {
+    pub card_id: i64,
+    pub total: usize,
+    pub entries: Vec<CardHistoryEntry>,
+}
+
+/// Map the raw `button_chosen` byte (0..=4) to a stable lowercase label.
+/// 0 is the historical "manual / cram" sentinel — see RevlogEntry docs;
+/// 5+ would only appear from a corrupted row, so we floor it to "manual"
+/// rather than 500-ing the whole response.
+fn button_label(b: u8) -> &'static str {
+    match b {
+        1 => "again",
+        2 => "hard",
+        3 => "good",
+        4 => "easy",
+        _ => "manual",
+    }
+}
+
+/// Map RevlogReviewKind to a stable lowercase wire string. Mirrors the
+/// `button_label` shape so the client gets two parallel string enums it
+/// can match on without reaching for an integer.
+fn review_kind_label(rk: RevlogReviewKind) -> &'static str {
+    match rk {
+        RevlogReviewKind::Learning => "learning",
+        RevlogReviewKind::Review => "review",
+        RevlogReviewKind::Relearning => "relearning",
+        RevlogReviewKind::Filtered => "filtered",
+        RevlogReviewKind::Manual => "manual",
+        RevlogReviewKind::Rescheduled => "rescheduled",
+    }
+}
+
+/// Fetch a single card's revlog entries newest-first.
+#[utoipa::path(
+    get,
+    path = "/api/cards/{id}/history",
+    responses(
+        (status = 200, body = CardHistoryResponse),
+        (status = 400, body = crate::error::ApiError),
+        (status = 404, body = crate::error::ApiError),
+    ),
+    params(("id" = i64, Path, description = "Card id"))
+)]
+pub async fn get_card_history(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> ApiResult<Json<CardHistoryResponse>> {
+    if id <= 0 {
+        return Err(ServerError::bad_request("id must be a positive integer"));
+    }
+    let col = state.col.lock().await;
+    let cid = CardId(id);
+    if col.storage.get_card(cid)?.is_none() {
+        return Err(ServerError::not_found(format!("card {id} not found")));
+    }
+    let mut entries = col.storage.get_revlog_entries_for_card(cid)?;
+    // Newest-first by epoch-ms id. Storage returns rows in insertion
+    // order (which happens to be ascending id), so a stable
+    // descending sort gives the wire ordering the browse list expects.
+    entries.sort_by(|a, b| b.id.0.cmp(&a.id.0));
+    let total = entries.len();
+    let entries = entries
+        .into_iter()
+        .map(|e| CardHistoryEntry {
+            id: e.id.0,
+            button: e.button_chosen,
+            button_label: button_label(e.button_chosen),
+            interval_days: e.interval,
+            last_interval_days: e.last_interval,
+            // rslib stores ease as 10× the percent (2500 = 250%) — see
+            // the RevlogEntry doc comment in rslib/src/revlog/mod.rs.
+            // Divide by 10 here so the wire value is the human-readable
+            // percent the UI renders directly.
+            ease_percent: e.ease_factor / 10,
+            taken_ms: e.taken_millis,
+            review_kind: review_kind_label(e.review_kind),
+        })
+        .collect();
+    Ok(Json(CardHistoryResponse {
+        card_id: cid.0,
+        total,
+        entries,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -627,5 +742,47 @@ mod tests {
         let (ids, deck_id) = validate_move(&[42], 7).unwrap();
         assert_eq!(ids, vec![42]);
         assert_eq!(deck_id, 7);
+    }
+
+    // Phase 20-D: per-card history label maps. Pure-function coverage —
+    // the handler itself is a thin orchestration over storage so its
+    // behaviour falls out of the rslib path; integration coverage
+    // (which would need a Collection fixture) is deliberately deferred.
+    #[test]
+    fn button_label_maps_each_documented_value() {
+        assert_eq!(button_label(1), "again");
+        assert_eq!(button_label(2), "hard");
+        assert_eq!(button_label(3), "good");
+        assert_eq!(button_label(4), "easy");
+        // 0 is the historical "manual / cram" sentinel — see RevlogEntry
+        // doc comment in rslib/src/revlog/mod.rs ("0 represents manual
+        // rescheduling").
+        assert_eq!(button_label(0), "manual");
+    }
+
+    #[test]
+    fn button_label_floors_unknown_values_to_manual() {
+        // Defensive: a corrupted row with an out-of-range byte must not
+        // 500 the response. The label stays a stable string so the UI's
+        // match never blows up on a user with a damaged collection.
+        assert_eq!(button_label(5), "manual");
+        assert_eq!(button_label(99), "manual");
+        assert_eq!(button_label(u8::MAX), "manual");
+    }
+
+    #[test]
+    fn review_kind_label_maps_each_variant() {
+        assert_eq!(review_kind_label(RevlogReviewKind::Learning), "learning");
+        assert_eq!(review_kind_label(RevlogReviewKind::Review), "review");
+        assert_eq!(
+            review_kind_label(RevlogReviewKind::Relearning),
+            "relearning"
+        );
+        assert_eq!(review_kind_label(RevlogReviewKind::Filtered), "filtered");
+        assert_eq!(review_kind_label(RevlogReviewKind::Manual), "manual");
+        assert_eq!(
+            review_kind_label(RevlogReviewKind::Rescheduled),
+            "rescheduled"
+        );
     }
 }
