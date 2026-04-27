@@ -3,6 +3,11 @@
 //! `POST /media` (Phase 15-C) — accept a multipart `file` field and
 //! persist it under `.media/`, dedup'ing the filename via " (N)" suffix
 //! mirroring desktop Anki.
+//! Phase 16-C extends the allow-list to audio (MP3 / M4A / OGG / WAV /
+//! WEBM) with a separate 50 MiB cap so language-learning collections
+//! can attach pronunciations without routing around the API. Image cap
+//! stays at 10 MiB — a typo'd image drag-drop should still surface a
+//! clean 400 rather than gobble up disk.
 //!
 //! Security: the filename must be a single decoded path segment. We reject
 //! anything containing `/`, `\`, `\0`, leading-dot, or the literal `..`,
@@ -88,24 +93,52 @@ pub async fn get_media(
         .unwrap_or_else(|_| internal_error())
 }
 
-/// 10 MiB cap. Big enough for screenshots and high-res cloze occlusion
-/// images; small enough that a single typo'd drag-drop can't fill the
-/// disk on a localhost-single-user collection. Adjust with care — Anki
-/// desktop has no built-in cap, so callers that want to upload audio
-/// or video can route around the API for now.
-const MAX_UPLOAD_BYTES: u64 = 10 * 1024 * 1024;
+/// 10 MiB cap for image uploads. Big enough for screenshots and high-res
+/// cloze occlusion images; small enough that a single typo'd drag-drop
+/// can't fill the disk on a localhost-single-user collection.
+const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
 
-/// MIME allow-list. Phase 15-C scope is image-only — drag-drop into the
-/// /notes/new editor is the primary use case. Audio / video would need
-/// additional UI flows (and waveform / poster frame handling) so they
-/// stay out of v1. Comparison is exact: the client must send a clean
-/// `image/png` etc., not `image/png; charset=binary`.
-const ALLOWED_IMAGE_MIMES: &[&str] = &[
-    "image/png",
-    "image/jpeg",
-    "image/webp",
-    "image/gif",
+/// 50 MiB cap for audio uploads. Pronunciations and short language-
+/// learning clips fit comfortably; full lectures don't. Anki desktop has
+/// no built-in cap, but a localhost service still benefits from one to
+/// keep accidental attachments bounded.
+const MAX_AUDIO_BYTES: u64 = 50 * 1024 * 1024;
+
+/// Image MIME allow-list. Comparison is exact: the client must send a
+/// clean `image/png` etc., not `image/png; charset=binary`.
+const ALLOWED_IMAGE_MIMES: &[&str] = &["image/png", "image/jpeg", "image/webp", "image/gif"];
+
+/// Audio MIME allow-list (Phase 16-C). Mirrors what desktop Anki accepts
+/// for `[sound:...]` references — MP3, M4A, OGG, WAV, WEBM. Each entry
+/// is the canonical IANA type; some browsers send `audio/x-wav` for
+/// `.wav` so we accept both forms via explicit listing.
+const ALLOWED_AUDIO_MIMES: &[&str] = &[
+    "audio/mpeg",
+    "audio/mp4",
+    "audio/ogg",
+    "audio/wav",
+    "audio/x-wav",
+    "audio/webm",
 ];
+
+/// Tag returned by [`validate_upload_mime`] so the caller can pick the
+/// right size cap and (later) the right rendering path. The enum is
+/// intentionally tiny — adding video would mean a third arm plus a
+/// matching cap constant, not a wider boolean.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MediaKind {
+    Image,
+    Audio,
+}
+
+impl MediaKind {
+    fn max_bytes(self) -> u64 {
+        match self {
+            MediaKind::Image => MAX_IMAGE_BYTES,
+            MediaKind::Audio => MAX_AUDIO_BYTES,
+        }
+    }
+}
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct MediaUploadResponse {
@@ -148,13 +181,17 @@ fn validate_upload_filename(name: &str) -> Result<&str, &'static str> {
 /// MIME allow-list check. Trim + lowercase + strict equality so a
 /// `image/png; charset=binary` that gets through some buggy client
 /// surfaces as a clear 400 rather than silently being accepted.
-fn validate_upload_mime(mime: &str) -> Result<(), &'static str> {
+/// Returns the [`MediaKind`] tag so the caller can pick the matching
+/// size cap (10 MiB images vs 50 MiB audio) without re-doing the match.
+fn validate_upload_mime(mime: &str) -> Result<MediaKind, &'static str> {
     let lower = mime.trim().to_ascii_lowercase();
     if ALLOWED_IMAGE_MIMES.iter().any(|m| *m == lower) {
-        Ok(())
-    } else {
-        Err("only PNG / JPEG / WEBP / GIF images are accepted")
+        return Ok(MediaKind::Image);
     }
+    if ALLOWED_AUDIO_MIMES.iter().any(|m| *m == lower) {
+        return Ok(MediaKind::Audio);
+    }
+    Err("only PNG / JPEG / WEBP / GIF / MP3 / M4A / OGG / WAV / WEBM uploads are accepted")
 }
 
 /// Resolve a non-colliding target path inside `media_dir`, mirroring
@@ -234,22 +271,23 @@ pub async fn post_upload(
         let validated_name = validate_upload_filename(&raw_name)
             .map(|s| s.to_owned())
             .map_err(ServerError::bad_request)?;
-        validate_upload_mime(&raw_mime).map_err(ServerError::bad_request)?;
+        let kind = validate_upload_mime(&raw_mime).map_err(ServerError::bad_request)?;
         let bytes = field
             .bytes()
             .await
             .map_err(|e| ServerError::bad_request(format!("multipart read failed: {e}")))?;
-        if bytes.len() as u64 > MAX_UPLOAD_BYTES {
+        let cap = kind.max_bytes();
+        if bytes.len() as u64 > cap {
             return Err(ServerError::bad_request(format!(
                 "file too large ({} bytes); max is {} bytes",
                 bytes.len(),
-                MAX_UPLOAD_BYTES
+                cap
             )));
         }
         let target = unique_target_path(state.media_dir.as_path(), &validated_name);
-        tokio::fs::write(&target, &bytes)
-            .await
-            .map_err(|e| ServerError::from(anyhow::anyhow!("write {} failed: {e}", target.display())))?;
+        tokio::fs::write(&target, &bytes).await.map_err(|e| {
+            ServerError::from(anyhow::anyhow!("write {} failed: {e}", target.display()))
+        })?;
         let stored = target
             .file_name()
             .and_then(|n| n.to_str())
@@ -407,37 +445,89 @@ mod tests {
     #[test]
     fn validate_upload_mime_accepts_image_allow_list() {
         for ok in ["image/png", "image/jpeg", "image/webp", "image/gif"] {
-            assert!(validate_upload_mime(ok).is_ok(), "mime={ok}");
+            assert_eq!(
+                validate_upload_mime(ok).unwrap(),
+                MediaKind::Image,
+                "mime={ok}"
+            );
             // Case-insensitive on the wire — some clients UPPERCASE.
-            assert!(validate_upload_mime(&ok.to_ascii_uppercase()).is_ok());
+            assert_eq!(
+                validate_upload_mime(&ok.to_ascii_uppercase()).unwrap(),
+                MediaKind::Image
+            );
         }
         // Trim whitespace before matching.
-        assert!(validate_upload_mime("  image/png  ").is_ok());
+        assert_eq!(
+            validate_upload_mime("  image/png  ").unwrap(),
+            MediaKind::Image
+        );
     }
 
     #[test]
-    fn validate_upload_mime_rejects_non_image_and_charset_suffixed() {
-        // Non-image types — block at the boundary.
+    fn validate_upload_mime_accepts_audio_allow_list() {
+        // Phase 16-C: audio/mpeg (MP3), audio/mp4 (M4A), audio/ogg, both
+        // wav variants, and audio/webm. Same trim+lowercase rules as the
+        // image branch — strict equality after normalization.
+        for ok in [
+            "audio/mpeg",
+            "audio/mp4",
+            "audio/ogg",
+            "audio/wav",
+            "audio/x-wav",
+            "audio/webm",
+        ] {
+            assert_eq!(
+                validate_upload_mime(ok).unwrap(),
+                MediaKind::Audio,
+                "mime={ok}"
+            );
+            assert_eq!(
+                validate_upload_mime(&ok.to_ascii_uppercase()).unwrap(),
+                MediaKind::Audio
+            );
+        }
+        assert_eq!(
+            validate_upload_mime("  audio/mpeg  ").unwrap(),
+            MediaKind::Audio
+        );
+    }
+
+    #[test]
+    fn validate_upload_mime_rejects_unsupported_and_charset_suffixed() {
+        // Non-image, non-audio types — block at the boundary.
         for bad in [
             "application/pdf",
-            "audio/mpeg",
             "video/mp4",
             "text/html",
             "application/octet-stream",
         ] {
             assert_eq!(
                 validate_upload_mime(bad).unwrap_err(),
-                "only PNG / JPEG / WEBP / GIF images are accepted",
+                "only PNG / JPEG / WEBP / GIF / MP3 / M4A / OGG / WAV / WEBM uploads are accepted",
                 "bad={bad}"
             );
         }
         // Strict equality means `image/png; charset=binary` fails — that
         // shape implies a buggy client and we surface it as a clean 400
         // rather than silently accepting (and possibly mis-typing the
-        // GET response Content-Type later).
+        // GET response Content-Type later). Same rule applies to audio.
         assert!(validate_upload_mime("image/png; charset=binary").is_err());
+        assert!(validate_upload_mime("audio/mpeg; rate=44100").is_err());
         // Empty mime fails.
         assert!(validate_upload_mime("").is_err());
+    }
+
+    #[test]
+    fn media_kind_caps_are_distinct_and_audio_is_larger() {
+        // Pin the relationship the post_upload handler depends on:
+        // image cap is 10 MiB, audio cap is 50 MiB, and audio > image.
+        // A regression that accidentally collapses both back to a single
+        // MAX_UPLOAD_BYTES constant would either shrink audio down to
+        // image size (silent typo upload risk) or balloon image up to
+        // audio size (disk DoS risk on a localhost-single-user collection).
+        assert_eq!(MediaKind::Image.max_bytes(), 10 * 1024 * 1024);
+        assert_eq!(MediaKind::Audio.max_bytes(), 50 * 1024 * 1024);
+        assert!(MediaKind::Audio.max_bytes() > MediaKind::Image.max_bytes());
     }
 
     #[test]

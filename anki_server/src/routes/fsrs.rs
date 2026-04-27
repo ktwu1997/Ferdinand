@@ -144,9 +144,7 @@ pub struct FsrsHealthCheckToggle {
     path = "/api/fsrs/health_check",
     responses((status = 200, body = FsrsHealthCheck))
 )]
-pub async fn get_health_check(
-    State(state): State<AppState>,
-) -> ApiResult<Json<FsrsHealthCheck>> {
+pub async fn get_health_check(State(state): State<AppState>) -> ApiResult<Json<FsrsHealthCheck>> {
     let col = state.col.lock().await;
     Ok(Json(FsrsHealthCheck {
         enabled: col.get_config_bool(BoolKey::FsrsHealthCheck),
@@ -419,9 +417,7 @@ mod tests {
     fn validate_optimize_query_accepts_positive_preset_ids() {
         // Default preset id (1) and an epoch-ms id (real new presets
         // get epoch-ms ids) both pass the rule set.
-        let q1 = FsrsOptimizeQuery {
-            preset_id: Some(1),
-        };
+        let q1 = FsrsOptimizeQuery { preset_id: Some(1) };
         assert!(validate_optimize_query(&q1).is_ok());
         let q2 = FsrsOptimizeQuery {
             preset_id: Some(1_777_223_641_337),
@@ -439,9 +435,7 @@ mod tests {
         // update_deck_configs.target_deck_id; reusing it for preset_id
         // would conflate two different meanings, so reject at the
         // boundary. Same rule as Phase 11-A `validate_preset_id`.
-        let q = FsrsOptimizeQuery {
-            preset_id: Some(0),
-        };
+        let q = FsrsOptimizeQuery { preset_id: Some(0) };
         assert_eq!(
             validate_optimize_query(&q).unwrap_err(),
             "preset_id must be a positive integer"

@@ -62,11 +62,14 @@
         const file = e.dataTransfer?.files?.[0];
         if (!file) return;
         if (uploadingFieldIdx !== null) return;
-        // Quick client-side guard so a wrong-file drop fails fast
-        // without a network round-trip. Server still has the
-        // authoritative allow-list.
-        if (!file.type.startsWith("image/")) {
-            mediaError = "Only image files (PNG / JPEG / WEBP / GIF) can be dropped";
+        // Phase 16-C: image OR audio. Server's authoritative allow-list
+        // covers MP3/M4A/OGG/WAV/WEBM; the prefix check here is just a
+        // fast-fail before the network round-trip.
+        const isImage = file.type.startsWith("image/");
+        const isAudio = file.type.startsWith("audio/");
+        if (!isImage && !isAudio) {
+            mediaError =
+                "Only image (PNG / JPEG / WEBP / GIF) or audio (MP3 / M4A / OGG / WAV / WEBM) files can be dropped";
             return;
         }
         uploadingFieldIdx = idx;
@@ -75,13 +78,18 @@
             const res = await postMedia(file);
             // Append at end of the field. Newline before so the token
             // sits on its own line for readable plain-text editing —
-            // the rendered card flattens whitespace anyway.
+            // the rendered card flattens whitespace anyway. Audio uses
+            // Anki's [sound:...] syntax (handled by the shadow-DOM
+            // player wired up in Phase 7-C); images use a plain <img>.
             const current = fieldValues[idx] ?? "";
             const sep = current.length > 0 && !current.endsWith("\n") ? "\n" : "";
-            fieldValues[idx] = `${current}${sep}<img src="/media/${res.filename}">`;
+            const token = isAudio
+                ? `[sound:${res.filename}]`
+                : `<img src="/media/${res.filename}">`;
+            fieldValues[idx] = `${current}${sep}${token}`;
         } catch (err) {
             mediaError =
-                err instanceof Error ? err.message : "Failed to upload image";
+                err instanceof Error ? err.message : "Failed to upload media";
         } finally {
             uploadingFieldIdx = null;
         }
@@ -278,7 +286,7 @@
                             placeholder={i === 0 ? "森林" : ""}
                         ></textarea>
                         {#if uploadingFieldIdx === i}
-                            <span class="hint">Uploading image…</span>
+                            <span class="hint">Uploading media…</span>
                         {/if}
                     </div>
                 {/each}

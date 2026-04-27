@@ -312,7 +312,9 @@ pub async fn post_create(
         .into_iter()
         .filter_map(|cwe| cwe.config)
         .find(|c| c.name == name)
-        .ok_or_else(|| ServerError::from(anyhow!("created preset {name} disappeared post-write")))?;
+        .ok_or_else(|| {
+            ServerError::from(anyhow!("created preset {name} disappeared post-write"))
+        })?;
 
     Ok(Json(DeckConfigListItem {
         id: created.id,
@@ -370,9 +372,15 @@ pub async fn delete_by_id(
     // GET/PATCH handlers above.
     let placeholder = col
         .get_deck_config(DEFAULT_PRESET_ID, false)?
-        .ok_or_else(|| ServerError::from(anyhow!("Default preset id=1 missing — collection is corrupt")))?;
+        .ok_or_else(|| {
+            ServerError::from(anyhow!(
+                "Default preset id=1 missing — collection is corrupt"
+            ))
+        })?;
     if col.get_deck_config(dcid, false)?.is_none() {
-        return Err(ServerError::not_found(format!("deck_config {id} not found")));
+        return Err(ServerError::not_found(format!(
+            "deck_config {id} not found"
+        )));
     }
 
     let fsrs = col.get_config_bool(BoolKey::Fsrs);
@@ -402,7 +410,9 @@ pub async fn delete_by_id(
     };
     col.update_deck_configs(req)?;
 
-    Ok(Json(DeckConfigDeleteResponse { removed_config_id: id }))
+    Ok(Json(DeckConfigDeleteResponse {
+        removed_config_id: id,
+    }))
 }
 
 /// Range-validate a delete-by-id request. Extracted so the rules

@@ -196,17 +196,15 @@ pub async fn patch_deck_preset(
     let dcid = DeckConfigId(preset_id);
     // fallback=false per Phase 9-T bug_caught: with_fallback=true would
     // route a missing preset_id to DeckConfigId(1) and silently succeed.
-    let preset = col.get_deck_config(dcid, false)?.ok_or_else(|| {
-        ServerError::not_found(format!("preset {preset_id} not found"))
-    })?;
+    let preset = col
+        .get_deck_config(dcid, false)?
+        .ok_or_else(|| ServerError::not_found(format!("preset {preset_id} not found")))?;
     match &mut deck.kind {
         DeckKind::Normal(normal) => {
             normal.config_id = preset_id;
         }
         DeckKind::Filtered(_) => {
-            return Err(ServerError::bad_request(
-                "filtered decks have no preset",
-            ));
+            return Err(ServerError::bad_request("filtered decks have no preset"));
         }
     }
     col.update_deck(&mut deck)?;
