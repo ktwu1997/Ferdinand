@@ -39,7 +39,7 @@
 | ---------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------ | ------ |
 | 17 ✅      | tag_list_json FFI / new_card_order toggle (+ 12-B clippy cleanup) / card flag chips / forecast bar — shipped 2026-04-27                | low    | ~52%   |
 | 18 ✅      | Saved searches CRUD / Browse editor all-fields generic / Filtered deck create / Hygiene (`--all-targets` CI gate) — shipped 2026-04-27 | medium | ~58%   |
-| 19         | Notetype add field / remove field / template HTML edit / card-level move-to-deck                                                       | high   | ~64%   |
+| 19         | 19-D card-level move-to-deck (LOW) → 19-A template HTML edit (MED) → 19-B notetype add field (MED-HIGH, additive) → 19-C notetype remove field (HIGH, destructive). Risk-gradient ordering; FFI v8 surface for notetype ops deferred to M2 Phase 21 (no end-to-end validation path on Linux without Xcode scaffold). | high   | ~64%   |
 | 20         | Card-level tag override / Burn-recovery flow / Per-card review history viewer / Bulk operations (multi-select in browse)               | medium | ~70%   |
 
 🟢 **Milestone exit**: web is `kt`'s daily driver, desktop Anki retired.
