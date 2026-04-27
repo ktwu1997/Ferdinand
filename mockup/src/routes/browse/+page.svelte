@@ -13,6 +13,7 @@
         patchDeckName,
         patchDeckPreset,
         patchNote,
+        postCardFlag,
         postCardSuspend,
         type ApiCardSummary,
         type ApiDeckConfigListItem,
@@ -62,6 +63,10 @@
     let isMutatingDeck = $state(false);
     let isMutatingSuspend = $state(false);
     let isMutatingDelete = $state(false);
+    // Phase 17-A: per-card flag-chip mutation. The 7-color chip strip
+    // in the editor footer disables itself while a flag PATCH is in
+    // flight so a rapid double-click can't race the server response.
+    let isMutatingFlag = $state(false);
     let deckInput = $state<HTMLInputElement | null>(null);
 
     // Phase 9-S: tree-sidebar inline rename. Per-row edit state (only one row
@@ -174,6 +179,10 @@
         // mode so the preset-change handler can refuse to mutate against
         // synthetic ids.
         deckId: number | null;
+        // Phase 17-A: user-visible flag colour (0 = none, 1..=7 the
+        // seven supported colours). Fake-data rows default to 0 so the
+        // chip strip is unhighlighted when previewing the static UI.
+        flag: number;
     };
 
     let rows: Row[] = $derived(
@@ -190,6 +199,7 @@
                   deckName: c.deck_name,
                   deckEmoji: "📚",
                   deckId: c.deck_id,
+                  flag: c.flag,
               }))
             : fakeCards.map((c) => ({
                   id: c.id,
@@ -203,6 +213,7 @@
                   deckName: fakeDecks.find((d) => d.id === c.deckId)?.name ?? "",
                   deckEmoji: fakeDecks.find((d) => d.id === c.deckId)?.emoji ?? "📚",
                   deckId: null,
+                  flag: 0,
               })),
     );
 
@@ -796,6 +807,39 @@
             isMutatingSuspend = false;
         }
     }
+
+    /**
+     * Phase 17-A: set the selected card's flag colour. Click the active
+     * chip again to clear (server rounds to flag=0). Optimistic UI is
+     * NOT used here — the chip strip is small enough that the round-
+     * trip latency is acceptable, and we'd rather be honest about the
+     * persisted state than flicker on PATCH failure.
+     */
+    async function setSelectedCardFlag(flag: number) {
+        if (!selected || !liveCards) return;
+        const targetCard = liveCards.find((c) => String(c.id) === selected.id);
+        if (!targetCard) {
+            errorBanner = "Flag unavailable on fake data";
+            return;
+        }
+        // Clicking the active chip clears the flag (matches the desktop
+        // browse pane's right-click contextmenu behaviour where "no flag"
+        // is itself a menu entry).
+        const next = targetCard.flag === flag ? 0 : flag;
+        if (next === targetCard.flag) return;
+        isMutatingFlag = true;
+        errorBanner = null;
+        try {
+            const res = await postCardFlag(targetCard.id, next);
+            liveCards = liveCards.map((c) =>
+                c.id === res.id ? { ...c, flag: res.flag } : c,
+            );
+        } catch (e) {
+            errorBanner = e instanceof Error ? e.message : "Flag update failed";
+        } finally {
+            isMutatingFlag = false;
+        }
+    }
 </script>
 
 <svelte:head><title>Browse — Anki</title></svelte:head>
@@ -1084,6 +1128,31 @@
                 <span class="meta-key">Due</span>
                 <span class="meta-val">{selected?.due ?? "—"}</span>
             </div>
+        </div>
+
+        <div class="flag-strip" role="radiogroup" aria-label="Card flag">
+            {#each [
+                { value: 1, label: "Red", color: "#dc3545" },
+                { value: 2, label: "Orange", color: "#fd7e14" },
+                { value: 3, label: "Green", color: "#28a745" },
+                { value: 4, label: "Blue", color: "#0d6efd" },
+                { value: 5, label: "Pink", color: "#e83e8c" },
+                { value: 6, label: "Turquoise", color: "#20c997" },
+                { value: 7, label: "Purple", color: "#6f42c1" },
+            ] as chip (chip.value)}
+                <button
+                    type="button"
+                    role="radio"
+                    aria-checked={selected?.flag === chip.value}
+                    aria-label={chip.label}
+                    title={selected?.flag === chip.value ? `${chip.label} (click to clear)` : chip.label}
+                    class="flag-chip"
+                    class:active={selected?.flag === chip.value}
+                    style="--flag-color: {chip.color}"
+                    disabled={isMutatingFlag}
+                    onclick={() => setSelectedCardFlag(chip.value)}
+                ></button>
+            {/each}
         </div>
 
         <div class="editor-footer">
@@ -1646,6 +1715,40 @@
     .add-tag:hover {
         color: var(--accent);
         border-color: var(--accent);
+    }
+
+    .flag-strip {
+        display: flex;
+        gap: 0.4rem;
+        padding-top: var(--space-3);
+        border-top: 1px solid var(--border);
+        align-items: center;
+    }
+    .flag-chip {
+        width: 1.2rem;
+        height: 1.2rem;
+        border-radius: 50%;
+        border: 1px solid var(--border);
+        background: transparent;
+        cursor: pointer;
+        padding: 0;
+        transition:
+            background var(--duration-fast) var(--ease),
+            transform var(--duration-fast) var(--ease),
+            border-color var(--duration-fast) var(--ease);
+    }
+    .flag-chip:hover:not(:disabled):not(.active) {
+        background: color-mix(in oklch, var(--flag-color) 25%, transparent);
+        border-color: var(--flag-color);
+    }
+    .flag-chip.active {
+        background: var(--flag-color);
+        border-color: var(--flag-color);
+        transform: scale(1.1);
+    }
+    .flag-chip:disabled {
+        opacity: 0.55;
+        cursor: progress;
     }
 
     .editor-footer {

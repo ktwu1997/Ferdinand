@@ -43,6 +43,12 @@ export interface ApiCardSummary {
     tags: string[];
     state: "new" | "learning" | "review" | "suspended";
     ease_factor: number;
+    /**
+     * Phase 17-A: user-visible flag colour. 0 = no flag; 1..=7 are the
+     * seven supported colours (red/orange/green/blue/pink/turquoise/
+     * purple — same colour ordering as the desktop browse pane).
+     */
+    flag: number;
     notetype_id: number;
     notetype_name: string;
     notetype_css: string;
@@ -685,6 +691,24 @@ export async function postCardSuspend(
     return postJson<ApiSuspendResponse>(`/api/cards/${id}/suspend`, {
         suspended,
     });
+}
+
+/**
+ * Phase 17-A: per-card flag colour. 0 clears, 1..=7 sets one of the
+ * seven supported colours. Server validates the range (400 outside
+ * 0..=7) and re-reads the card post-write so the response echoes the
+ * persisted value.
+ */
+export interface ApiFlagResponse {
+    id: number;
+    flag: number;
+}
+
+export async function postCardFlag(
+    id: number,
+    flag: number,
+): Promise<ApiFlagResponse> {
+    return postJson<ApiFlagResponse>(`/api/cards/${id}/flag`, { flag });
 }
 
 /** Phase 11-A: per-deck preset assignment. */

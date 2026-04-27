@@ -30,6 +30,7 @@ vi.mock("$lib/api", async (importOriginal) => {
         patchDeckPreset: vi.fn(),
         patchNote: vi.fn(),
         postCardSuspend: vi.fn(),
+        postCardFlag: vi.fn(),
         deleteNote: vi.fn(),
         deleteDeck: vi.fn(),
     };
@@ -46,6 +47,7 @@ import {
     patchDeckName,
     patchDeckPreset,
     patchNote,
+    postCardFlag,
     postCardSuspend,
 } from "$lib/api";
 
@@ -72,7 +74,12 @@ function deck(
     };
 }
 
-function card(id: number, front: string, back: string): ApiCardSummary {
+function card(
+    id: number,
+    front: string,
+    back: string,
+    overrides: Partial<ApiCardSummary> = {},
+): ApiCardSummary {
     return {
         id,
         note_id: id,
@@ -84,9 +91,14 @@ function card(id: number, front: string, back: string): ApiCardSummary {
         tags: ["vocab"],
         state: "new",
         ease_factor: 2500,
+        // Phase 17-A: every fixture defaults to flag=0 (no flag) so the
+        // editor footer's chip strip starts unhighlighted. Tests that
+        // need a non-default flag opt in via `overrides`.
+        flag: 0,
         notetype_id: 1,
         notetype_name: "Basic",
         notetype_css: "",
+        ...overrides,
     };
 }
 
@@ -474,6 +486,115 @@ describe("BrowsePage contract", () => {
                 expect(suspendBtn(container).textContent?.trim()).toBe(
                     "Suspend",
                 );
+            } finally {
+                unmount(instance);
+            }
+        });
+    });
+
+    // Phase 17-A contract tests for the per-card flag chip strip.
+    // Same vi.mocked + settle helpers as 9-P; the chip strip is a 7-button
+    // radiogroup so we drive it via DOM click + aria-checked / class assertions.
+    describe("Phase 17-A flag chips", () => {
+        function flagChips(root: HTMLElement): HTMLButtonElement[] {
+            return Array.from(
+                root.querySelectorAll<HTMLButtonElement>(".flag-chip"),
+            );
+        }
+
+        test("snapshot flag=4 (blue) hydrates with that chip active", async () => {
+            // Override the default fixture so card 101 lands with flag=4.
+            // Order in liveThree means card 101 is the first row, which is
+            // also the default selectedIdx=0, so the editor footer renders
+            // its chip strip against this card.
+            const flaggedCards: ApiCardListResponse = {
+                total: 3,
+                cards: [
+                    card(101, "<p>hola</p>", "<p>hello</p>", { flag: 4 }),
+                    card(102, "<p>gato</p>", "<p>cat</p>"),
+                    card(103, "<p>perro</p>", "<p>dog</p>"),
+                ],
+            };
+            vi.mocked(fetchCards).mockResolvedValueOnce(flaggedCards);
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const chips = flagChips(container);
+                expect(chips.length).toBe(7);
+                // Chip 4 (blue, the 4th in the strip — index 3) must be
+                // active; all others inactive.
+                expect(chips[3]?.classList.contains("active")).toBe(true);
+                expect(chips[3]?.getAttribute("aria-checked")).toBe("true");
+                for (const i of [0, 1, 2, 4, 5, 6]) {
+                    expect(chips[i]?.classList.contains("active")).toBe(false);
+                    expect(chips[i]?.getAttribute("aria-checked")).toBe("false");
+                }
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("clicking a chip fires postCardFlag with that value and echoes the server flag", async () => {
+            vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+            // Server echoes back flag=2 (orange).
+            vi.mocked(postCardFlag).mockResolvedValueOnce({ id: 101, flag: 2 });
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const chips = flagChips(container);
+                // Chip 2 = orange (index 1).
+                chips[1]?.click();
+                await settle();
+
+                expect(vi.mocked(postCardFlag)).toHaveBeenCalledTimes(1);
+                expect(vi.mocked(postCardFlag)).toHaveBeenCalledWith(101, 2);
+
+                const after = flagChips(container);
+                expect(after[1]?.classList.contains("active")).toBe(true);
+                expect(container.querySelector(".error-banner")).toBeNull();
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("clicking the active chip clears the flag (sends 0); PATCH error surfaces banner", async () => {
+            const preFlagged: ApiCardListResponse = {
+                total: 3,
+                cards: [
+                    card(101, "<p>hola</p>", "<p>hello</p>", { flag: 3 }),
+                    card(102, "<p>gato</p>", "<p>cat</p>"),
+                    card(103, "<p>perro</p>", "<p>dog</p>"),
+                ],
+            };
+            vi.mocked(fetchCards).mockResolvedValueOnce(preFlagged);
+            vi.mocked(postCardFlag).mockRejectedValueOnce(
+                new Error("400 flag must be between 0 and 7"),
+            );
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const chips = flagChips(container);
+                // Click the active green chip (index 2 = flag value 3) —
+                // expected wire request is flag=0 (clear).
+                chips[2]?.click();
+                await settle();
+
+                expect(vi.mocked(postCardFlag)).toHaveBeenCalledTimes(1);
+                expect(vi.mocked(postCardFlag)).toHaveBeenCalledWith(101, 0);
+                // PATCH rejected → banner surfaces, persisted flag stays
+                // at 3 (no optimistic UI in 17-A on purpose — the chip
+                // strip would flicker on rapid double-clicks).
+                expect(
+                    container.querySelector(".error-banner")?.textContent,
+                ).toContain("between 0 and 7");
+                const after = flagChips(container);
+                expect(after[2]?.classList.contains("active")).toBe(true);
             } finally {
                 unmount(instance);
             }
