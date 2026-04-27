@@ -9,6 +9,7 @@
         fetchDecks,
         fetchDeckConfigs,
         fetchNote,
+        fetchNotetypes,
         fetchTags,
         patchDeckName,
         patchDeckPreset,
@@ -18,6 +19,7 @@
         type ApiCardSummary,
         type ApiDeckConfigListItem,
         type ApiDeckSummary,
+        type ApiNotetypeSummary,
     } from "$lib/api";
     import BrowseRow from "$lib/browse/BrowseRow.svelte";
     import BrowseRowSkeleton from "$lib/browse/BrowseRowSkeleton.svelte";
@@ -102,14 +104,24 @@
     // existing HTML markup (e.g. `<b>` tags, `<img>` references) round-
     // trips through the edit cycle without being stripped to plain
     // text. Closes the v1 plain-text-only limitation from 14-A.
-    let frontDraft = $state("");
-    let backDraft = $state("");
+    // Phase 18-A: drafts are now per-field arrays so notetypes with
+    // more than two fields (Cloze: "Text" + "Back Extra"; Image
+    // Occlusion: "Image" + "Header" + "Back Extra" + ...) can be
+    // edited fully. Field labels come from fetchNotetypes (looked up
+    // by note's notetype_id); field count and order come from
+    // res.fields directly (server-canonical). Fake-data and pre-load
+    // fall back to ["Front", "Back"] labels.
+    let fieldDrafts = $state<string[]>(["", ""]);
     // Raw seed values — what the editor most recently fetched/persisted.
     // Used to compute "is the draft dirty?" so commitFields can no-op
     // on accidental blur and so the rollback branch knows what to
     // restore.
-    let frontSeed = $state("");
-    let backSeed = $state("");
+    let fieldSeeds = $state<string[]>(["", ""]);
+    // Current note's notetype id — set by fetchNote response, used to
+    // look up field labels in liveNotetypes. Null in fake-data mode
+    // and during the seed-from-snippet pre-load window.
+    let currentNotetypeId = $state<number | null>(null);
+    let liveNotetypes = $state<ApiNotetypeSummary[] | null>(null);
     let isAddingTag = $state(false);
     let newTagDraft = $state("");
     let isMutatingNote = $state(false);
@@ -154,6 +166,17 @@
         fetchDeckConfigs().then(
             (res) => {
                 presets = res.configs;
+            },
+            () => undefined,
+        );
+        // Phase 18-A: notetype list drives the editor's per-field
+        // labels. Silent fallback so a fetchNotetypes failure leaves
+        // the editor with generic "Field 1"/"Field 2" labels rather
+        // than blocking the page; live edits still go through because
+        // the server is the source of truth on field count.
+        fetchNotetypes().then(
+            (res) => {
+                liveNotetypes = res.notetypes;
             },
             () => undefined,
         );
@@ -248,19 +271,28 @@
         );
         if (!targetCard) {
             // Fake-data mode (or selection cleared) — seed from snippets
-            // so the textarea still has something to edit.
-            frontDraft = selected?.frontSnippet ?? "";
-            backDraft = selected?.backSnippet ?? "";
-            frontSeed = frontDraft;
-            backSeed = backDraft;
+            // into a 2-field shape so the Front/Back textareas still
+            // have something to edit. Notetype id stays null so the
+            // label-lookup falls back to ["Front","Back"].
+            const seeded = [
+                selected?.frontSnippet ?? "",
+                selected?.backSnippet ?? "",
+            ];
+            fieldDrafts = seeded;
+            fieldSeeds = [...seeded];
+            currentNotetypeId = null;
             return;
         }
-        // Optimistic snippet seed so the editor isn't blank during the
-        // fetchNote round-trip. Replaced once raw fields land.
-        frontDraft = selected?.frontSnippet ?? "";
-        backDraft = selected?.backSnippet ?? "";
-        frontSeed = frontDraft;
-        backSeed = backDraft;
+        // Optimistic 2-field snippet seed so the editor isn't blank
+        // during the fetchNote round-trip. Replaced once raw fields
+        // (and the actual field count) land.
+        const optimisticSeed = [
+            selected?.frontSnippet ?? "",
+            selected?.backSnippet ?? "",
+        ];
+        fieldDrafts = optimisticSeed;
+        fieldSeeds = [...optimisticSeed];
+        currentNotetypeId = null;
         const requestedNoteId = targetCard.note_id;
         fetchNote(requestedNoteId).then(
             (res) => {
@@ -275,14 +307,13 @@
                 if (!stillSelected || stillSelected.note_id !== requestedNoteId) {
                     return;
                 }
-                // Field 0 → front, field 1 → back. Notetypes with more
-                // fields (e.g. Cloze "Text" + "Back Extra") are still
-                // edited via the same two textareas for now; a richer
-                // editor lives in a later phase.
-                frontDraft = res.fields[0] ?? "";
-                backDraft = res.fields[1] ?? "";
-                frontSeed = frontDraft;
-                backSeed = backDraft;
+                // Phase 18-A: replace the optimistic 2-field seed with
+                // the real per-field array. res.fields.length is the
+                // server-canonical field count for this note's notetype
+                // (Basic=2, Cloze=2, Image Occlusion=5+, custom=N).
+                fieldDrafts = [...res.fields];
+                fieldSeeds = [...res.fields];
+                currentNotetypeId = res.notetype_id;
             },
             () => {
                 // Silent fallback — the snippet seed already applied
@@ -293,6 +324,44 @@
             },
         );
     });
+
+    // Phase 18-A: derive the visible field labels from the loaded
+    // notetype list. Falls back gracefully:
+    //   1. fetchNote landed + notetype found → use notetype.fields
+    //      (e.g. Cloze: ["Text","Back Extra"]).
+    //   2. fetchNote landed but notetypes still loading / not found
+    //      → generic "Field 1", "Field 2", … so the editor renders.
+    //   3. Pre-fetchNote / fake-data mode → ["Front","Back"] for the
+    //      classic Basic-notetype look.
+    let currentFieldLabels = $derived.by<string[]>(() => {
+        if (currentNotetypeId !== null && liveNotetypes) {
+            const nt = liveNotetypes.find((n) => n.id === currentNotetypeId);
+            if (nt && nt.fields.length === fieldDrafts.length) {
+                return nt.fields;
+            }
+        }
+        // Fallback chain when label lookup fails (notetypes not yet
+        // loaded, fetchNotetypes rejected, notetype_id not in list,
+        // or fake-data mode):
+        //   - 2-field notes → classic ["Front","Back"]. Covers Basic
+        //     directly and Cloze in degraded form (we'd rather show
+        //     a slightly-wrong label than a generic "Field N").
+        //   - 3+ field notes → generic "Field N" labels because
+        //     guessing Image Occlusion's varying field names without
+        //     the notetype record would mislead more than it helps.
+        if (fieldDrafts.length === 2) {
+            return ["Front", "Back"];
+        }
+        return fieldDrafts.map((_, i) => `Field ${i + 1}`);
+    });
+
+    // Slug the label to a stable id-friendly string ("Back Extra" →
+    // "back-extra"). Keeps `#field-front` / `#field-back` working for
+    // existing 14-A / 16-A contract tests on Basic notetype while
+    // generalising for Cloze / Image Occlusion.
+    function fieldSlug(label: string): string {
+        return label.toLowerCase().replace(/\s+/g, "-");
+    }
 
     // Phase 11-A: derive the selected card's current preset_id from the
     // live deck list. Null when offline / fake-data / deck not yet loaded
@@ -673,21 +742,30 @@
             errorBanner = "Edit unavailable on fake data";
             return;
         }
-        // Phase 16-A: compare against the raw seed (frontSeed/backSeed),
-        // not the row-preview snippet — otherwise an unchanged note with
-        // pre-existing HTML would diff true on every blur because the
-        // snippet has already been stripped.
-        if (frontDraft === frontSeed && backDraft === backSeed) return;
+        // Phase 16-A / 18-A: compare each draft array element against
+        // its raw seed. Same dirty-check intent as 16-A but generalised
+        // across all fields — an unchanged Image Occlusion note with
+        // 5 fields no-ops on every blur instead of round-tripping a
+        // 5-field PATCH for nothing. Length mismatch is treated as
+        // "dirty" defensively (shouldn't happen post-fetchNote).
+        const isDirty =
+            fieldDrafts.length !== fieldSeeds.length ||
+            fieldDrafts.some((v, i) => v !== fieldSeeds[i]);
+        if (!isDirty) return;
         isMutatingNote = true;
         errorBanner = null;
+        // Snapshot the drafts so the optimistic-seed update below
+        // isn't trampled if the user keeps typing during the await.
+        const submitted = [...fieldDrafts];
         try {
             await patchNote(targetCard.note_id, {
-                fields: [frontDraft, backDraft],
+                fields: submitted,
             });
             // Refresh seeds first so a follow-up blur sees a clean state
-            // even if the row-list refetch below fails.
-            frontSeed = frontDraft;
-            backSeed = backDraft;
+            // even if the row-list refetch below fails. Use the
+            // submitted snapshot, not fieldDrafts (mid-flight typing
+            // shouldn't be considered "saved").
+            fieldSeeds = submitted;
             // Refetch the current page so row previews reflect the new
             // template render. Tags-only mirroring would be enough for
             // tag patches, but front/back go through {{Field}} on the
@@ -697,8 +775,7 @@
             liveTotal = res.total;
         } catch (e) {
             errorBanner = e instanceof Error ? e.message : "Edit failed";
-            frontDraft = frontSeed;
-            backDraft = backSeed;
+            fieldDrafts = [...fieldSeeds];
         } finally {
             isMutatingNote = false;
         }
@@ -1019,28 +1096,20 @@
             </div>
         </div>
 
-        <div class="field">
-            <label for="field-front">Front</label>
-            <textarea
-                id="field-front"
-                class="field-value"
-                bind:value={frontDraft}
-                disabled={isMutatingNote || !liveCards}
-                aria-label="Front"
-                onblur={commitFields}
-            ></textarea>
-        </div>
-        <div class="field">
-            <label for="field-back">Back</label>
-            <textarea
-                id="field-back"
-                class="field-value"
-                bind:value={backDraft}
-                disabled={isMutatingNote || !liveCards}
-                aria-label="Back"
-                onblur={commitFields}
-            ></textarea>
-        </div>
+        {#each currentFieldLabels as label, i (i)}
+            {@const slug = fieldSlug(label)}
+            <div class="field">
+                <label for="field-{slug}">{label}</label>
+                <textarea
+                    id="field-{slug}"
+                    class="field-value"
+                    bind:value={fieldDrafts[i]}
+                    disabled={isMutatingNote || !liveCards}
+                    aria-label={label}
+                    onblur={commitFields}
+                ></textarea>
+            </div>
+        {/each}
 
         <div class="meta">
             <div class="meta-row">
