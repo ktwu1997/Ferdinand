@@ -765,7 +765,10 @@ mod tests {
         // proto SCREAMING_SNAKE_CASE intentionally does not round-trip
         // so misuse fails fast at the request boundary instead of
         // silently coercing into a wrong order.
-        assert_eq!(parse_filtered_order("due").unwrap(), FilteredSearchOrder::Due);
+        assert_eq!(
+            parse_filtered_order("due").unwrap(),
+            FilteredSearchOrder::Due
+        );
         assert_eq!(
             parse_filtered_order("random").unwrap(),
             FilteredSearchOrder::Random

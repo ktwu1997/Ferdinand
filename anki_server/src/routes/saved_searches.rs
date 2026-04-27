@@ -126,9 +126,7 @@ fn read_saved_searches(col: &mut Collection) -> ApiResult<Vec<SavedSearch>> {
     path = "/api/saved_searches",
     responses((status = 200, body = SavedSearchListResponse))
 )]
-pub async fn list_saved(
-    State(state): State<AppState>,
-) -> ApiResult<Json<SavedSearchListResponse>> {
+pub async fn list_saved(State(state): State<AppState>) -> ApiResult<Json<SavedSearchListResponse>> {
     let mut col = state.col.lock().await;
     let searches = read_saved_searches(&mut col)?;
     Ok(Json(SavedSearchListResponse { searches }))
@@ -275,10 +273,7 @@ mod tests {
         // Spaces, CJK, punctuation other than `/` all pass.
         assert_eq!(validate_name("Due cards").unwrap(), "Due cards");
         assert_eq!(validate_name("難しい単語").unwrap(), "難しい単語");
-        assert_eq!(
-            validate_name("hard:tag review").unwrap(),
-            "hard:tag review"
-        );
+        assert_eq!(validate_name("hard:tag review").unwrap(), "hard:tag review");
         // Trim leading/trailing whitespace.
         assert_eq!(validate_name("  Padded  ").unwrap(), "Padded");
     }
