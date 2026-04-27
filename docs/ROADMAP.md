@@ -13,22 +13,26 @@
 
 ---
 
-## Status as of 2026-04-27 (post Phase 19-D)
+## Status as of 2026-04-27 (post Phase 19 quad complete)
 
-- **Web + Server**: ~83-91% complete (post Phase 19-D, quad 1/4 shipped).
-  home has 7-day forecast bar + "+ Filtered" inline form; browse editor
-  renders all fields generically AND offers per-card move-to-deck via
-  flattened deck dropdown; saved-search CRUD persists to collection-config;
+- **Web + Server**: ~88-95% complete (post Phase 19 full quad, all 4
+  phases shipped). home has 7-day forecast bar + "+ Filtered" inline
+  form; browse editor renders all fields generically AND offers per-card
+  move-to-deck via flattened deck dropdown AND opt-in Card Templates
+  panel for per-template `qfmt`/`afmt` edits; settings Notetypes tab
+  manages notetype rename + per-notetype add/remove field with two-step
+  destructive confirm; saved-search CRUD persists to collection-config;
   clippy `--all-targets --workspace -- -D warnings` is the standing
-  quality gate (note: `cargo fmt --check` is NOT in the gate — 3 files
-  in 18-B/C drifted; consider a hygiene mini-phase).
+  quality gate (the 18-B/C rustfmt drift was cleaned up at the head of
+  19-A; `cargo fmt --check` still NOT in the gate — hygiene mini-phase
+  candidate before 20).
 - **iOS**: 0% (rslib_ffi v0-v7 surface ready, 12 C ABI symbols incl.
   `tag_list_json` + cbindgen header, but no Xcode project yet —
-  deferred **11 times** now; 19-D paid down 0 FFI symbols by design,
-  v8 notetype-ops surface deferred to M2 Phase 21 with the Xcode
-  scaffold so it gets end-to-end validated on first ship).
+  deferred **11 times** now; 19-A/B/C/D paid down 0 FFI symbols by
+  design, v8 notetype-ops surface deferred to M2 Phase 21 with the
+  Xcode scaffold so it gets end-to-end validated on first ship).
 - **Sync**: 0%, design decision pending (see M4).
-- **Overall**: ~59-73% complete depending on definition.
+- **Overall**: ~62-76% complete depending on definition.
 
 ---
 
@@ -42,7 +46,7 @@
 | ---------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------ | ------ |
 | 17 ✅      | tag_list_json FFI / new_card_order toggle (+ 12-B clippy cleanup) / card flag chips / forecast bar — shipped 2026-04-27                | low    | ~52%   |
 | 18 ✅      | Saved searches CRUD / Browse editor all-fields generic / Filtered deck create / Hygiene (`--all-targets` CI gate) — shipped 2026-04-27 | medium | ~58%   |
-| 19 ◐       | 19-D ✅ card-level move-to-deck (LOW, shipped 2026-04-27 commit 046d410af) → 19-A template HTML edit (MED) → 19-B notetype add field (MED-HIGH, additive) → 19-C notetype remove field (HIGH, destructive). Risk-gradient ordering; FFI v8 surface for notetype ops deferred to M2 Phase 21. | high   | ~60%   |
+| 19 ✅      | Card-level move-to-deck (19-D LOW) / Template HTML edit (19-A MED) / Notetype add field (19-B MED-HIGH, additive) / Notetype remove field (19-C HIGH, destructive). Risk-gradient ordering proven; FFI v8 surface for notetype ops deferred to M2 Phase 21. Shipped 2026-04-27 commit 21ec7d654. | high   | ~64%   |
 | 20         | Card-level tag override / Burn-recovery flow / Per-card review history viewer / Bulk operations (multi-select in browse)               | medium | ~70%   |
 
 🟢 **Milestone exit**: web is `kt`'s daily driver, desktop Anki retired.
