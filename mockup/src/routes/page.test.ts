@@ -6,6 +6,7 @@ import { resetPageStub } from "../test/stubs/app-stores";
 import { decks as fakeDecks, history as fakeHistory, totalDue } from "$lib/data";
 import type {
     ApiDeckListResponse,
+    ApiForecastResponse,
     ApiHealth,
     ApiStatsRecent,
 } from "$lib/api";
@@ -22,12 +23,14 @@ vi.mock("$lib/api", async (importOriginal) => {
         fetchDecks: vi.fn(),
         fetchHealth: vi.fn(),
         fetchStatsRecent: vi.fn(),
+        fetchForecast: vi.fn(),
         postDeck: vi.fn(),
     };
 });
 
 import {
     fetchDecks,
+    fetchForecast,
     fetchHealth,
     fetchStatsRecent,
     postDeck,
@@ -62,6 +65,15 @@ const fakeHistoryAsApi: ApiStatsRecent = {
     history: fakeHistory.map((d) => ({ date: d.date, reviews: d.reviews })),
 };
 
+// Phase 17-B: default forecast payload — 7 days of zero reviews. Most
+// tests don't care about the bar chart so the default keeps the chart
+// rendered (non-null) but visually empty. Tests that DO care override
+// with mockResolvedValueOnce.
+const emptyForecast: ApiForecastResponse = {
+    days: 7,
+    history: Array.from({ length: 7 }, (_, i) => ({ offset: i, reviews: 0 })),
+};
+
 // Three concurrent async onMount chains run under one mount(): the page's
 // fetchDecks (then fetchStatsRecent in the same async scope) and
 // LiveIndicator's fetchHealth. 12 microtask turns leaves headroom for the
@@ -85,6 +97,11 @@ describe("HomePage contract", () => {
         // totals. Tests that don't care about stats work unchanged; tests
         // that DO care override with mockResolvedValueOnce / mockRejectedValueOnce.
         vi.mocked(fetchStatsRecent).mockResolvedValue(fakeHistoryAsApi);
+        // Phase 17-B default: fetchForecast succeeds with an empty 7-day
+        // window. Tests that don't care render the (zero-bar) chart and
+        // pass — tests that DO care override per-test (16-A lesson:
+        // every beforeEach must default-mock new fetch fns).
+        vi.mocked(fetchForecast).mockResolvedValue(emptyForecast);
         container = document.createElement("div");
         document.body.appendChild(container);
     });
@@ -285,6 +302,10 @@ describe("Phase 11-B stats history", () => {
         vi.resetAllMocks();
         resetPageStub();
         vi.mocked(fetchStatsRecent).mockResolvedValue(fakeHistoryAsApi);
+        // Phase 17-B: forecast default (matches outer describe). Same
+        // 16-A pattern — every beforeEach owns its own fetch defaults
+        // because resetAllMocks above wipes the prior block's setup.
+        vi.mocked(fetchForecast).mockResolvedValue(emptyForecast);
         container = document.createElement("div");
         document.body.appendChild(container);
     });
@@ -508,5 +529,155 @@ describe("Phase 11-B stats history", () => {
                 unmount(instance);
             }
         });
+    });
+});
+
+// Phase 17-B: forecast bar contract tests. Same vi.resetAllMocks +
+// per-block default-mock pattern as 11-B; the chart renders 7 columns
+// when fetchForecast resolves, hides on rejection. Bars scale to the
+// peak day's reviews, so an asymmetric payload exercises the height
+// math.
+describe("Phase 17-B forecast bar", () => {
+    let container: HTMLDivElement;
+
+    beforeEach(() => {
+        vi.resetAllMocks();
+        resetPageStub();
+        // Defaults so the deck list renders and stats don't blow up.
+        vi.mocked(fetchDecks).mockRejectedValue(new Error("decks default"));
+        vi.mocked(fetchHealth).mockRejectedValue(new Error("health default"));
+        vi.mocked(fetchStatsRecent).mockResolvedValue(fakeHistoryAsApi);
+        // Forecast default — empty 7-day window. Tests that need real
+        // numbers override per-test with mockResolvedValueOnce.
+        vi.mocked(fetchForecast).mockResolvedValue(emptyForecast);
+        container = document.createElement("div");
+        document.body.appendChild(container);
+    });
+
+    afterEach(() => {
+        container.remove();
+    });
+
+    test("fetchForecast success: 7 .forecast-col entries render with the right offsets", async () => {
+        // Asymmetric payload — today=12, +1d=8, +2d=0 (zero), ..., +6d=15.
+        // Lets the test pin both the column count and that zero-day
+        // bars render with the .zero modifier (not the gradient bar).
+        const payload: ApiForecastResponse = {
+            days: 7,
+            history: [
+                { offset: 0, reviews: 12 },
+                { offset: 1, reviews: 8 },
+                { offset: 2, reviews: 0 },
+                { offset: 3, reviews: 4 },
+                { offset: 4, reviews: 0 },
+                { offset: 5, reviews: 6 },
+                { offset: 6, reviews: 15 },
+            ],
+        };
+        vi.mocked(fetchForecast).mockResolvedValueOnce(payload);
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            const cols = Array.from(
+                container.querySelectorAll<HTMLDivElement>(".forecast-col"),
+            );
+            expect(cols.length).toBe(7);
+
+            // Per-column count text matches the payload exactly.
+            const counts = cols.map(
+                (c) =>
+                    c.querySelector<HTMLDivElement>(".forecast-count")
+                        ?.textContent ?? "",
+            );
+            expect(counts).toEqual([
+                "12",
+                "8",
+                "0",
+                "4",
+                "0",
+                "6",
+                "15",
+            ]);
+
+            // Zero-day bars carry the .zero class so the gradient hides
+            // — chart should not paint phantom bars.
+            const bars = cols.map((c) =>
+                c.querySelector<HTMLDivElement>(".forecast-bar"),
+            );
+            expect(bars[2]?.classList.contains("zero")).toBe(true);
+            expect(bars[4]?.classList.contains("zero")).toBe(true);
+            expect(bars[0]?.classList.contains("zero")).toBe(false);
+            expect(bars[6]?.classList.contains("zero")).toBe(false);
+
+            // The "today" label is the leftmost column; +Nd labels follow.
+            const labels = cols.map(
+                (c) =>
+                    c.querySelector<HTMLDivElement>(".forecast-label")
+                        ?.textContent?.trim() ?? "",
+            );
+            expect(labels[0]).toBe("Today");
+            expect(labels[1]).toBe("+1d");
+            expect(labels[6]).toBe("+6d");
+
+            // Server fetched with default window (7 days).
+            expect(vi.mocked(fetchForecast)).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(fetchForecast)).toHaveBeenCalledWith(7);
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("total cards-due cell is the sum of the window", async () => {
+        vi.mocked(fetchForecast).mockResolvedValueOnce({
+            days: 7,
+            history: [
+                { offset: 0, reviews: 12 },
+                { offset: 1, reviews: 8 },
+                { offset: 2, reviews: 0 },
+                { offset: 3, reviews: 4 },
+                { offset: 4, reviews: 0 },
+                { offset: 5, reviews: 6 },
+                { offset: 6, reviews: 15 },
+            ],
+        });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            // Sum: 12+8+0+4+0+6+15 = 45. Use the forecast-specific
+            // class .forecast-total (distinct from the Last-30-days
+            // .stat-value) so existing tests stay scoped.
+            const total = container.querySelector<HTMLDivElement>(
+                ".forecast-section .forecast-total",
+            )?.textContent;
+            expect(total).toBe("45");
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("fetchForecast rejects: section hides chart and shows error banner", async () => {
+        vi.mocked(fetchForecast).mockRejectedValueOnce(
+            new Error("forecast unreachable"),
+        );
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            // No grid (chart hidden), but the error-fallback section is
+            // present with the banner copy.
+            expect(container.querySelector(".forecast-grid")).toBeNull();
+            const banner = container
+                .querySelector(".forecast-section")
+                ?.querySelector(".stats-error-banner");
+            expect(banner).not.toBeNull();
+            expect(banner?.textContent).toContain("forecast unreachable");
+        } finally {
+            unmount(instance);
+        }
     });
 });
