@@ -5,17 +5,23 @@
 //! change machinery handles the per-note pad: cards/revlog/notes counts
 //! are unchanged, only the per-note field length grows by one.
 //!
-//! Schema-mutation safety: the only invariant the user-facing UI cares
-//! about is that no card render breaks and no revlog row gets dropped.
-//! `update_notetype(&mut nt, false)` keeps `skip_checks=false` so a
-//! field-name collision (which fix_field_names auto-renames) won't
-//! land silently — the boundary `validate_field_name` rejects bad
-//! characters up front so a user typo doesn't get auto-mangled into
-//! something they didn't ask for.
+//! Phase 19-C: notetype field remove. DELETE /api/notetypes/{id}/fields/
+//! {ord} drops the field at the given ord, removing the corresponding
+//! slot from every existing note and re-pointing template references
+//! that named the removed field (the `nt.fields.remove(ord)` +
+//! `update_notetype(skip_checks=false)` pattern from rslib's
+//! schemachange tests). Destructive — the field's content on every
+//! note is permanently lost — so the boundary refuses to delete the
+//! last remaining field (rslib also rejects `fields.is_empty()`, but
+//! surfacing it as a clear 400 here avoids leaking the lower-layer
+//! "1 field required" error string into client UI).
 //!
-//! 19-C will reuse this module's path-extractor and helper for the
-//! DELETE /api/notetypes/{id}/fields/{ord} surface; the field name
-//! validator stays add-only since DELETE doesn't take a name payload.
+//! Schema-mutation safety: cards / revlog / notes counts stay
+//! invariant across both add and remove. The per-note `fields` array
+//! length tracks the notetype's field count exactly — that's the
+//! only user-visible delta. Smoke is run on a "throwaway" field
+//! added by the 19-B smoke (Phase19BTest), never on production
+//! Front / Back / Text / cloze fields.
 
 use anki::notetype::NoteField;
 use anki::notetype::NotetypeId;
@@ -115,6 +121,72 @@ pub async fn post_add_field(
         )));
     }
     nt.fields.push(NoteField::new(trimmed));
+    col.update_notetype(&mut nt, false)?;
+
+    Ok(Json(notetype_detail_response(&nt)))
+}
+
+/// Phase 19-C: drop a field from a notetype.
+///
+/// Validation order (cheap → expensive, mirroring 19-A/B):
+///   1. id positive (400).
+///   2. Notetype lookup (404 — strict).
+///   3. ord existence against the live notetype (400 — same wording
+///      as the template ord check from 19-A so client error parsing
+///      stays uniform).
+///   4. "Last field" guard (400) — explicit at this layer instead of
+///      letting rslib's `prepare_for_update` surface "1 field required"
+///      because the user-facing copy reads cleaner this way.
+///   5. `nt.fields.remove(ord)` + `Collection::update_notetype` —
+///      transactional. Anki's schema-change machinery removes the
+///      slot from every existing note, repoints any template
+///      reference that named the removed field, and bumps mtime.
+///      `skip_checks=false` keeps the rest of the notetype invariants
+///      enforced — a removal that would orphan every template will
+///      surface as a 400 instead of corrupting the collection.
+///
+/// Returns the canonical post-write notetype detail (id, name,
+/// fields, templates) so the client doesn't need to refetch.
+#[utoipa::path(
+    delete,
+    path = "/api/notetypes/{id}/fields/{ord}",
+    responses(
+        (status = 200, body = NotetypeDetailResponse),
+        (status = 400, body = crate::error::ApiError),
+        (status = 404, body = crate::error::ApiError),
+    ),
+    params(
+        ("id" = i64, Path, description = "Notetype id"),
+        ("ord" = u32, Path, description = "0-indexed field position to remove"),
+    )
+)]
+pub async fn delete_field(
+    State(state): State<AppState>,
+    Path((id, ord)): Path<(i64, u32)>,
+) -> ApiResult<Json<NotetypeDetailResponse>> {
+    if id <= 0 {
+        return Err(ServerError::bad_request("id must be a positive integer"));
+    }
+
+    let mut col = state.col.lock().await;
+    let ntid = NotetypeId(id);
+    let arc = col
+        .get_notetype(ntid)?
+        .ok_or_else(|| ServerError::not_found(format!("notetype {id} not found")))?;
+
+    let mut nt: anki::notetype::Notetype = (*arc).clone();
+    let field_count = nt.fields.len();
+    if (ord as usize) >= field_count {
+        return Err(ServerError::bad_request(format!(
+            "field ord {ord} not found (notetype has {field_count} fields)"
+        )));
+    }
+    if field_count <= 1 {
+        return Err(ServerError::bad_request(
+            "cannot remove the last field of a notetype",
+        ));
+    }
+    nt.fields.remove(ord as usize);
     col.update_notetype(&mut nt, false)?;
 
     Ok(Json(notetype_detail_response(&nt)))

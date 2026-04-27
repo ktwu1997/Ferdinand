@@ -51,6 +51,10 @@ pub fn router() -> Router<AppState> {
             "/api/notetypes/{id}/fields",
             post(notetype_fields::post_add_field),
         )
+        .route(
+            "/api/notetypes/{id}/fields/{ord}",
+            delete(notetype_fields::delete_field),
+        )
         .route("/api/study/queue", get(study::get_queue))
         .route("/api/study/answer", post(study::post_answer))
         .route("/api/study/forecast", get(study::get_forecast))
