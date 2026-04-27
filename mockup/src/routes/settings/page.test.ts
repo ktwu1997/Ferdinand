@@ -1792,6 +1792,12 @@ describe("SettingsPage notetypes rename (Phase 16-B)", () => {
         vi.mocked(patchNotetypeName).mockResolvedValueOnce({
             id: 1_776_837_237_908,
             name: "Basic Renamed",
+            // Phase 19-A: patchNotetypeName now returns ApiNotetypeDetail
+            // (the unified shape shared with patchNotetype). Empty fields
+            // / templates here is fine — the rename UI under test only
+            // reads `name`.
+            fields: [],
+            templates: [],
         });
 
         const instance = mount(Page, { target: container, props: {} });

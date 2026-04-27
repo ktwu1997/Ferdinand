@@ -25,12 +25,14 @@ vi.mock("$lib/api", async (importOriginal) => {
         fetchDecks: vi.fn(),
         fetchDeckConfigs: vi.fn(),
         fetchNote: vi.fn(),
+        fetchNotetype: vi.fn(),
         fetchNotetypes: vi.fn(),
         fetchSavedSearches: vi.fn(),
         fetchTags: vi.fn(),
         patchDeckName: vi.fn(),
         patchDeckPreset: vi.fn(),
         patchNote: vi.fn(),
+        patchNotetype: vi.fn(),
         postCardSuspend: vi.fn(),
         postCardFlag: vi.fn(),
         postMoveCards: vi.fn(),
@@ -49,12 +51,14 @@ import {
     fetchDecks,
     fetchDeckConfigs,
     fetchNote,
+    fetchNotetype,
     fetchNotetypes,
     fetchSavedSearches,
     fetchTags,
     patchDeckName,
     patchDeckPreset,
     patchNote,
+    patchNotetype,
     postCardFlag,
     postCardSuspend,
     postMoveCards,
@@ -2509,6 +2513,292 @@ describe("BrowsePage delete-deck flow (Phase 15-A)", () => {
             expect(banner?.textContent).toContain("Default deck cannot be deleted");
             // Row preserved on the rejected delete.
             expect(deckRowButtons(container).length).toBe(1);
+        } finally {
+            unmount(instance);
+        }
+    });
+});
+
+describe("BrowsePage Card Templates panel (Phase 19-A)", () => {
+    let container: HTMLDivElement;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        resetPageStub();
+        // Same default-reject pattern as the main contract suite — every
+        // fetch the page calls must be mocked or jsdom warns. Tests that
+        // need a real response override per-test with `mockResolvedValueOnce`.
+        vi.mocked(fetchDecks).mockRejectedValue(new Error("decks unreachable"));
+        vi.mocked(fetchTags).mockRejectedValue(new Error("tags unreachable"));
+        vi.mocked(fetchDeckConfigs).mockRejectedValue(
+            new Error("preset list unreachable"),
+        );
+        vi.mocked(fetchNotetypes).mockRejectedValue(
+            new Error("fetchNotetypes default reject"),
+        );
+        vi.mocked(fetchSavedSearches).mockRejectedValue(
+            new Error("fetchSavedSearches default reject"),
+        );
+        // Default fetchNotetype reject — tests that exercise the panel
+        // override per-test. Required because the editor's $effect on
+        // currentNotetypeId fires loadTemplatesIfNeeded the moment a
+        // notetype id lands, even if the panel is closed.
+        vi.mocked(fetchNotetype).mockRejectedValue(
+            new Error("fetchNotetype default reject"),
+        );
+        container = document.createElement("div");
+        document.body.appendChild(container);
+    });
+
+    afterEach(() => {
+        container.remove();
+    });
+
+    function basicCard(): ApiCardSummary {
+        // Notetype id matches the seeded Basic notetype on the dev
+        // collection; tests don't actually hit it (fetchNotetype is
+        // mocked) but using a realistic value keeps the assertions
+        // readable when one greps for the literal id.
+        return card(101, "<p>hola</p>", "<p>hello</p>", {
+            notetype_id: 1_776_837_237_908,
+            notetype_name: "Basic",
+        });
+    }
+
+    function openTemplatesPanel(root: HTMLElement) {
+        const details = root.querySelector<HTMLDetailsElement>(
+            ".templates-panel",
+        );
+        if (!details) throw new Error("templates panel not found");
+        // JSDOM doesn't reliably auto-fire `toggle` when summary is
+        // clicked, so we drive the disclosure semantics explicitly:
+        // flip `open` (Svelte's `bind:open` reads this back) and
+        // dispatch the matching `toggle` event so the ontoggle handler
+        // fires the lazy load — same behavior real browsers provide
+        // automatically on a summary click.
+        details.open = true;
+        details.dispatchEvent(new Event("toggle"));
+    }
+
+    test("opening the panel calls fetchNotetype with the selected note's notetype_id and renders one row per template", async () => {
+        // Mount with one card live so currentNotetypeId is populated by
+        // fetchNote, then open the disclosure to fire the lazy load.
+        // Two-template notetype (Basic-and-reverse-style) so the
+        // length assertion can't pass by accident on a Basic singleton.
+        vi.mocked(fetchCards).mockResolvedValueOnce({
+            total: 1,
+            cards: [basicCard()],
+        });
+        vi.mocked(fetchNote).mockResolvedValueOnce({
+            id: 101,
+            notetype_id: 1_776_837_237_908,
+            notetype_name: "Basic",
+            fields: ["hola", "hello"],
+            tags: ["vocab"],
+            modified: 1_777_000_000,
+        });
+        vi.mocked(fetchNotetype).mockResolvedValueOnce({
+            id: 1_776_837_237_908,
+            name: "Basic",
+            fields: ["Front", "Back"],
+            templates: [
+                { ord: 0, name: "Card 1", qfmt: "{{Front}}", afmt: "{{Back}}" },
+                {
+                    ord: 1,
+                    name: "Card 2",
+                    qfmt: "{{Back}}",
+                    afmt: "{{Front}}",
+                },
+            ],
+        });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            // Panel collapsed → no fetchNotetype yet (the lazy-load
+            // pattern keeps the network quiet for users who never
+            // expand the disclosure).
+            expect(vi.mocked(fetchNotetype)).not.toHaveBeenCalled();
+
+            openTemplatesPanel(container);
+            await settle();
+
+            expect(vi.mocked(fetchNotetype)).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(fetchNotetype)).toHaveBeenCalledWith(
+                1_776_837_237_908,
+            );
+
+            const rows = container.querySelectorAll(".template-row");
+            expect(rows.length).toBe(2);
+            // Each row gets a Question + Answer textarea seeded with
+            // the server-canonical qfmt/afmt strings.
+            const qfmt0 = container.querySelector<HTMLTextAreaElement>(
+                "#qfmt-0",
+            );
+            const afmt0 = container.querySelector<HTMLTextAreaElement>(
+                "#afmt-0",
+            );
+            const qfmt1 = container.querySelector<HTMLTextAreaElement>(
+                "#qfmt-1",
+            );
+            expect(qfmt0?.value).toBe("{{Front}}");
+            expect(afmt0?.value).toBe("{{Back}}");
+            expect(qfmt1?.value).toBe("{{Back}}");
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("editing qfmt + clicking Save fires patchNotetype with that ord only; siblings untouched", async () => {
+        vi.mocked(fetchCards).mockResolvedValueOnce({
+            total: 1,
+            cards: [basicCard()],
+        });
+        vi.mocked(fetchNote).mockResolvedValueOnce({
+            id: 101,
+            notetype_id: 1_776_837_237_908,
+            notetype_name: "Basic",
+            fields: ["hola", "hello"],
+            tags: [],
+            modified: 1_777_000_000,
+        });
+        const baseline = {
+            id: 1_776_837_237_908,
+            name: "Basic",
+            fields: ["Front", "Back"],
+            templates: [
+                { ord: 0, name: "Card 1", qfmt: "{{Front}}", afmt: "{{Back}}" },
+                {
+                    ord: 1,
+                    name: "Card 2",
+                    qfmt: "{{Back}}",
+                    afmt: "{{Front}}",
+                },
+            ],
+        };
+        vi.mocked(fetchNotetype).mockResolvedValueOnce(baseline);
+        // Server returns the updated state — qfmt for ord 0 has the
+        // new value, ord 1 stays the same. Page should re-seed both
+        // drafts from this canonical response.
+        vi.mocked(patchNotetype).mockResolvedValueOnce({
+            ...baseline,
+            templates: [
+                {
+                    ord: 0,
+                    name: "Card 1",
+                    qfmt: "{{Front}}<hr>",
+                    afmt: "{{Back}}",
+                },
+                baseline.templates[1]!,
+            ],
+        });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+            openTemplatesPanel(container);
+            await settle();
+
+            // Edit qfmt for ord 0, then click that row's Save button.
+            const qfmt0 = container.querySelector<HTMLTextAreaElement>(
+                "#qfmt-0",
+            );
+            if (!qfmt0) throw new Error("qfmt-0 not found");
+            qfmt0.value = "{{Front}}<hr>";
+            qfmt0.dispatchEvent(new Event("input", { bubbles: true }));
+            flushSync();
+
+            const saveButtons = container.querySelectorAll<HTMLButtonElement>(
+                ".template-save",
+            );
+            expect(saveButtons.length).toBe(2);
+            // Sibling row's Save stays disabled because its drafts
+            // still match the seed; the edited row's Save lights up.
+            expect(saveButtons[0]?.disabled).toBe(false);
+            expect(saveButtons[1]?.disabled).toBe(true);
+
+            saveButtons[0]?.click();
+            await settle();
+
+            expect(vi.mocked(patchNotetype)).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(patchNotetype)).toHaveBeenCalledWith(
+                1_776_837_237_908,
+                {
+                    templates: [
+                        { ord: 0, qfmt: "{{Front}}<hr>", afmt: "{{Back}}" },
+                    ],
+                },
+            );
+            // After server response the row's Save button goes back to
+            // disabled because draft now matches the canonical value.
+            const saveAfter = container.querySelectorAll<HTMLButtonElement>(
+                ".template-save",
+            );
+            expect(saveAfter[0]?.disabled).toBe(true);
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("server 400 on save surfaces in templates-error (panel-scoped); main error-banner stays clean", async () => {
+        // Defensive: a user could PATCH with content that rslib rejects
+        // (e.g. an unbalanced `{{Field}}` tag) — that error must surface
+        // inside the panel so the user can retry without losing the
+        // editor's main flow / global error state. Mirrors the 18-C
+        // panel-scoped error pattern for saved searches.
+        vi.mocked(fetchCards).mockResolvedValueOnce({
+            total: 1,
+            cards: [basicCard()],
+        });
+        vi.mocked(fetchNote).mockResolvedValueOnce({
+            id: 101,
+            notetype_id: 1_776_837_237_908,
+            notetype_name: "Basic",
+            fields: ["hola", "hello"],
+            tags: [],
+            modified: 1_777_000_000,
+        });
+        vi.mocked(fetchNotetype).mockResolvedValueOnce({
+            id: 1_776_837_237_908,
+            name: "Basic",
+            fields: ["Front", "Back"],
+            templates: [
+                { ord: 0, name: "Card 1", qfmt: "{{Front}}", afmt: "{{Back}}" },
+            ],
+        });
+        vi.mocked(patchNotetype).mockRejectedValueOnce(
+            new Error("400 qfmt must not be empty"),
+        );
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+            openTemplatesPanel(container);
+            await settle();
+
+            const qfmt0 = container.querySelector<HTMLTextAreaElement>(
+                "#qfmt-0",
+            );
+            if (!qfmt0) throw new Error("qfmt-0 not found");
+            qfmt0.value = "  ";
+            qfmt0.dispatchEvent(new Event("input", { bubbles: true }));
+            flushSync();
+
+            const saveBtn = container.querySelector<HTMLButtonElement>(
+                ".template-save",
+            );
+            saveBtn?.click();
+            await settle();
+
+            // Panel-scoped error renders.
+            const panelErr = container.querySelector(".templates-error");
+            expect(panelErr).not.toBeNull();
+            expect(panelErr?.textContent).toContain("qfmt must not be empty");
+            // Main editor banner stays untouched — important because
+            // the templates panel is opt-in surface; corrupting the
+            // global banner would surprise users who didn't open it.
+            expect(container.querySelector(".error-banner")).toBeNull();
         } finally {
             unmount(instance);
         }

@@ -378,27 +378,82 @@ export async function fetchNotetypes(): Promise<ApiNotetypeListResponse> {
     return getJson<ApiNotetypeListResponse>("/api/notetypes");
 }
 
-export interface ApiNotetypeRenameResponse {
-    id: number;
-    /** Server-canonical name after trim. May differ from the request
-     * input when leading/trailing whitespace was stripped. */
+/**
+ * Phase 19-A: per-template payload returned by `fetchNotetype` and
+ * `patchNotetypeTemplates`. `qfmt` / `afmt` are the raw `{{Field}}`
+ * template strings; `ord` is the stable 0-indexed position in the
+ * notetype's template list.
+ */
+export interface ApiNotetypeTemplate {
+    ord: number;
     name: string;
+    qfmt: string;
+    afmt: string;
 }
 
 /**
- * Phase 16-B: rename a notetype. Server validates id positive (400),
- * trimmed name non-empty + ≤100 chars (400), and existence (404).
- * Rename is a pure label refresh — cards are linked by notetype_id so
- * none of them need regeneration; mtime bumps so a sync would
- * propagate the change.
+ * Phase 19-A: full notetype detail. Returned by GET /api/notetypes/{id}
+ * and PATCH /api/notetypes/{id} so the client always has the canonical
+ * post-write state. The list endpoint deliberately omits `templates`
+ * to keep the picker payload small.
+ */
+export interface ApiNotetypeDetail {
+    id: number;
+    name: string;
+    fields: string[];
+    templates: ApiNotetypeTemplate[];
+}
+
+/**
+ * Phase 19-A: combined patch payload — supplies a new `name`, a list
+ * of `templates` to overwrite, or both. Server enforces at-least-one;
+ * a request with both omitted returns 400 instead of silently bumping
+ * mtime.
+ */
+export interface ApiNotetypePatchRequest {
+    name?: string;
+    templates?: Array<{
+        ord: number;
+        qfmt: string;
+        afmt: string;
+    }>;
+}
+
+/**
+ * Phase 19-A: fetch a single notetype with its templates. Mirrors the
+ * GET shape of notes / cards / decks — list endpoint stays slim, detail
+ * endpoint includes the full template payload so the editor's Card
+ * Templates panel can hydrate without re-walking every notetype.
+ */
+export async function fetchNotetype(id: number): Promise<ApiNotetypeDetail> {
+    return getJson<ApiNotetypeDetail>(`/api/notetypes/${id}`);
+}
+
+/**
+ * Phase 16-B + 19-A: rename a notetype and/or overwrite per-template
+ * `qfmt` / `afmt` formats. Server validates id positive (400), name
+ * shape (≤100 chars when supplied), per-format non-empty and ≤65000
+ * chars, ord existence against the live notetype, and at-least-one-
+ * of-name-or-templates (400). Returns the canonical post-write state
+ * (name, fields, templates) so the client doesn't need to refetch.
+ */
+export async function patchNotetype(
+    id: number,
+    patch: ApiNotetypePatchRequest,
+): Promise<ApiNotetypeDetail> {
+    return patchJson<ApiNotetypeDetail>(`/api/notetypes/${id}`, patch);
+}
+
+/**
+ * Phase 16-B: thin rename helper kept for callers that only need the
+ * name path. Delegates to `patchNotetype` so the response shape stays
+ * unified post-19-A.
  */
 export async function patchNotetypeName(
     id: number,
     name: string,
-): Promise<ApiNotetypeRenameResponse> {
-    return patchJson<ApiNotetypeRenameResponse>(`/api/notetypes/${id}`, {
-        name,
-    });
+): Promise<ApiNotetypeDetail> {
+    return patchNotetype(id, { name });
 }
 
 export interface ApiNoteCreateRequest {

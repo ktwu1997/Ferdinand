@@ -10,12 +10,14 @@
         fetchDecks,
         fetchDeckConfigs,
         fetchNote,
+        fetchNotetype,
         fetchNotetypes,
         fetchSavedSearches,
         fetchTags,
         patchDeckName,
         patchDeckPreset,
         patchNote,
+        patchNotetype,
         postCardFlag,
         postCardSuspend,
         postMoveCards,
@@ -23,7 +25,9 @@
         type ApiCardSummary,
         type ApiDeckConfigListItem,
         type ApiDeckSummary,
+        type ApiNotetypeDetail,
         type ApiNotetypeSummary,
+        type ApiNotetypeTemplate,
         type ApiSavedSearch,
     } from "$lib/api";
     import BrowseRow from "$lib/browse/BrowseRow.svelte";
@@ -144,6 +148,26 @@
     // and during the seed-from-snippet pre-load window.
     let currentNotetypeId = $state<number | null>(null);
     let liveNotetypes = $state<ApiNotetypeSummary[] | null>(null);
+
+    // Phase 19-A: Card Templates editor state. Templates are
+    // notetype-level (changing one affects every card sharing that
+    // notetype) so the panel sits in a closed disclosure by default —
+    // a misclick on the Q/A textareas shouldn't be possible while the
+    // user is just browsing notes. Drafts are parallel arrays indexed
+    // by ord so a partial save (only one template button clicked) can
+    // diff against the server-canonical state without re-walking
+    // `liveTemplates`. Lazy-load on first open: `templatesLoadedFor`
+    // tracks the notetype id we last hydrated for so switching notes
+    // (and therefore notetypes) silently invalidates the cache without
+    // a wasted fetch when the panel is closed.
+    let liveTemplates = $state<ApiNotetypeTemplate[] | null>(null);
+    let qfmtDrafts = $state<string[]>([]);
+    let afmtDrafts = $state<string[]>([]);
+    let templatesPanelOpen = $state(false);
+    let templatesLoadedFor = $state<number | null>(null);
+    let isMutatingTemplate = $state(false);
+    let templatesError = $state<string | null>(null);
+    let templateSavingOrd = $state<number | null>(null);
     let isAddingTag = $state(false);
     let newTagDraft = $state("");
     let isMutatingNote = $state(false);
@@ -1090,6 +1114,95 @@
             isMutatingMove = false;
         }
     }
+
+    /**
+     * Phase 19-A: hydrate the Card Templates panel for the currently
+     * selected note's notetype. Lazy — only fires when the panel is
+     * actually open or the user explicitly opens it for a notetype
+     * we haven't loaded yet. Re-fires when the user clicks a row with
+     * a different notetype while the panel is open. Failures surface
+     * via `templatesError` (panel-local) so a flaky notetype fetch
+     * doesn't poison the editor's main `errorBanner`.
+     */
+    async function loadTemplatesIfNeeded() {
+        if (!templatesPanelOpen) return;
+        if (currentNotetypeId === null) {
+            liveTemplates = null;
+            qfmtDrafts = [];
+            afmtDrafts = [];
+            templatesLoadedFor = null;
+            return;
+        }
+        if (templatesLoadedFor === currentNotetypeId && liveTemplates) return;
+        const targetId = currentNotetypeId;
+        templatesError = null;
+        try {
+            const detail: ApiNotetypeDetail = await fetchNotetype(targetId);
+            // Drop the response if the user navigated to a different
+            // note (with a different notetype) before the fetch
+            // resolved — same stale-response discard pattern as the
+            // 12-A search debouncer.
+            if (currentNotetypeId !== targetId) return;
+            liveTemplates = detail.templates;
+            qfmtDrafts = detail.templates.map((t) => t.qfmt);
+            afmtDrafts = detail.templates.map((t) => t.afmt);
+            templatesLoadedFor = targetId;
+        } catch (e) {
+            templatesError =
+                e instanceof Error ? e.message : "Failed to load templates";
+        }
+    }
+
+    /**
+     * Phase 19-A: persist a single template's qfmt/afmt to the server.
+     * Server's PATCH accepts a sparse list, so saving "just this row"
+     * leaves siblings untouched — useful when a user is iterating on
+     * one card layout without wanting to commit unfinished edits to
+     * the other. Server returns the canonical post-write state for
+     * every template; we re-seed all drafts so a concurrent edit
+     * against the same notetype (in another tab) surfaces immediately
+     * rather than getting silently overwritten on the next save.
+     */
+    async function saveTemplate(ord: number) {
+        if (!liveTemplates || currentNotetypeId === null) return;
+        const target = liveTemplates.find((t) => t.ord === ord);
+        if (!target) return;
+        const newQ = qfmtDrafts[ord] ?? "";
+        const newA = afmtDrafts[ord] ?? "";
+        if (newQ === target.qfmt && newA === target.afmt) return;
+        isMutatingTemplate = true;
+        templateSavingOrd = ord;
+        templatesError = null;
+        try {
+            const detail = await patchNotetype(currentNotetypeId, {
+                templates: [{ ord, qfmt: newQ, afmt: newA }],
+            });
+            liveTemplates = detail.templates;
+            qfmtDrafts = detail.templates.map((t) => t.qfmt);
+            afmtDrafts = detail.templates.map((t) => t.afmt);
+            templatesLoadedFor = currentNotetypeId;
+        } catch (e) {
+            templatesError =
+                e instanceof Error ? e.message : "Save template failed";
+        } finally {
+            isMutatingTemplate = false;
+            templateSavingOrd = null;
+        }
+    }
+
+    // Re-hydrate when the selected note's notetype changes while the
+    // panel is open. Closed-panel transitions just invalidate the
+    // cache — `loadTemplatesIfNeeded` is a no-op until the user opens
+    // the disclosure.
+    $effect(() => {
+        if (currentNotetypeId !== templatesLoadedFor) {
+            liveTemplates = null;
+            qfmtDrafts = [];
+            afmtDrafts = [];
+            templatesLoadedFor = null;
+            void loadTemplatesIfNeeded();
+        }
+    });
 </script>
 
 <svelte:head><title>Browse — Anki</title></svelte:head>
@@ -1510,6 +1623,88 @@
                 ></button>
             {/each}
         </div>
+
+        <!--
+            Phase 19-A: Card Templates panel. Closed by default — a
+            note edit and a notetype edit have very different blast
+            radius (the latter affects every card sharing the
+            notetype), so the disclosure is opt-in. Hidden entirely
+            when there's no live notetype id (fake-data mode or
+            offline) so we don't show editable surfaces backed by no
+            persistence path.
+        -->
+        {#if currentNotetypeId !== null}
+            <details
+                class="templates-panel"
+                bind:open={templatesPanelOpen}
+                ontoggle={() => {
+                    // Native <details> flips `open` BEFORE firing
+                    // `toggle`, so by the time this handler runs the
+                    // bound `templatesPanelOpen` already reflects the
+                    // new state. Lazy-load on first open (or on a
+                    // re-open after the user picked a different
+                    // notetype-bearing note in the row list).
+                    if (templatesPanelOpen) void loadTemplatesIfNeeded();
+                }}
+            >
+                <summary class="templates-summary">
+                    <span>Card Templates</span>
+                    {#if liveTemplates}
+                        <span class="templates-count">· {liveTemplates.length}</span>
+                    {/if}
+                </summary>
+                <p class="templates-hint">
+                    Edits affect every card on this notetype.
+                </p>
+                {#if templatesError}
+                    <div class="templates-error" role="alert">{templatesError}</div>
+                {/if}
+                {#if liveTemplates === null && templatesError === null}
+                    <div class="templates-loading">Loading templates…</div>
+                {:else if liveTemplates}
+                    {#each liveTemplates as tpl, i (tpl.ord)}
+                        <div class="template-row">
+                            <div class="template-name">
+                                {tpl.name || `Card ${tpl.ord + 1}`}
+                            </div>
+                            <label class="template-label" for="qfmt-{tpl.ord}">
+                                Question
+                            </label>
+                            <textarea
+                                id="qfmt-{tpl.ord}"
+                                class="template-textarea"
+                                bind:value={qfmtDrafts[i]}
+                                disabled={isMutatingTemplate}
+                                aria-label="Question template for {tpl.name ||
+                                    `Card ${tpl.ord + 1}`}"
+                            ></textarea>
+                            <label class="template-label" for="afmt-{tpl.ord}">
+                                Answer
+                            </label>
+                            <textarea
+                                id="afmt-{tpl.ord}"
+                                class="template-textarea"
+                                bind:value={afmtDrafts[i]}
+                                disabled={isMutatingTemplate}
+                                aria-label="Answer template for {tpl.name ||
+                                    `Card ${tpl.ord + 1}`}"
+                            ></textarea>
+                            <button
+                                class="ghost-btn template-save"
+                                disabled={isMutatingTemplate ||
+                                    (qfmtDrafts[i] === tpl.qfmt &&
+                                        afmtDrafts[i] === tpl.afmt)}
+                                onclick={() => saveTemplate(tpl.ord)}
+                            >
+                                {templateSavingOrd === tpl.ord
+                                    ? "Saving…"
+                                    : "Save template"}
+                            </button>
+                        </div>
+                    {/each}
+                {/if}
+            </details>
+        {/if}
 
         <div class="editor-footer">
             <button class="ghost-btn">Preview</button>
@@ -2105,6 +2300,96 @@
     .flag-chip:disabled {
         opacity: 0.55;
         cursor: progress;
+    }
+
+    /* Phase 19-A: Card Templates disclosure. Less prominent than the
+       per-field textareas — `templates` is a notetype-level edit so
+       the visual weight steers users away from accidental mutation. */
+    .templates-panel {
+        margin-top: var(--space-3);
+        padding: var(--space-3) 0;
+        border-top: 1px solid var(--border);
+    }
+    .templates-summary {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--space-1);
+        font-size: var(--text-sm);
+        color: var(--text-muted);
+        cursor: pointer;
+        list-style: none;
+    }
+    .templates-summary::-webkit-details-marker {
+        display: none;
+    }
+    .templates-summary::before {
+        content: "›";
+        display: inline-block;
+        margin-right: var(--space-1);
+        transition: transform var(--duration-fast) var(--ease);
+    }
+    .templates-panel[open] > .templates-summary::before {
+        transform: rotate(90deg);
+    }
+    .templates-count {
+        color: var(--text-subtle);
+    }
+    .templates-hint {
+        margin: var(--space-2) 0 var(--space-3);
+        font-size: var(--text-xs);
+        color: var(--text-subtle);
+    }
+    .templates-error {
+        margin-bottom: var(--space-2);
+        padding: var(--space-2);
+        font-size: var(--text-xs);
+        color: var(--danger);
+        background: var(--bg-hover);
+        border-radius: var(--radius-sm);
+    }
+    .templates-loading {
+        font-size: var(--text-xs);
+        color: var(--text-subtle);
+    }
+    .template-row {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-1);
+        padding: var(--space-2) 0;
+        border-bottom: 1px dashed var(--border);
+    }
+    .template-row:last-child {
+        border-bottom: none;
+    }
+    .template-name {
+        font-size: var(--text-sm);
+        font-weight: 500;
+        color: var(--text);
+        margin-bottom: var(--space-1);
+    }
+    .template-label {
+        font-size: var(--text-xs);
+        color: var(--text-subtle);
+        margin-top: var(--space-1);
+    }
+    .template-textarea {
+        min-height: 4rem;
+        padding: var(--space-2);
+        font-family: var(--font-mono, monospace);
+        font-size: var(--text-xs);
+        color: var(--text);
+        background: var(--bg-subtle);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        resize: vertical;
+    }
+    .template-textarea:focus {
+        outline: none;
+        border-color: var(--border-strong);
+    }
+    .template-save {
+        align-self: flex-end;
+        margin-top: var(--space-2);
     }
 
     .editor-footer {
