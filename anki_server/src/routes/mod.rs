@@ -35,6 +35,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/cards/{id}", get(cards::get_card))
         .route("/api/cards/{id}/suspend", post(cards::post_suspend))
         .route("/api/cards/{id}/flag", post(cards::post_flag))
+        .route("/api/cards/{id}/history", get(cards::get_card_history))
         .route("/api/notes", post(notes::post_create))
         .route(
             "/api/notes/{id}",

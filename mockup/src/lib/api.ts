@@ -991,3 +991,50 @@ export async function patchDeckPreset(
         preset_id: presetId,
     });
 }
+
+/**
+ * Phase 20-D: per-card revlog entry. `id` is the millisecond epoch
+ * timestamp (also serves as the unique row key). `button` is the raw
+ * 0..=4 byte for callers that prefer the integer; `button_label` is
+ * the lowercase string for display. `interval_days` and
+ * `last_interval_days` follow the rslib sign convention — positive is
+ * days, negative is seconds (sub-day reviews). `ease_percent` is the
+ * human-readable percent (e.g. 250 means 2.50); 0 if the row never
+ * carried an ease.
+ */
+export interface ApiCardHistoryEntry {
+    id: number;
+    button: number;
+    button_label: "again" | "hard" | "good" | "easy" | "manual";
+    interval_days: number;
+    last_interval_days: number;
+    ease_percent: number;
+    taken_ms: number;
+    review_kind:
+        | "learning"
+        | "review"
+        | "relearning"
+        | "filtered"
+        | "manual"
+        | "rescheduled";
+}
+
+export interface ApiCardHistoryResponse {
+    card_id: number;
+    total: number;
+    entries: ApiCardHistoryEntry[];
+}
+
+/**
+ * Phase 20-D: fetch a card's revlog entries newest-first. Read-only —
+ * safe to call repeatedly from a Svelte effect (the browse editor's
+ * Review History disclosure does this on first open and on card
+ * switch). Server validates id positive (400) and card existence
+ * (404). Empty entries on a never-reviewed card is a valid 200, not
+ * a 404.
+ */
+export async function getCardHistory(
+    id: number,
+): Promise<ApiCardHistoryResponse> {
+    return getJson<ApiCardHistoryResponse>(`/api/cards/${id}/history`);
+}

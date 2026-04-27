@@ -29,6 +29,7 @@ vi.mock("$lib/api", async (importOriginal) => {
         fetchNotetypes: vi.fn(),
         fetchSavedSearches: vi.fn(),
         fetchTags: vi.fn(),
+        getCardHistory: vi.fn(),
         patchDeckName: vi.fn(),
         patchDeckPreset: vi.fn(),
         patchNote: vi.fn(),
@@ -55,6 +56,7 @@ import {
     fetchNotetypes,
     fetchSavedSearches,
     fetchTags,
+    getCardHistory,
     patchDeckName,
     patchDeckPreset,
     patchNote,
@@ -187,6 +189,16 @@ describe("BrowsePage contract", () => {
         // mockResolvedValueOnce.
         vi.mocked(fetchSavedSearches).mockRejectedValue(
             new Error("fetchSavedSearches default reject"),
+        );
+        // Phase 20-D: history default reject — keeps the disclosure
+        // closed-by-default + lazy-fetch contract from leaking
+        // through into unrelated suites. The page does not call
+        // getCardHistory until the user opens the panel, but the
+        // $effect that invalidates the cache on selection change
+        // would still trigger it if we left the mock unset and a
+        // future test opens the panel without explicit mocks.
+        vi.mocked(getCardHistory).mockRejectedValue(
+            new Error("getCardHistory default reject"),
         );
         container = document.createElement("div");
         document.body.appendChild(container);
@@ -2546,6 +2558,13 @@ describe("BrowsePage Card Templates panel (Phase 19-A)", () => {
         vi.mocked(fetchNotetype).mockRejectedValue(
             new Error("fetchNotetype default reject"),
         );
+        // Phase 20-D: history default reject — same rationale as the
+        // main contract suite (closed-by-default panel won't fire,
+        // but a defensive mock keeps the suite robust against future
+        // tests that exercise the disclosure here).
+        vi.mocked(getCardHistory).mockRejectedValue(
+            new Error("getCardHistory default reject"),
+        );
         container = document.createElement("div");
         document.body.appendChild(container);
     });
@@ -2799,6 +2818,193 @@ describe("BrowsePage Card Templates panel (Phase 19-A)", () => {
             // the templates panel is opt-in surface; corrupting the
             // global banner would surprise users who didn't open it.
             expect(container.querySelector(".error-banner")).toBeNull();
+        } finally {
+            unmount(instance);
+        }
+    });
+});
+
+describe("BrowsePage Review History panel (Phase 20-D)", () => {
+    let container: HTMLDivElement;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        resetPageStub();
+        // Same default-reject pattern as the other browse suites — every
+        // fetch the page calls must be mocked or jsdom warns. Tests that
+        // need a real response override per-test with `mockResolvedValueOnce`.
+        vi.mocked(fetchDecks).mockRejectedValue(new Error("decks unreachable"));
+        vi.mocked(fetchTags).mockRejectedValue(new Error("tags unreachable"));
+        vi.mocked(fetchDeckConfigs).mockRejectedValue(
+            new Error("preset list unreachable"),
+        );
+        vi.mocked(fetchNote).mockRejectedValue(
+            new Error("fetchNote default reject"),
+        );
+        vi.mocked(fetchNotetype).mockRejectedValue(
+            new Error("fetchNotetype default reject"),
+        );
+        vi.mocked(fetchNotetypes).mockRejectedValue(
+            new Error("fetchNotetypes default reject"),
+        );
+        vi.mocked(fetchSavedSearches).mockRejectedValue(
+            new Error("fetchSavedSearches default reject"),
+        );
+        // History default reject — overridden per-test with
+        // mockResolvedValueOnce. Tests rely on getCardHistory only
+        // firing after the disclosure opens (lazy contract).
+        vi.mocked(getCardHistory).mockRejectedValue(
+            new Error("getCardHistory default reject"),
+        );
+        container = document.createElement("div");
+        document.body.appendChild(container);
+    });
+
+    afterEach(() => {
+        container.remove();
+    });
+
+    function openHistoryPanel(root: HTMLElement) {
+        const details = root.querySelector<HTMLDetailsElement>(
+            ".history-panel",
+        );
+        if (!details) throw new Error("history panel not found");
+        // Same JSDOM gotcha as the templates panel: setting
+        // `details.open = true` does NOT auto-fire `toggle`. We must
+        // dispatch the matching event explicitly so the ontoggle
+        // handler fires the lazy load — real browsers do this
+        // automatically on a summary click.
+        details.open = true;
+        details.dispatchEvent(new Event("toggle"));
+    }
+
+    test("opening the panel calls getCardHistory once with the selected card id and renders one row per entry", async () => {
+        // Two-card live list so the second test (card switch) has a
+        // sibling to pick. First test only opens the disclosure on
+        // card 101 so it asserts a single fetch with that id.
+        vi.mocked(fetchCards).mockResolvedValueOnce({
+            total: 2,
+            cards: [
+                card(101, "<p>hola</p>", "<p>hello</p>"),
+                card(202, "<p>gato</p>", "<p>cat</p>"),
+            ],
+        });
+        vi.mocked(getCardHistory).mockResolvedValueOnce({
+            card_id: 101,
+            total: 2,
+            entries: [
+                {
+                    id: 1_777_000_000_000,
+                    button: 3,
+                    button_label: "good",
+                    interval_days: 4,
+                    last_interval_days: 1,
+                    ease_percent: 250,
+                    taken_ms: 4200,
+                    review_kind: "review",
+                },
+                {
+                    id: 1_776_900_000_000,
+                    button: 2,
+                    button_label: "hard",
+                    interval_days: 1,
+                    last_interval_days: 1,
+                    ease_percent: 240,
+                    taken_ms: 6700,
+                    review_kind: "review",
+                },
+            ],
+        });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            // Panel collapsed → no getCardHistory call yet (lazy
+            // contract: the disclosure must not burn requests for
+            // users who never expand it).
+            expect(vi.mocked(getCardHistory)).not.toHaveBeenCalled();
+
+            openHistoryPanel(container);
+            await settle();
+
+            expect(vi.mocked(getCardHistory)).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(getCardHistory)).toHaveBeenCalledWith(101);
+
+            const rows = container.querySelectorAll(".history-row");
+            expect(rows.length).toBe(2);
+            // Spot-check first row carries the button label so the
+            // wire→display mapping is exercised end to end.
+            expect(rows[0]?.textContent).toContain("Good");
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("switching between two cards refetches history with the new id", async () => {
+        vi.mocked(fetchCards).mockResolvedValueOnce({
+            total: 2,
+            cards: [
+                card(101, "<p>hola</p>", "<p>hello</p>"),
+                card(202, "<p>gato</p>", "<p>cat</p>"),
+            ],
+        });
+        // First open targets card 101, then we click row for 202 and
+        // re-open; mockResolvedValueOnce queues two distinct
+        // responses so a stale-cache hit on the second fetch would
+        // fail loud.
+        vi.mocked(getCardHistory).mockResolvedValueOnce({
+            card_id: 101,
+            total: 1,
+            entries: [
+                {
+                    id: 1_777_000_000_000,
+                    button: 3,
+                    button_label: "good",
+                    interval_days: 4,
+                    last_interval_days: 1,
+                    ease_percent: 250,
+                    taken_ms: 4200,
+                    review_kind: "review",
+                },
+            ],
+        });
+        vi.mocked(getCardHistory).mockResolvedValueOnce({
+            card_id: 202,
+            total: 0,
+            entries: [],
+        });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            openHistoryPanel(container);
+            await settle();
+            expect(vi.mocked(getCardHistory)).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(getCardHistory)).toHaveBeenLastCalledWith(101);
+
+            // Switch to the second card. Browse rows are clickable
+            // buttons inside the .row-list region; matching the
+            // BrowseRow surface by its rendered front snippet keeps
+            // the assertion robust against unrelated layout tweaks.
+            const rowButtons = Array.from(
+                container.querySelectorAll<HTMLButtonElement>("button"),
+            ).filter((b) => b.textContent?.includes("gato"));
+            expect(rowButtons.length).toBeGreaterThan(0);
+            rowButtons[0]?.click();
+            await settle();
+
+            // The panel stayed open across the switch (bind:open is
+            // independent of selection), so the card-id $effect
+            // re-fires loadHistoryIfNeeded with the new id.
+            expect(vi.mocked(getCardHistory)).toHaveBeenCalledTimes(2);
+            expect(vi.mocked(getCardHistory)).toHaveBeenLastCalledWith(202);
+
+            // Card 202 had no reviews — empty-state copy renders.
+            const empty = container.querySelector(".history-empty");
+            expect(empty).not.toBeNull();
+            expect(empty?.textContent).toContain("No reviews yet");
         } finally {
             unmount(instance);
         }
