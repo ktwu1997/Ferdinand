@@ -7,12 +7,15 @@
         fetchDeckConfigs,
         fetchFsrsEnabled,
         fetchFsrsHealthCheck,
+        fetchNotetypes,
         patchDeckConfigById,
+        patchNotetypeName,
         postDeckConfig,
         postFsrsOptimize,
         putFsrsEnabled,
         putFsrsHealthCheck,
         type ApiDeckConfigListItem,
+        type ApiNotetypeSummary,
     } from "$lib/api";
 
     const DEFAULT_PRESET_ID = 1;
@@ -21,6 +24,7 @@
         { id: "profile", label: "Profile" },
         { id: "scheduling", label: "Scheduling" },
         { id: "fsrs", label: "FSRS" },
+        { id: "notetypes", label: "Notetypes" },
         { id: "sync", label: "Sync" },
         { id: "appearance", label: "Appearance" },
         { id: "advanced", label: "Advanced" },
@@ -92,6 +96,18 @@
     // in flight. Errors surface in the same field-error slot as create.
     let deletingPreset = $state(false);
     let errorDeletePreset: string | null = $state(null);
+
+    // Phase 16-B: inline notetype rename. Lazy-loaded — fetchNotetypes
+    // only fires when the user clicks the "Notetypes" sidebar tab so the
+    // initial settings paint stays cheap. Per-row edit state keeps the
+    // UX one-row-at-a-time (mirrors the 9-S browse tree rename pattern).
+    let notetypes = $state<ApiNotetypeSummary[] | null>(null);
+    let loadingNotetypes = $state(false);
+    let errorNotetypesLoad: string | null = $state(null);
+    let editingNotetypeId = $state<number | null>(null);
+    let notetypeNameDraft = $state("");
+    let savingNotetypeRename = $state(false);
+    let errorNotetypeRename: string | null = $state(null);
 
     function applyPresetSnapshot(
         conf: {
@@ -371,6 +387,78 @@
             savingHealthCheck = false;
         }
     }
+
+    // Phase 16-B: lazy-load notetypes on first switch to the tab so we
+    // don't pay the round-trip on every Settings open. Idempotent — the
+    // notetypes != null guard makes a re-click a no-op until either the
+    // user renames something or hits an error.
+    async function ensureNotetypesLoaded(): Promise<void> {
+        if (notetypes !== null || loadingNotetypes) return;
+        loadingNotetypes = true;
+        errorNotetypesLoad = null;
+        try {
+            const res = await fetchNotetypes();
+            notetypes = res.notetypes;
+        } catch (e) {
+            errorNotetypesLoad =
+                e instanceof Error ? e.message : "Couldn't load notetypes";
+        } finally {
+            loadingNotetypes = false;
+        }
+    }
+
+    function startEditNotetype(id: number, name: string): void {
+        editingNotetypeId = id;
+        notetypeNameDraft = name;
+        errorNotetypeRename = null;
+    }
+
+    function cancelEditNotetype(): void {
+        editingNotetypeId = null;
+        notetypeNameDraft = "";
+        errorNotetypeRename = null;
+    }
+
+    async function commitEditNotetype(): Promise<void> {
+        if (editingNotetypeId === null || !notetypes) return;
+        const trimmed = notetypeNameDraft.trim();
+        const original = notetypes.find((n) => n.id === editingNotetypeId);
+        if (!original) {
+            cancelEditNotetype();
+            return;
+        }
+        if (trimmed === "" || trimmed === original.name) {
+            cancelEditNotetype();
+            return;
+        }
+        savingNotetypeRename = true;
+        errorNotetypeRename = null;
+        try {
+            const res = await patchNotetypeName(editingNotetypeId, trimmed);
+            // Mirror the server-canonical name into local state so a
+            // follow-up view doesn't need a refetch.
+            notetypes = notetypes.map((n) =>
+                n.id === res.id ? { ...n, name: res.name } : n,
+            );
+            editingNotetypeId = null;
+            notetypeNameDraft = "";
+        } catch (e) {
+            errorNotetypeRename =
+                e instanceof Error ? e.message : "Rename failed";
+        } finally {
+            savingNotetypeRename = false;
+        }
+    }
+
+    // Reactively trigger the lazy load when the user switches to the
+    // notetypes tab. $effect rather than onclick on the nav-item so the
+    // loader runs even if the tab is reached via deep-link or keyboard
+    // navigation (future iterations).
+    $effect(() => {
+        if (active === "notetypes") {
+            ensureNotetypesLoaded();
+        }
+    });
 
     async function runOptimize(): Promise<void> {
         if (disabledControls() || optimizing) return;
@@ -777,6 +865,97 @@
                             <span>System</span>
                         </label>
                     </div>
+                </div>
+            </Card>
+        {:else if active === "notetypes"}
+            <Card padding="lg">
+                <div class="field">
+                    <div class="field-head">
+                        <div>
+                            <span class="field-label">Notetypes</span>
+                            <p class="hint">
+                                Rename the templates that drive your cards.
+                                Field add/remove is coming later — for now
+                                you can keep your "Basic" / "Cloze" labels
+                                tidy.
+                            </p>
+                        </div>
+                    </div>
+                    {#if loadingNotetypes}
+                        <p class="hint">Loading notetypes…</p>
+                    {:else if errorNotetypesLoad}
+                        <p class="field-error" role="alert">
+                            {errorNotetypesLoad}
+                        </p>
+                    {:else if notetypes && notetypes.length > 0}
+                        <ul class="nt-list">
+                            {#each notetypes as nt (nt.id)}
+                                <li class="nt-row">
+                                    {#if editingNotetypeId === nt.id}
+                                        <input
+                                            class="text-input nt-input"
+                                            type="text"
+                                            bind:value={notetypeNameDraft}
+                                            disabled={savingNotetypeRename}
+                                            aria-label="Notetype name"
+                                            onkeydown={(e) => {
+                                                if (e.key === "Enter") {
+                                                    e.preventDefault();
+                                                    commitEditNotetype();
+                                                } else if (e.key === "Escape") {
+                                                    cancelEditNotetype();
+                                                }
+                                            }}
+                                        />
+                                        <button
+                                            class="ghost-btn"
+                                            onclick={commitEditNotetype}
+                                            disabled={savingNotetypeRename}
+                                        >
+                                            {savingNotetypeRename
+                                                ? "Saving…"
+                                                : "Save"}
+                                        </button>
+                                        <button
+                                            class="ghost-btn"
+                                            onclick={cancelEditNotetype}
+                                            disabled={savingNotetypeRename}
+                                        >
+                                            Cancel
+                                        </button>
+                                    {:else}
+                                        <span class="nt-name">{nt.name}</span>
+                                        <span class="nt-meta">
+                                            {nt.fields.length} field{nt.fields
+                                                .length === 1
+                                                ? ""
+                                                : "s"}
+                                        </span>
+                                        <button
+                                            class="ghost-btn"
+                                            onclick={() =>
+                                                startEditNotetype(
+                                                    nt.id,
+                                                    nt.name,
+                                                )}
+                                        >
+                                            Rename
+                                        </button>
+                                    {/if}
+                                </li>
+                            {/each}
+                        </ul>
+                        {#if errorNotetypeRename}
+                            <p class="field-error" role="alert">
+                                {errorNotetypeRename}
+                            </p>
+                        {/if}
+                    {:else if notetypes && notetypes.length === 0}
+                        <p class="hint">
+                            No notetypes on this collection — add cards
+                            from the home page to seed Basic.
+                        </p>
+                    {/if}
                 </div>
             </Card>
         {:else if active === "sync"}
@@ -1198,5 +1377,67 @@
     .placeholder {
         color: var(--text-muted);
         font-size: var(--text-sm);
+    }
+
+    /* Phase 16-B: notetype rename list. List rows mirror the .row pattern
+       above (border-top divider, three-column flex), but the input gets
+       the same border treatment as .text-input elsewhere so the rename
+       affordance reads as inline-edit, not full-form. */
+    .nt-list {
+        list-style: none;
+        margin: var(--space-3) 0 0;
+        padding: 0;
+    }
+    .nt-row {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+        padding: var(--space-2) 0;
+        border-top: 1px solid var(--border);
+    }
+    .nt-row:first-child {
+        border-top: 0;
+    }
+    .nt-name {
+        flex: 1;
+        font-size: var(--text-sm);
+        color: var(--text);
+    }
+    .nt-meta {
+        font-size: var(--text-xs);
+        color: var(--text-subtle);
+    }
+    .nt-input {
+        flex: 1;
+        padding: 0.4rem 0.6rem;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        background: var(--bg);
+        color: var(--text);
+        font: inherit;
+    }
+    .nt-input:focus {
+        outline: none;
+        border-color: var(--accent);
+    }
+    .nt-input:disabled {
+        opacity: 0.55;
+    }
+    .ghost-btn {
+        padding: 0.3rem 0.65rem;
+        font-size: var(--text-xs);
+        border-radius: var(--radius-sm);
+        background: var(--bg-subtle);
+        color: var(--text-muted);
+        border: 1px solid var(--border);
+        cursor: pointer;
+    }
+    .ghost-btn:hover:not(:disabled) {
+        color: var(--accent);
+        border-color: var(--accent);
+    }
+    .ghost-btn:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
     }
 </style>
