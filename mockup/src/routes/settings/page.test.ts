@@ -51,6 +51,9 @@ import {
 // Phase 10-C: factory keeps existing tests cheap as DeckConfig grows.
 // new_per_day / reviews_per_day / cap_answer_time_secs were added in 10-C
 // and must be present on every ApiDeckConfigDefault fixture.
+// Phase 17-C: new_card_order added (default "due", matching the proto
+// enum's NewCardInsertOrder::Due=0). Existing fixtures inherit this so
+// the segmented control hydrates to the documented default.
 function makeConf(overrides: Partial<ApiDeckConfigDefault> = {}): ApiDeckConfigDefault {
     return {
         id: 1,
@@ -60,6 +63,7 @@ function makeConf(overrides: Partial<ApiDeckConfigDefault> = {}): ApiDeckConfigD
         new_per_day: 20,
         reviews_per_day: 200,
         cap_answer_time_secs: 60,
+        new_card_order: "due",
         fsrs_params: [],
         ...overrides,
     };
@@ -1110,6 +1114,114 @@ describe("SettingsPage FSRS params hydration contract (Phase 9-O')", () => {
                 // No spillover into the other two new fields.
                 const text = allErrors.map((e) => e.textContent ?? "").join(" ");
                 expect(text).not.toMatch(/new_per_day|reviews_per_day/);
+            } finally {
+                unmount(instance);
+            }
+        });
+    });
+
+    // Phase 17-C contract tests for the new-card insert order toggle.
+    // The segmented control is a button group, not a num-input, so it
+    // gets its own block — same vi.mocked + settle helpers, different
+    // dispatch surface.
+    describe("Phase 17-C new-card order toggle", () => {
+        function getSegments(root: HTMLElement): {
+            due: HTMLButtonElement;
+            random: HTMLButtonElement;
+        } {
+            const segs = Array.from(
+                root.querySelectorAll<HTMLButtonElement>(".segmented .segment"),
+            );
+            const due = segs.find((s) =>
+                (s.textContent ?? "").trim() === "Due",
+            );
+            const random = segs.find((s) =>
+                (s.textContent ?? "").trim() === "Random",
+            );
+            if (!due || !random) {
+                throw new Error("segmented control buttons missing");
+            }
+            return { due, random };
+        }
+
+        test("snapshot 'random' hydrates segmented control with Random active", async () => {
+            vi.mocked(fetchDeckConfigById).mockResolvedValueOnce(
+                makeConf({ new_card_order: "random" }),
+            );
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const { due, random } = getSegments(container);
+                expect(random.classList.contains("active")).toBe(true);
+                expect(random.getAttribute("aria-checked")).toBe("true");
+                expect(due.classList.contains("active")).toBe(false);
+                expect(due.getAttribute("aria-checked")).toBe("false");
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("clicking the inactive segment fires PATCH new_card_order and echoes server value", async () => {
+            vi.mocked(patchDeckConfigById).mockResolvedValueOnce(
+                makeConf({ new_card_order: "random" }),
+            );
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const { due, random } = getSegments(container);
+                // Default snapshot has Due active; clicking Random switches it.
+                expect(due.classList.contains("active")).toBe(true);
+                random.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+                await settle();
+
+                expect(vi.mocked(patchDeckConfigById)).toHaveBeenCalledTimes(1);
+                expect(
+                    vi.mocked(patchDeckConfigById).mock.calls[0],
+                ).toEqual([1, { new_card_order: "random" }]);
+
+                // Server-echoed value drives the visible state.
+                const after = getSegments(container);
+                expect(after.random.classList.contains("active")).toBe(true);
+                expect(after.due.classList.contains("active")).toBe(false);
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("PATCH failure rolls back the optimistic toggle and surfaces inline error", async () => {
+            vi.mocked(patchDeckConfigById).mockRejectedValueOnce(
+                new Error("400 new_card_order must be \"due\" or \"random\""),
+            );
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const { random } = getSegments(container);
+                random.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+                await settle();
+
+                // After failure the active segment must roll back to Due
+                // (the previous state) — Random clicked but not committed.
+                const after = getSegments(container);
+                expect(after.due.classList.contains("active")).toBe(true);
+                expect(after.random.classList.contains("active")).toBe(false);
+
+                // Inline error surfaces the server message.
+                const errors = Array.from(
+                    container.querySelectorAll(".field-error"),
+                );
+                const orderErrors = errors.filter((e) =>
+                    (e.textContent ?? "").includes("new_card_order"),
+                );
+                expect(orderErrors.length).toBe(1);
+                expect(orderErrors[0]?.textContent).toContain(
+                    "must be \"due\" or \"random\"",
+                );
             } finally {
                 unmount(instance);
             }

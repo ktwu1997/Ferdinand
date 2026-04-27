@@ -1,3 +1,4 @@
+use anki::deckconfig::NewCardInsertOrder;
 use anki::deckconfig::UpdateDeckConfigsRequest;
 use anki::prelude::*;
 use anki_proto::deck_config::deck_configs_for_update::current_deck::Limits;
@@ -31,6 +32,13 @@ pub struct DeckConfigDefault {
     /// Soft per-card answer-time cap in seconds for "good"-side ratings
     /// (1..=600). The desktop default is 60.
     pub cap_answer_time_secs: u32,
+    /// Phase 17-C: how new cards are picked off the queue.
+    /// `"due"` (default) picks in note creation order; `"random"`
+    /// shuffles within the daily new-card pool. Mirrors the
+    /// `NewCardInsertOrder` proto enum (Due=0, Random=1) — the wire
+    /// format uses the lowercase string so a clueless client can't
+    /// confuse the two integer values.
+    pub new_card_order: String,
     /// Persisted FSRS-6 parameters. Empty when the preset has never been
     /// optimized; populated by Phase 9-O `POST /api/fsrs/optimize`.
     pub fsrs_params: Vec<f32>,
@@ -43,6 +51,10 @@ pub struct DeckConfigPatch {
     pub new_per_day: Option<u32>,
     pub reviews_per_day: Option<u32>,
     pub cap_answer_time_secs: Option<u32>,
+    /// Phase 17-C: `"due"` or `"random"` (case-sensitive). Other values
+    /// are rejected with a 400 at the API boundary so the storage layer
+    /// never sees a malformed enum value.
+    pub new_card_order: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -201,6 +213,14 @@ pub async fn patch_by_id(
     if let Some(c) = patch.cap_answer_time_secs {
         conf.inner.cap_answer_time_to_secs = c;
     }
+    if let Some(ref order) = patch.new_card_order {
+        // validate_patch already rejected unknown strings, so this can't
+        // panic; map_err keeps the Result chain honest if validate_patch
+        // ever drifts out of sync with the parser.
+        let parsed =
+            parse_new_card_order(order).map_err(|m| ServerError::bad_request(m.to_string()))?;
+        conf.inner.new_card_insert_order = parsed as i32;
+    }
 
     let fsrs = col.get_config_bool(BoolKey::Fsrs);
     let fsrs_health_check = col.get_config_bool(BoolKey::FsrsHealthCheck);
@@ -278,8 +298,13 @@ pub async fn post_create(
     // id=0 triggers the upstream add path
     // (`Collection::add_or_update_deck_config` -> `add_deck_config_inner`),
     // which assigns a fresh epoch-ms id during update_deck_configs.
-    let mut new_config = DeckConfig::default();
-    new_config.name = name.clone();
+    // Inline-init form per clippy::field_reassign_with_default — the
+    // 12-B carryover lint, cleaned up alongside 17-C since both touch
+    // this file.
+    let new_config = DeckConfig {
+        name: name.clone(),
+        ..Default::default()
+    };
 
     let fsrs = col.get_config_bool(BoolKey::Fsrs);
     let fsrs_health_check = col.get_config_bool(BoolKey::FsrsHealthCheck);
@@ -479,7 +504,38 @@ fn validate_patch(patch: &DeckConfigPatch) -> Result<(), &'static str> {
             return Err("cap_answer_time_secs must be between 1 and 600");
         }
     }
+    if let Some(ref o) = patch.new_card_order {
+        // Discard the parsed enum here — `patch_by_id` re-parses to apply
+        // it. We only care that this returns Ok so the handler short-
+        // circuits on bad strings before reaching the storage layer.
+        let _ = parse_new_card_order(o)?;
+    }
     Ok(())
+}
+
+/// Parse the wire string into the proto enum. Centralised so
+/// `validate_patch` and `patch_by_id` can't drift out of sync. Returns
+/// the same human-readable `&'static str` shape as the other validators
+/// for uniform 400-mapping at the handler boundary.
+fn parse_new_card_order(s: &str) -> Result<NewCardInsertOrder, &'static str> {
+    match s {
+        "due" => Ok(NewCardInsertOrder::Due),
+        "random" => Ok(NewCardInsertOrder::Random),
+        _ => Err("new_card_order must be \"due\" or \"random\""),
+    }
+}
+
+/// Format the proto enum back to the wire string. Mirror of
+/// `parse_new_card_order` so the round-trip through to_response → patch
+/// → to_response is idempotent. Unknown integer values fall back to
+/// "due" — the proto enum only has two variants (Due=0, Random=1), so
+/// this is defensive against a future proto widening that surfaces a
+/// new variant we haven't taught the API about yet.
+fn format_new_card_order(order: NewCardInsertOrder) -> &'static str {
+    match order {
+        NewCardInsertOrder::Due => "due",
+        NewCardInsertOrder::Random => "random",
+    }
 }
 
 fn to_response(c: &DeckConfig) -> DeckConfigDefault {
@@ -491,6 +547,7 @@ fn to_response(c: &DeckConfig) -> DeckConfigDefault {
         new_per_day: c.inner.new_per_day,
         reviews_per_day: c.inner.reviews_per_day,
         cap_answer_time_secs: c.inner.cap_answer_time_to_secs,
+        new_card_order: format_new_card_order(c.inner.new_card_insert_order()).to_string(),
         fsrs_params: c.inner.fsrs_params_6.clone(),
     }
 }
@@ -506,6 +563,7 @@ mod tests {
             new_per_day: None,
             reviews_per_day: None,
             cap_answer_time_secs: None,
+            new_card_order: None,
         }
     }
 
@@ -683,10 +741,84 @@ mod tests {
             new_per_day: Some(99_999),
             reviews_per_day: None,
             cap_answer_time_secs: None,
+            new_card_order: None,
         };
         assert_eq!(
             validate_patch(&p).unwrap_err(),
             "desired_retention must be between 0.70 and 0.97"
         );
+    }
+
+    #[test]
+    fn parse_new_card_order_accepts_documented_strings() {
+        // The wire format is the lowercase human-readable name, not the
+        // SCREAMING_SNAKE proto identifier. Pinning both ensures a
+        // refactor that switches to the proto's `as_str_name` would
+        // surface as a test diff rather than a silent API break.
+        assert!(matches!(
+            parse_new_card_order("due"),
+            Ok(NewCardInsertOrder::Due)
+        ));
+        assert!(matches!(
+            parse_new_card_order("random"),
+            Ok(NewCardInsertOrder::Random)
+        ));
+    }
+
+    #[test]
+    fn parse_new_card_order_rejects_uppercase_and_unknown() {
+        // Case-sensitive on purpose — Anki's proto enum uses
+        // SCREAMING_SNAKE_CASE on the wire when serialised by name, but
+        // we deliberately picked lowercase so accidentally piping the
+        // proto's `as_str_name` output through this parser is a 400, not
+        // a silent acceptance of the wrong variant.
+        assert_eq!(
+            parse_new_card_order("Due").unwrap_err(),
+            "new_card_order must be \"due\" or \"random\""
+        );
+        assert_eq!(
+            parse_new_card_order("NEW_CARD_INSERT_ORDER_DUE").unwrap_err(),
+            "new_card_order must be \"due\" or \"random\""
+        );
+        assert_eq!(
+            parse_new_card_order("").unwrap_err(),
+            "new_card_order must be \"due\" or \"random\""
+        );
+        assert_eq!(
+            parse_new_card_order("sequential").unwrap_err(),
+            "new_card_order must be \"due\" or \"random\""
+        );
+    }
+
+    #[test]
+    fn validate_patch_rejects_unknown_new_card_order() {
+        // End-to-end check that validate_patch surfaces parse errors —
+        // the handler relies on this short-circuit so the storage write
+        // never sees a malformed enum string.
+        let mut p = empty_patch();
+        p.new_card_order = Some("alphabetical".into());
+        assert_eq!(
+            validate_patch(&p).unwrap_err(),
+            "new_card_order must be \"due\" or \"random\""
+        );
+        // Happy path: documented values flow through.
+        p.new_card_order = Some("due".into());
+        assert!(validate_patch(&p).is_ok());
+        p.new_card_order = Some("random".into());
+        assert!(validate_patch(&p).is_ok());
+    }
+
+    #[test]
+    fn format_new_card_order_round_trips_through_parse() {
+        // Idempotency check — to_response → format → parse must round
+        // trip without lossing information. If a future proto bump adds
+        // a third variant, the wildcard arm in format_new_card_order
+        // would still return "due", so this test would fail loudly the
+        // moment the round-trip diverges from the stored value.
+        for variant in [NewCardInsertOrder::Due, NewCardInsertOrder::Random] {
+            let s = format_new_card_order(variant);
+            let back = parse_new_card_order(s).expect("round-trip must parse");
+            assert_eq!(back, variant);
+        }
     }
 }

@@ -74,6 +74,14 @@ export interface ApiDeckConfigDefault {
     /** Soft answer-time cap in seconds (1..=600). Phase 10-C. */
     cap_answer_time_secs: number;
     /**
+     * Phase 17-C: how the daily new-card pool is ordered. `"due"` (default)
+     * picks in note creation order; `"random"` shuffles the pool. Server
+     * persists the proto enum (`NewCardInsertOrder` Due=0, Random=1) but
+     * exposes the lowercase string so a misconfigured client gets a 400
+     * instead of silently accepting a wrong integer.
+     */
+    new_card_order: "due" | "random";
+    /**
      * Persisted FSRS-6 parameters. Empty when the preset has never been
      * optimized. Phase 9-O' lets the weights grid hydrate on mount instead
      * of waiting for a Re-optimize click each session.
@@ -87,6 +95,8 @@ export interface ApiDeckConfigDefaultPatch {
     new_per_day?: number;
     reviews_per_day?: number;
     cap_answer_time_secs?: number;
+    /** Phase 17-C: see ApiDeckConfigDefault.new_card_order for the contract. */
+    new_card_order?: "due" | "random";
 }
 
 export interface ApiFsrsEnabled {

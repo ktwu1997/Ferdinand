@@ -73,6 +73,14 @@
     let errorReviewsPerDay: string | null = $state(null);
     let errorCapAnswerTime: string | null = $state(null);
 
+    // Phase 17-C: new-card insert order toggle. Segmented control with two
+    // options ("due" / "random") — persists immediately on click rather
+    // than onblur because the underlying control is a button group, not a
+    // text input. Same fail-then-rollback pattern as the other persisters.
+    let newCardOrder: "due" | "random" = $state("due");
+    let savingNewCardOrder = $state(false);
+    let errorNewCardOrder: string | null = $state(null);
+
     // Optimize state. Phase 9-O' hydrates params from GET response so the
     // weights grid survives page reload. paramsSource distinguishes "loaded
     // from disk" hint copy from "trained this run" — the two share UI but
@@ -116,6 +124,7 @@
             new_per_day: number;
             reviews_per_day: number;
             cap_answer_time_secs: number;
+            new_card_order: "due" | "random";
             fsrs_params: number[];
         },
     ): void {
@@ -124,6 +133,7 @@
         newPerDay = conf.new_per_day;
         reviewsPerDay = conf.reviews_per_day;
         capAnswerTimeSecs = conf.cap_answer_time_secs;
+        newCardOrder = conf.new_card_order;
         // Copy the array — assigning the incoming reference can leave Svelte's
         // $state proxy referencing a non-tracked array if the caller mutates
         // the source later. Snapshot semantics are what the UI wants here.
@@ -350,6 +360,30 @@
                 e instanceof Error ? e.message : "Failed to save answer-time cap";
         } finally {
             savingCapAnswerTime = false;
+        }
+    }
+
+    async function persistNewCardOrder(next: "due" | "random"): Promise<void> {
+        if (disabledControls() || selectedPresetId === null) return;
+        if (next === newCardOrder) return;
+        const previous = newCardOrder;
+        // Optimistic update so the segmented control highlights the new
+        // option immediately. Roll back on failure — the same
+        // fail-then-rollback shape as switchPreset.
+        newCardOrder = next;
+        savingNewCardOrder = true;
+        errorNewCardOrder = null;
+        try {
+            const conf = await patchDeckConfigById(selectedPresetId, {
+                new_card_order: next,
+            });
+            newCardOrder = conf.new_card_order;
+        } catch (e) {
+            newCardOrder = previous;
+            errorNewCardOrder =
+                e instanceof Error ? e.message : "Failed to save new-card order";
+        } finally {
+            savingNewCardOrder = false;
         }
     }
 
@@ -782,6 +816,46 @@
                         <p class="field-error">{errorCapAnswerTime}</p>
                     {/if}
                 </div>
+
+                <div class="field">
+                    <div class="field-head">
+                        <div>
+                            <!-- svelte-ignore a11y_label_has_associated_control: this label is the ARIA group label for the radiogroup below via aria-labelledby, not bound to a single input -->
+                            <label id="new-card-order-label">New card order</label>
+                            <p class="hint">Order new cards are picked off the daily pool. Random shuffles within the per-day cap.</p>
+                        </div>
+                        <div
+                            class="segmented"
+                            role="radiogroup"
+                            aria-labelledby="new-card-order-label"
+                        >
+                            <button
+                                type="button"
+                                role="radio"
+                                aria-checked={newCardOrder === "due"}
+                                class="segment"
+                                class:active={newCardOrder === "due"}
+                                onclick={() => persistNewCardOrder("due")}
+                                disabled={disabledControls() || savingNewCardOrder}
+                            >Due</button>
+                            <button
+                                type="button"
+                                role="radio"
+                                aria-checked={newCardOrder === "random"}
+                                class="segment"
+                                class:active={newCardOrder === "random"}
+                                onclick={() => persistNewCardOrder("random")}
+                                disabled={disabledControls() || savingNewCardOrder}
+                            >Random</button>
+                        </div>
+                    </div>
+                    {#if savingNewCardOrder}
+                        <span class="saving">Saving…</span>
+                    {/if}
+                    {#if errorNewCardOrder}
+                        <p class="field-error">{errorNewCardOrder}</p>
+                    {/if}
+                </div>
             </Card>
 
             <Card padding="lg">
@@ -1207,6 +1281,39 @@
     .num-input:disabled,
     input[type="range"]:disabled,
     input[type="checkbox"]:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+    }
+
+    .segmented {
+        display: inline-flex;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        overflow: hidden;
+        background: var(--bg);
+    }
+    .segment {
+        padding: 0.35rem 0.9rem;
+        background: transparent;
+        color: var(--text-subtle);
+        border: none;
+        border-left: 1px solid var(--border);
+        cursor: pointer;
+        font-size: var(--text-sm);
+        transition: background 0.12s ease, color 0.12s ease;
+    }
+    .segment:first-child {
+        border-left: none;
+    }
+    .segment:hover:not(:disabled):not(.active) {
+        background: var(--bg-subtle, rgba(0, 0, 0, 0.04));
+    }
+    .segment.active {
+        background: var(--accent);
+        color: var(--accent-contrast, #fff);
+        cursor: default;
+    }
+    .segment:disabled {
         opacity: 0.55;
         cursor: not-allowed;
     }
