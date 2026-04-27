@@ -5,21 +5,25 @@
     import {
         deleteDeck,
         deleteNote,
+        deleteSavedSearch,
         fetchCards,
         fetchDecks,
         fetchDeckConfigs,
         fetchNote,
         fetchNotetypes,
+        fetchSavedSearches,
         fetchTags,
         patchDeckName,
         patchDeckPreset,
         patchNote,
         postCardFlag,
         postCardSuspend,
+        postSavedSearch,
         type ApiCardSummary,
         type ApiDeckConfigListItem,
         type ApiDeckSummary,
         type ApiNotetypeSummary,
+        type ApiSavedSearch,
     } from "$lib/api";
     import BrowseRow from "$lib/browse/BrowseRow.svelte";
     import BrowseRowSkeleton from "$lib/browse/BrowseRowSkeleton.svelte";
@@ -28,6 +32,19 @@
     let liveCards = $state<ApiCardSummary[] | null>(null);
     let liveDecks = $state<ApiDeckSummary[] | null>(null);
     let liveTags = $state<string[] | null>(null);
+    // Phase 18-C: persisted saved-search list. Same fetch-on-mount +
+    // silent-fallback shape as liveDecks / liveTags. Empty array is
+    // a valid live state (fresh collection, no entries yet) — only
+    // null means "fetch hasn't returned" / "fake-data mode" so the
+    // mutation handlers can refuse to write against fake data.
+    let liveSaved = $state<ApiSavedSearch[] | null>(null);
+    let isCreatingSaved = $state(false);
+    let newSavedName = $state("");
+    let newSavedQuery = $state("");
+    let isMutatingSaved = $state(false);
+    let savedError = $state<string | null>(null);
+    let newSavedNameInput = $state<HTMLInputElement | null>(null);
+    let savedDeletingName = $state<string | null>(null);
     let loading = $state(true);
     let query = $state("");
     let openSection = $state<Record<string, boolean>>({ decks: true, tags: true, saved: true });
@@ -177,6 +194,16 @@
         fetchNotetypes().then(
             (res) => {
                 liveNotetypes = res.notetypes;
+            },
+            () => undefined,
+        );
+        // Phase 18-C: saved-search list. Silent fallback to fake
+        // data on failure preserves the sidebar visually for offline
+        // / fake-data mode; mutations are gated by liveSaved being
+        // non-null so we never lie about persisting against fakes.
+        fetchSavedSearches().then(
+            (res) => {
+                liveSaved = res.searches;
             },
             () => undefined,
         );
@@ -361,6 +388,80 @@
     // generalising for Cloze / Image Occlusion.
     function fieldSlug(label: string): string {
         return label.toLowerCase().replace(/\s+/g, "-");
+    }
+
+    // Phase 18-C: saved-search lifecycle. Same start/cancel/commit
+    // shape as Phase 14-C "+ New deck" — button reveals two inputs
+    // (name + query), Enter commits, Escape cancels. Mutations are
+    // gated by liveSaved being non-null so fake-data mode refuses
+    // create/delete cleanly. On success the local liveSaved array
+    // is mutated in place from the server response (single source of
+    // truth — no optimistic state to roll back).
+    async function startCreateSaved(): Promise<void> {
+        if (liveSaved === null) {
+            savedError = "Saved searches unavailable — backend offline";
+            return;
+        }
+        isCreatingSaved = true;
+        newSavedName = "";
+        newSavedQuery = "";
+        savedError = null;
+        await tick();
+        newSavedNameInput?.focus();
+    }
+
+    function cancelCreateSaved(): void {
+        isCreatingSaved = false;
+        newSavedName = "";
+        newSavedQuery = "";
+        savedError = null;
+    }
+
+    async function commitCreateSaved(): Promise<void> {
+        const trimmedName = newSavedName.trim();
+        const trimmedQuery = newSavedQuery.trim();
+        if (trimmedName === "" && trimmedQuery === "") {
+            cancelCreateSaved();
+            return;
+        }
+        if (liveSaved === null) {
+            savedError = "Saved searches unavailable — backend offline";
+            return;
+        }
+        isMutatingSaved = true;
+        savedError = null;
+        try {
+            const created = await postSavedSearch({
+                name: trimmedName,
+                query: trimmedQuery,
+            });
+            liveSaved = [...liveSaved, created];
+            cancelCreateSaved();
+        } catch (e) {
+            savedError =
+                e instanceof Error ? e.message : "Couldn't save search";
+        } finally {
+            isMutatingSaved = false;
+        }
+    }
+
+    async function deleteSavedByName(name: string): Promise<void> {
+        if (liveSaved === null) {
+            savedError = "Saved searches unavailable — backend offline";
+            return;
+        }
+        if (savedDeletingName !== null) return; // single delete in flight
+        savedDeletingName = name;
+        savedError = null;
+        try {
+            await deleteSavedSearch(name);
+            liveSaved = liveSaved.filter((s) => s.name !== name);
+        } catch (e) {
+            savedError =
+                e instanceof Error ? e.message : "Couldn't delete saved search";
+        } finally {
+            savedDeletingName = null;
+        }
     }
 
     // Phase 11-A: derive the selected card's current preset_id from the
@@ -1004,13 +1105,99 @@
                 Saved searches
             </button>
             {#if openSection.saved}
-                <div class="section-items">
-                    {#each savedSearches as s (s.id)}
-                        <button class="item saved">
-                            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" /></svg>
-                            <span>{s.name}</span>
-                        </button>
-                    {/each}
+                <div class="section-items saved-searches-section">
+                    <!-- Phase 18-C: live list when fetchSavedSearches
+                         resolved; static fakeSavedSearches fallback
+                         keeps the visual when offline / fake-data
+                         mode (no `id` field on the live shape, so
+                         we key by `.name` which is server-unique). -->
+                    {#if liveSaved !== null}
+                        {#each liveSaved as s (s.name)}
+                            <div class="item-wrap saved-row">
+                                <button
+                                    type="button"
+                                    class="item saved"
+                                    onclick={() => (query = s.query)}
+                                    aria-label="Run saved search: {s.name}"
+                                >
+                                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" /></svg>
+                                    <span>{s.name}</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="saved-delete-btn"
+                                    disabled={savedDeletingName !== null}
+                                    onclick={(e) => {
+                                        e.stopPropagation();
+                                        deleteSavedByName(s.name);
+                                    }}
+                                    aria-label="Delete saved search: {s.name}"
+                                >×</button>
+                            </div>
+                        {/each}
+                    {:else}
+                        {#each savedSearches as s (s.id)}
+                            <button class="item saved">
+                                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" /></svg>
+                                <span>{s.name}</span>
+                            </button>
+                        {/each}
+                    {/if}
+
+                    {#if isCreatingSaved}
+                        <div class="saved-create-form">
+                            <input
+                                bind:this={newSavedNameInput}
+                                bind:value={newSavedName}
+                                class="saved-input"
+                                type="text"
+                                placeholder="Name"
+                                disabled={isMutatingSaved}
+                                aria-label="New saved search name"
+                                onkeydown={(e) => {
+                                    if (e.key === "Enter") commitCreateSaved();
+                                    else if (e.key === "Escape") cancelCreateSaved();
+                                }}
+                            />
+                            <input
+                                bind:value={newSavedQuery}
+                                class="saved-input saved-query-input"
+                                type="text"
+                                placeholder="deck:N2 is:due"
+                                disabled={isMutatingSaved}
+                                aria-label="New saved search query"
+                                onkeydown={(e) => {
+                                    if (e.key === "Enter") commitCreateSaved();
+                                    else if (e.key === "Escape") cancelCreateSaved();
+                                }}
+                            />
+                            <div class="saved-create-actions">
+                                <button
+                                    type="button"
+                                    class="saved-save-btn"
+                                    disabled={isMutatingSaved}
+                                    onclick={commitCreateSaved}
+                                >Save</button>
+                                <button
+                                    type="button"
+                                    class="saved-cancel-btn"
+                                    disabled={isMutatingSaved}
+                                    onclick={cancelCreateSaved}
+                                >Cancel</button>
+                            </div>
+                        </div>
+                    {:else if liveSaved !== null}
+                        <button
+                            type="button"
+                            class="saved-new-btn"
+                            onclick={startCreateSaved}
+                            aria-label="Add saved search"
+                        >+ New saved search</button>
+                    {/if}
+
+                    {#if savedError}
+                        <div class="saved-error" role="alert">{savedError}</div>
+                    {/if}
                 </div>
             {/if}
         </div>
@@ -1890,5 +2077,104 @@
     .deck-rename:disabled {
         opacity: 0.6;
         cursor: progress;
+    }
+
+    /* Phase 18-C: saved-search section. Same visual rhythm as the
+       decks tree (.item / .item-wrap / .delete-x), with an inline
+       create form below the list. */
+    .saved-row {
+        position: relative;
+    }
+    .saved-row:hover .saved-delete-btn,
+    .saved-row:focus-within .saved-delete-btn {
+        opacity: 1;
+    }
+    .saved-row .item {
+        padding-right: 1.6rem;
+    }
+    .saved-delete-btn {
+        position: absolute;
+        right: var(--space-1);
+        top: 50%;
+        transform: translateY(-50%);
+        width: 1.1rem;
+        height: 1.1rem;
+        line-height: 1;
+        font-size: 0.95rem;
+        color: var(--text-subtle);
+        background: transparent;
+        border-radius: var(--radius-sm);
+        opacity: 0;
+        transition:
+            opacity var(--duration-fast) var(--ease),
+            color var(--duration-fast) var(--ease),
+            background var(--duration-fast) var(--ease);
+    }
+    .saved-delete-btn:hover {
+        color: #c0392b;
+        background: var(--bg-hover);
+    }
+    .saved-delete-btn:disabled {
+        opacity: 0;
+        cursor: not-allowed;
+    }
+    .saved-create-form {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-1);
+        padding: var(--space-1) var(--space-2);
+    }
+    .saved-input {
+        font-size: var(--text-sm);
+        padding: 2px 6px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        background: var(--bg);
+        color: var(--text);
+        outline: none;
+    }
+    .saved-input:focus {
+        border-color: var(--accent);
+    }
+    .saved-query-input {
+        font-family: var(--font-mono, monospace);
+    }
+    .saved-create-actions {
+        display: flex;
+        gap: var(--space-2);
+    }
+    .saved-save-btn,
+    .saved-cancel-btn,
+    .saved-new-btn {
+        font-size: var(--text-xs);
+        padding: 2px 8px;
+        background: transparent;
+        color: var(--text-muted);
+        border: 1px dashed var(--border);
+        border-radius: var(--radius-sm);
+        cursor: pointer;
+        transition:
+            color var(--duration-fast) var(--ease),
+            border-color var(--duration-fast) var(--ease);
+    }
+    .saved-save-btn:hover,
+    .saved-cancel-btn:hover,
+    .saved-new-btn:hover {
+        color: var(--accent);
+        border-color: var(--accent);
+    }
+    .saved-new-btn {
+        margin-left: var(--space-2);
+        margin-top: var(--space-1);
+        align-self: flex-start;
+    }
+    .saved-error {
+        margin-left: var(--space-2);
+        margin-top: var(--space-1);
+        padding: 2px 6px;
+        font-size: var(--text-xs);
+        color: #c0392b;
+        background: rgba(192, 57, 43, 0.08);
+        border-radius: var(--radius-sm);
     }
 </style>

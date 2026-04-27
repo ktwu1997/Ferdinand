@@ -5,11 +5,12 @@ pub mod fsrs;
 pub mod media;
 pub mod notes;
 pub mod notetypes;
+pub mod saved_searches;
 pub mod stats;
 pub mod study;
 pub mod tags;
 
-use axum::routing::{get, patch, post};
+use axum::routing::{delete, get, patch, post};
 use axum::Router;
 use serde::Serialize;
 
@@ -69,6 +70,14 @@ pub fn router() -> Router<AppState> {
         .route("/api/fsrs/optimize", post(fsrs::post_optimize))
         .route("/api/stats/recent", get(stats::get_recent))
         .route("/api/tags", get(tags::list_tags))
+        .route(
+            "/api/saved_searches",
+            get(saved_searches::list_saved).post(saved_searches::post_saved),
+        )
+        .route(
+            "/api/saved_searches/{name}",
+            delete(saved_searches::delete_saved),
+        )
         // Static media (images, audio) served from <collection-stem>.media/.
         // Not under /api/ so shadow-DOM <base href="/media/"> stays clean and
         // the path reads as a static resource root. Phase 15-C: POST /media
