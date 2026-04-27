@@ -126,9 +126,7 @@ fn validate_rename_name(name: &str) -> Result<&str, &'static str> {
 /// duplicate ords, and per-format empty / over-length payloads.
 /// Callers still need to validate ord against the live template
 /// count once the notetype is loaded — that's `validate_template_ords`.
-fn validate_template_patches(
-    templates: &[NotetypeTemplatePatch],
-) -> Result<(), &'static str> {
+fn validate_template_patches(templates: &[NotetypeTemplatePatch]) -> Result<(), &'static str> {
     if templates.is_empty() {
         return Err("templates must not be empty");
     }
@@ -301,9 +299,7 @@ pub async fn get_by_id(
     Ok(Json(notetype_detail_response(&arc)))
 }
 
-pub(super) fn notetype_detail_response(
-    nt: &anki::notetype::Notetype,
-) -> NotetypeDetailResponse {
+pub(super) fn notetype_detail_response(nt: &anki::notetype::Notetype) -> NotetypeDetailResponse {
     NotetypeDetailResponse {
         id: nt.id.0,
         name: nt.name.clone(),

@@ -17,6 +17,7 @@ vi.mock("$lib/api", async (importOriginal) => {
         fetchFsrsEnabled: vi.fn(),
         fetchFsrsHealthCheck: vi.fn(),
         fetchNotetypes: vi.fn(),
+        getCard: vi.fn(),
         patchDeckConfigById: vi.fn(),
         patchNotetypeName: vi.fn(),
         postDeckConfig: vi.fn(),
@@ -26,6 +27,7 @@ vi.mock("$lib/api", async (importOriginal) => {
         putFsrsEnabled: vi.fn(),
         putFsrsHealthCheck: vi.fn(),
         postFsrsOptimize: vi.fn(),
+        resetCardToNew: vi.fn(),
     };
 });
 
@@ -38,6 +40,7 @@ import {
     fetchFsrsEnabled,
     fetchFsrsHealthCheck,
     fetchNotetypes,
+    getCard,
     patchDeckConfigById,
     patchNotetypeName,
     postDeckConfig,
@@ -45,6 +48,8 @@ import {
     postNotetypeField,
     putFsrsEnabled,
     putFsrsHealthCheck,
+    resetCardToNew,
+    type ApiCardSummary,
     type ApiDeckConfigDefault,
     type ApiDeckConfigListResponse,
     type ApiFsrsEnabled,
@@ -217,11 +222,13 @@ describe("SettingsPage contract", () => {
                 container.querySelectorAll<HTMLButtonElement>(".nav-item"),
             ).map((b) => b.textContent?.trim());
             // Phase 16-B: Notetypes inserted between FSRS and Sync.
+            // Phase 20-C: Recovery inserted between Notetypes and Sync.
             expect(labels).toEqual([
                 "Profile",
                 "Scheduling",
                 "FSRS",
                 "Notetypes",
+                "Recovery",
                 "Sync",
                 "Appearance",
                 "Advanced",
@@ -2325,6 +2332,270 @@ describe("SettingsPage notetypes delete field (Phase 19-C)", () => {
             expect(
                 container.querySelector(".nt-meta")?.textContent?.trim(),
             ).toBe("3 fields");
+        } finally {
+            unmount(instance);
+        }
+    });
+});
+
+// Phase 20-C: burn-recovery — per-card reset to new with two-step
+// destructive confirm. Same describe-local-default-mock + clickNav
+// scaffold as the 19-C suite. Mocks getCard for the lookup populate
+// case and resetCardToNew for the destructive call assertions.
+describe("SettingsPage burn-recovery (Phase 20-C)", () => {
+    let container: HTMLDivElement;
+
+    function makeCard(overrides: Partial<ApiCardSummary> = {}): ApiCardSummary {
+        return {
+            id: 1714234567890,
+            note_id: 1614234567890,
+            deck_id: 1,
+            deck_name: "Default",
+            template_idx: 0,
+            front_html: "<p>What is the capital of France?</p>",
+            back_html: "<p>Paris</p>",
+            tags: ["geography", "europe"],
+            state: "review",
+            ease_factor: 2.5,
+            flag: 0,
+            notetype_id: 1776837237908,
+            notetype_name: "Basic",
+            notetype_css: "",
+            ...overrides,
+        };
+    }
+
+    beforeEach(() => {
+        vi.resetAllMocks();
+        vi.mocked(fetchDeckConfigs).mockResolvedValue(onlyDefaultList);
+        vi.mocked(fetchDeckConfigById).mockResolvedValue(defaultConf);
+        vi.mocked(fetchFsrsEnabled).mockResolvedValue(fsrsOff);
+        vi.mocked(fetchFsrsHealthCheck).mockResolvedValue(healthCheckOff);
+        container = document.createElement("div");
+        document.body.appendChild(container);
+    });
+
+    afterEach(() => {
+        container.remove();
+    });
+
+    function clickRecoveryTab(): void {
+        const tab = Array.from(
+            container.querySelectorAll<HTMLButtonElement>(".nav-item"),
+        ).find((b) => b.textContent?.trim() === "Recovery");
+        if (!tab) throw new Error("Recovery nav-item not found");
+        tab.click();
+        flushSync();
+    }
+
+    async function lookupCard(idText: string): Promise<void> {
+        const input = container.querySelector<HTMLInputElement>(
+            "#recovery-card-id",
+        );
+        if (!input) throw new Error("recovery card id input missing");
+        input.value = idText;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        flushSync();
+        const lookupBtn = Array.from(
+            container.querySelectorAll<HTMLButtonElement>(".ghost-btn"),
+        ).find((b) => b.textContent?.trim().startsWith("Look up"));
+        if (!lookupBtn) throw new Error("Look up button missing");
+        lookupBtn.click();
+        await settle();
+    }
+
+    test("look up populates card detail panel from getCard mock", async () => {
+        // Verifies the getCard wiring: a successful lookup renders the
+        // card preview block (deck/notetype/state/ease/tags) without
+        // arming the destructive confirm — the user must explicitly
+        // click Reset before any Confirm/Cancel UI shows.
+        const card = makeCard({
+            deck_name: "Geography",
+            notetype_name: "Cloze",
+            state: "review",
+            ease_factor: 2.36,
+            tags: ["capitals"],
+        });
+        vi.mocked(getCard).mockResolvedValueOnce(card);
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+            clickRecoveryTab();
+
+            await lookupCard("1714234567890");
+
+            expect(vi.mocked(getCard)).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(getCard)).toHaveBeenCalledWith(1714234567890);
+
+            // Card detail rows render with the mocked values — these
+            // data-test selectors keep the assertions robust against
+            // future style/layout edits to the recovery panel.
+            expect(
+                container
+                    .querySelector('[data-test="recovery-card-deck"]')
+                    ?.textContent?.trim(),
+            ).toBe("Geography");
+            expect(
+                container
+                    .querySelector('[data-test="recovery-card-notetype"]')
+                    ?.textContent?.trim(),
+            ).toBe("Cloze");
+            expect(
+                container
+                    .querySelector('[data-test="recovery-card-state"]')
+                    ?.textContent?.trim(),
+            ).toBe("review");
+            expect(
+                container
+                    .querySelector('[data-test="recovery-card-ease"]')
+                    ?.textContent?.trim(),
+            ).toBe("2.36");
+            expect(
+                container
+                    .querySelector('[data-test="recovery-card-tags"]')
+                    ?.textContent?.trim(),
+            ).toBe("capitals");
+
+            // Reset button visible, Confirm/Cancel pair NOT yet shown —
+            // a successful lookup must not auto-arm the destructive
+            // confirm. resetCardToNew also must not have fired.
+            expect(
+                container.querySelector('[data-test="recovery-reset-btn"]'),
+            ).not.toBeNull();
+            expect(
+                container.querySelector('[data-test="recovery-confirm-btn"]'),
+            ).toBeNull();
+            expect(vi.mocked(resetCardToNew)).not.toHaveBeenCalled();
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("two-step confirm fires resetCardToNew exactly once on Confirm, not on Reset", async () => {
+        // Destructive-discipline: clicking Reset must only arm the
+        // Confirm/Cancel pair — never call resetCardToNew. Only the
+        // second click (Confirm) hits the API. Mirrors the 19-C
+        // notetype-delete-field two-step gate.
+        const card = makeCard();
+        vi.mocked(getCard).mockResolvedValueOnce(card);
+        vi.mocked(resetCardToNew).mockResolvedValueOnce({
+            id: card.id,
+            state: "new",
+            revlog_preserved: 7,
+        });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+            clickRecoveryTab();
+            await lookupCard(String(card.id));
+
+            // First click — Reset to new — only arms the confirm pair.
+            const resetBtn = container.querySelector<HTMLButtonElement>(
+                '[data-test="recovery-reset-btn"]',
+            );
+            expect(resetBtn).not.toBeNull();
+            resetBtn!.click();
+            flushSync();
+
+            expect(vi.mocked(resetCardToNew)).not.toHaveBeenCalled();
+            expect(
+                container.querySelector('[data-test="recovery-confirm-btn"]'),
+            ).not.toBeNull();
+            expect(
+                container.querySelector('[data-test="recovery-cancel-btn"]'),
+            ).not.toBeNull();
+            // The "Reset to new?" inline prompt must be visible while
+            // the confirm is armed — keeps the destructive intent
+            // explicit instead of relying on color alone.
+            expect(
+                container
+                    .querySelector('[data-test="recovery-confirm-prompt"]')
+                    ?.textContent?.trim(),
+            ).toBe("Reset to new?");
+
+            // Second click — Confirm — fires the destructive call.
+            const confirmBtn = container.querySelector<HTMLButtonElement>(
+                '[data-test="recovery-confirm-btn"]',
+            );
+            confirmBtn!.click();
+            await settle();
+
+            expect(vi.mocked(resetCardToNew)).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(resetCardToNew)).toHaveBeenCalledWith(card.id);
+
+            // Success copy mirrors the response — both state and
+            // revlog count surface so the user has explicit evidence
+            // history wasn't dropped. Form clears (preview gone, id
+            // input emptied) so the next recovery starts fresh.
+            const success = container.querySelector(
+                '[data-test="recovery-success"]',
+            );
+            expect(success).not.toBeNull();
+            expect(success?.textContent).toContain("State now: new");
+            expect(success?.textContent).toContain(
+                "7 revlog entries preserved",
+            );
+            expect(
+                container.querySelector('[data-test="recovery-card-deck"]'),
+            ).toBeNull();
+            expect(
+                container.querySelector<HTMLInputElement>(
+                    "#recovery-card-id",
+                )?.value,
+            ).toBe("");
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("Cancel mid-confirm rolls back to button state without firing resetCardToNew", async () => {
+        // Defensive UX: a misclicked Reset followed by Cancel must
+        // leave the panel exactly as it was — card preview intact,
+        // Reset button restored, no stale destructive request.
+        const card = makeCard();
+        vi.mocked(getCard).mockResolvedValueOnce(card);
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+            clickRecoveryTab();
+            await lookupCard(String(card.id));
+
+            container
+                .querySelector<HTMLButtonElement>(
+                    '[data-test="recovery-reset-btn"]',
+                )!
+                .click();
+            flushSync();
+
+            // Confirm pair armed.
+            expect(
+                container.querySelector('[data-test="recovery-confirm-btn"]'),
+            ).not.toBeNull();
+
+            // Click Cancel — state rolls back.
+            const cancelBtn = container.querySelector<HTMLButtonElement>(
+                '[data-test="recovery-cancel-btn"]',
+            );
+            expect(cancelBtn).not.toBeNull();
+            cancelBtn!.click();
+            flushSync();
+
+            expect(vi.mocked(resetCardToNew)).not.toHaveBeenCalled();
+            // Reset button back, Confirm/Cancel gone, card preview
+            // still showing (so the user can retry without re-typing
+            // the id and waiting for a second lookup roundtrip).
+            expect(
+                container.querySelector('[data-test="recovery-reset-btn"]'),
+            ).not.toBeNull();
+            expect(
+                container.querySelector('[data-test="recovery-confirm-btn"]'),
+            ).toBeNull();
+            expect(
+                container.querySelector('[data-test="recovery-card-deck"]'),
+            ).not.toBeNull();
         } finally {
             unmount(instance);
         }

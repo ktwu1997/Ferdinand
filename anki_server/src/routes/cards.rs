@@ -222,7 +222,7 @@ fn flatten_nodes(nodes: &[RenderedNode]) -> String {
     out
 }
 
-fn card_state_label(card: &Card) -> &'static str {
+pub(crate) fn card_state_label(card: &Card) -> &'static str {
     match card.queue_number() {
         CardQueueNumber::New => "new",
         CardQueueNumber::Learning => "learning",
