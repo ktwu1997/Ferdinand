@@ -25,6 +25,7 @@ vi.mock("$lib/api", async (importOriginal) => {
         fetchDecks: vi.fn(),
         fetchDeckConfigs: vi.fn(),
         fetchNote: vi.fn(),
+        fetchNotetypes: vi.fn(),
         fetchTags: vi.fn(),
         patchDeckName: vi.fn(),
         patchDeckPreset: vi.fn(),
@@ -43,6 +44,7 @@ import {
     fetchDecks,
     fetchDeckConfigs,
     fetchNote,
+    fetchNotetypes,
     fetchTags,
     patchDeckName,
     patchDeckPreset,
@@ -157,6 +159,15 @@ describe("BrowsePage contract", () => {
         // raw-HTML-preservation override with mockResolvedValueOnce.
         vi.mocked(fetchNote).mockRejectedValue(
             new Error("fetchNote default reject"),
+        );
+        // Phase 18-A: fetchNotetypes default reject so the editor falls
+        // back to ["Field 1","Field 2"] generic labels when fetchNote
+        // resolves but no notetype list is loaded. Tests that depend
+        // on real labels (Basic / Cloze / Image Occlusion) override
+        // with mockResolvedValueOnce. 16-A pattern: every fetch fn
+        // the page calls must be default-mocked in every beforeEach.
+        vi.mocked(fetchNotetypes).mockRejectedValue(
+            new Error("fetchNotetypes default reject"),
         );
         container = document.createElement("div");
         document.body.appendChild(container);
@@ -1091,6 +1102,12 @@ describe("BrowsePage contract", () => {
             vi.mocked(fetchNote).mockRejectedValue(
                 new Error("fetchNote default reject"),
             );
+            // Phase 18-A: fetchNotetypes default reject — same per-block
+            // pattern as the outer describe so 14-A snippet-mode editor
+            // contracts keep working with the ["Front","Back"] fallback.
+            vi.mocked(fetchNotetypes).mockRejectedValue(
+                new Error("fetchNotetypes default reject"),
+            );
         });
 
         test("Front textarea blur with dirty draft fires patchNote with [front, back]; refetches page", async () => {
@@ -1273,6 +1290,13 @@ describe("BrowsePage contract", () => {
             vi.mocked(fetchDeckConfigs).mockRejectedValue(
                 new Error("preset list unreachable"),
             );
+            // Phase 18-A: fetchNotetypes default reject — editor's
+            // 2-field fallback gives ["Front","Back"] labels so the
+            // existing 16-A textarea[aria-label="Front"] queries
+            // continue to resolve.
+            vi.mocked(fetchNotetypes).mockRejectedValue(
+                new Error("fetchNotetypes default reject"),
+            );
         });
 
         test("fetchNote called with selected card's note_id; raw fields seed the editor", async () => {
@@ -1375,6 +1399,236 @@ describe("BrowsePage contract", () => {
             }
         });
     });
+
+    // Phase 18-A: editor renders one textarea per field instead of the
+    // hard-coded Front/Back pair. Field labels come from
+    // fetchNotetypes (looked up by note's notetype_id). Three contract
+    // tests: a Cloze 2-field note shows the actual "Text"/"Back Extra"
+    // labels, a 3+ field notetype shows every field, and patchNote on
+    // dirty blur sends the full per-field array (server is authoritative
+    // on field count, so we don't try to elide unchanged fields).
+    describe("Phase 18-A all-fields generic", () => {
+        beforeEach(() => {
+            vi.resetAllMocks();
+            vi.mocked(fetchDecks).mockRejectedValue(
+                new Error("decks unreachable"),
+            );
+            vi.mocked(fetchTags).mockRejectedValue(
+                new Error("tags unreachable"),
+            );
+            vi.mocked(fetchDeckConfigs).mockRejectedValue(
+                new Error("preset list unreachable"),
+            );
+        });
+
+        test("Cloze notetype: editor labels textareas with notetype.fields ('Text', 'Back Extra')", async () => {
+            // First card's note (id=101) is set to a Cloze notetype.
+            // fetchNotetypes lands first (fired in onMount along with
+            // fetchCards), then fetchNote — when the latter resolves
+            // we should look up notetype_id=99 in the notetype list
+            // and render label="Text", label="Back Extra".
+            vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+            vi.mocked(fetchNotetypes).mockResolvedValueOnce({
+                notetypes: [
+                    {
+                        id: 99,
+                        name: "Cloze",
+                        fields: ["Text", "Back Extra"],
+                    },
+                ],
+            });
+            vi.mocked(fetchNote).mockResolvedValueOnce({
+                id: 101,
+                notetype_id: 99,
+                notetype_name: "Cloze",
+                fields: [
+                    "{{c1::cloze}} sample",
+                    "extra context here",
+                ],
+                tags: [],
+                modified: 1_777_000_000,
+            });
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                // Existing "Front"/"Back" labels must NOT show — those
+                // would mean the fallback fired instead of the lookup.
+                expect(
+                    container.querySelector('textarea[aria-label="Front"]'),
+                ).toBeNull();
+                expect(
+                    container.querySelector('textarea[aria-label="Back"]'),
+                ).toBeNull();
+                // Cloze labels render and the raw field values reach
+                // the textareas (HTML preservation from 16-A still
+                // applies — `{{c1::cloze}}` markup is not stripped).
+                const text = container.querySelector(
+                    'textarea[aria-label="Text"]',
+                ) as HTMLTextAreaElement | null;
+                const backExtra = container.querySelector(
+                    'textarea[aria-label="Back Extra"]',
+                ) as HTMLTextAreaElement | null;
+                expect(text).not.toBeNull();
+                expect(backExtra).not.toBeNull();
+                expect(text?.value).toBe("{{c1::cloze}} sample");
+                expect(backExtra?.value).toBe("extra context here");
+                // Slugged ids derive from labels — `field-back-extra`
+                // is the multi-word case ("Back Extra" → kebab-case).
+                expect(text?.id).toBe("field-text");
+                expect(backExtra?.id).toBe("field-back-extra");
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("3+ field notetype: editor renders every field; idle blur fires no patch", async () => {
+            // Image Occlusion-style 5-field notetype. The editor must
+            // render all 5 textareas (no truncation to the legacy
+            // 2-field shape) and an idle blur on any of them must NOT
+            // round-trip a patch — the dirty check is per-element
+            // across the full array, not just the first two.
+            vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+            vi.mocked(fetchNotetypes).mockResolvedValueOnce({
+                notetypes: [
+                    {
+                        id: 200,
+                        name: "Image Occlusion",
+                        fields: [
+                            "Image",
+                            "Header",
+                            "Back Extra",
+                            "Comments",
+                            "Source",
+                        ],
+                    },
+                ],
+            });
+            vi.mocked(fetchNote).mockResolvedValueOnce({
+                id: 101,
+                notetype_id: 200,
+                notetype_name: "Image Occlusion",
+                fields: [
+                    '<img src="diagram.png">',
+                    "Heart anatomy",
+                    "Right ventricle pumps to lungs.",
+                    "",
+                    "Gray's Anatomy 41st ed.",
+                ],
+                tags: ["medicine"],
+                modified: 1_777_000_000,
+            });
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const labels = [
+                    "Image",
+                    "Header",
+                    "Back Extra",
+                    "Comments",
+                    "Source",
+                ];
+                for (const label of labels) {
+                    const ta = container.querySelector(
+                        `textarea[aria-label="${label}"]`,
+                    ) as HTMLTextAreaElement | null;
+                    expect(ta, `expected textarea for ${label}`).not.toBeNull();
+                }
+                // 5 textareas rendered, one per field.
+                expect(
+                    container.querySelectorAll("textarea.field-value").length,
+                ).toBe(5);
+
+                // Idle blur on the 4th field (which is empty by design)
+                // must not fire patchNote — dirty check correctly sees
+                // no diff against the seeds.
+                const comments = container.querySelector(
+                    'textarea[aria-label="Comments"]',
+                ) as HTMLTextAreaElement;
+                comments.dispatchEvent(new Event("blur", { bubbles: true }));
+                await settle();
+                expect(vi.mocked(patchNote)).not.toHaveBeenCalled();
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("dirty edit on one field of a 5-field note sends full per-field array to patchNote", async () => {
+            // The PATCH /api/notes/{id} contract (14-A) takes a full
+            // fields array — we assert here that 18-A doesn't try to
+            // be clever and elide unchanged fields. Server validates
+            // length-equals-notetype-field-count, so a partial array
+            // would 400.
+            vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+            vi.mocked(fetchNotetypes).mockResolvedValueOnce({
+                notetypes: [
+                    {
+                        id: 200,
+                        name: "Image Occlusion",
+                        fields: [
+                            "Image",
+                            "Header",
+                            "Back Extra",
+                            "Comments",
+                            "Source",
+                        ],
+                    },
+                ],
+            });
+            vi.mocked(fetchNote).mockResolvedValueOnce({
+                id: 101,
+                notetype_id: 200,
+                notetype_name: "Image Occlusion",
+                fields: ["img-a", "header-a", "back-a", "", "source-a"],
+                tags: [],
+                modified: 1_777_000_000,
+            });
+            vi.mocked(patchNote).mockResolvedValueOnce({
+                note_id: 101,
+                fields: ["img-a", "header-a", "back-a", "added", "source-a"],
+                tags: [],
+                modified: 1_777_000_500,
+            });
+            // Refetch on success; reuse liveThree so the row list
+            // stays stable across the assertion.
+            vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const comments = container.querySelector(
+                    'textarea[aria-label="Comments"]',
+                ) as HTMLTextAreaElement;
+                comments.value = "added";
+                comments.dispatchEvent(
+                    new Event("input", { bubbles: true }),
+                );
+                comments.dispatchEvent(
+                    new Event("blur", { bubbles: true }),
+                );
+                await settle();
+
+                expect(vi.mocked(patchNote)).toHaveBeenCalledTimes(1);
+                expect(vi.mocked(patchNote)).toHaveBeenCalledWith(101, {
+                    fields: [
+                        "img-a",
+                        "header-a",
+                        "back-a",
+                        "added",
+                        "source-a",
+                    ],
+                });
+                // Refetch fired (initial liveThree + post-patch refresh).
+                expect(vi.mocked(fetchCards)).toHaveBeenCalledTimes(2);
+            } finally {
+                unmount(instance);
+            }
+        });
+    });
 });
 
 // Phase 12-A: server-side search wiring. The toolbar `query` input now
@@ -1397,6 +1651,15 @@ describe("BrowsePage server search wiring (Phase 12-A)", () => {
         // hold up the search-wire timing assertions.
         vi.mocked(fetchNote).mockRejectedValue(
             new Error("fetchNote default reject"),
+        );
+        // Phase 18-A: fetchNotetypes default reject so the editor falls
+        // back to ["Field 1","Field 2"] generic labels when fetchNote
+        // resolves but no notetype list is loaded. Tests that depend
+        // on real labels (Basic / Cloze / Image Occlusion) override
+        // with mockResolvedValueOnce. 16-A pattern: every fetch fn
+        // the page calls must be default-mocked in every beforeEach.
+        vi.mocked(fetchNotetypes).mockRejectedValue(
+            new Error("fetchNotetypes default reject"),
         );
         container = document.createElement("div");
         document.body.appendChild(container);
@@ -1581,6 +1844,9 @@ describe("BrowsePage delete-note flow (Phase 13-A)", () => {
         vi.mocked(fetchNote).mockRejectedValue(
             new Error("fetchNote default reject"),
         );
+        vi.mocked(fetchNotetypes).mockRejectedValue(
+            new Error("fetchNotetypes default reject"),
+        );
         // Default to "user clicked OK" so test bodies don't repeat the
         // spy install. Tests that need cancellation override per-call.
         confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
@@ -1736,6 +2002,9 @@ describe("BrowsePage delete-deck flow (Phase 15-A)", () => {
         );
         vi.mocked(fetchNote).mockRejectedValue(
             new Error("fetchNote default reject"),
+        );
+        vi.mocked(fetchNotetypes).mockRejectedValue(
+            new Error("fetchNotetypes default reject"),
         );
         confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
         container = document.createElement("div");
