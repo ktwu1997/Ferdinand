@@ -340,6 +340,29 @@ export async function fetchNotetypes(): Promise<ApiNotetypeListResponse> {
     return getJson<ApiNotetypeListResponse>("/api/notetypes");
 }
 
+export interface ApiNotetypeRenameResponse {
+    id: number;
+    /** Server-canonical name after trim. May differ from the request
+     * input when leading/trailing whitespace was stripped. */
+    name: string;
+}
+
+/**
+ * Phase 16-B: rename a notetype. Server validates id positive (400),
+ * trimmed name non-empty + ≤100 chars (400), and existence (404).
+ * Rename is a pure label refresh — cards are linked by notetype_id so
+ * none of them need regeneration; mtime bumps so a sync would
+ * propagate the change.
+ */
+export async function patchNotetypeName(
+    id: number,
+    name: string,
+): Promise<ApiNotetypeRenameResponse> {
+    return patchJson<ApiNotetypeRenameResponse>(`/api/notetypes/${id}`, {
+        name,
+    });
+}
+
 export interface ApiNoteCreateRequest {
     deck_id: number;
     /** Field values in template order; first is the sort field. */

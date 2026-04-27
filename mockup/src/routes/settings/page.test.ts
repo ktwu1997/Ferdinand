@@ -16,7 +16,9 @@ vi.mock("$lib/api", async (importOriginal) => {
         fetchDeckConfigById: vi.fn(),
         fetchFsrsEnabled: vi.fn(),
         fetchFsrsHealthCheck: vi.fn(),
+        fetchNotetypes: vi.fn(),
         patchDeckConfigById: vi.fn(),
+        patchNotetypeName: vi.fn(),
         postDeckConfig: vi.fn(),
         deleteDeckConfig: vi.fn(),
         putFsrsEnabled: vi.fn(),
@@ -32,7 +34,9 @@ import {
     fetchDeckConfigs,
     fetchFsrsEnabled,
     fetchFsrsHealthCheck,
+    fetchNotetypes,
     patchDeckConfigById,
+    patchNotetypeName,
     postDeckConfig,
     postFsrsOptimize,
     putFsrsEnabled,
@@ -41,6 +45,7 @@ import {
     type ApiDeckConfigListResponse,
     type ApiFsrsEnabled,
     type ApiFsrsHealthCheck,
+    type ApiNotetypeListResponse,
 } from "$lib/api";
 
 // Phase 10-C: factory keeps existing tests cheap as DeckConfig grows.
@@ -195,7 +200,7 @@ describe("SettingsPage contract", () => {
         }
     });
 
-    test("nav renders all 6 sections in declared order", () => {
+    test("nav renders all sections in declared order", () => {
         const instance = mount(Page, { target: container, props: {} });
         try {
             flushSync();
@@ -203,10 +208,12 @@ describe("SettingsPage contract", () => {
             const labels = Array.from(
                 container.querySelectorAll<HTMLButtonElement>(".nav-item"),
             ).map((b) => b.textContent?.trim());
+            // Phase 16-B: Notetypes inserted between FSRS and Sync.
             expect(labels).toEqual([
                 "Profile",
                 "Scheduling",
                 "FSRS",
+                "Notetypes",
                 "Sync",
                 "Appearance",
                 "Advanced",
@@ -1572,6 +1579,209 @@ describe("SettingsPage FSRS health-check toggle (Phase 15-B)", () => {
                 container.querySelectorAll(".field-error"),
             ).map((e) => e.textContent ?? "");
             expect(errors.some((t) => t.includes("collection locked"))).toBe(true);
+        } finally {
+            unmount(instance);
+        }
+    });
+});
+
+// Phase 16-B: notetype rename in the new "Notetypes" section. The tab
+// is lazy-loaded — fetchNotetypes only fires after the user clicks the
+// nav button. Each test resets mocks so unconsumed `mockResolvedValueOnce`
+// queue entries don't leak across siblings (Phase 9-T `test_pattern_proven`).
+describe("SettingsPage notetypes rename (Phase 16-B)", () => {
+    let container: HTMLDivElement;
+
+    const threeNotetypes: ApiNotetypeListResponse = {
+        notetypes: [
+            { id: 1_776_837_237_908, name: "Basic", fields: ["Front", "Back"] },
+            {
+                id: 1_776_837_237_909,
+                name: "Basic (and reversed card)",
+                fields: ["Front", "Back"],
+            },
+            {
+                id: 1_776_837_237_910,
+                name: "Cloze",
+                fields: ["Text", "Back Extra"],
+            },
+        ],
+    };
+
+    beforeEach(() => {
+        vi.resetAllMocks();
+        // Same FSRS-card defaults as the outer describe — the
+        // notetypes tab is opt-in but the page still mounts the FSRS
+        // section by default, so its onMount load chain has to settle
+        // cleanly.
+        vi.mocked(fetchDeckConfigs).mockResolvedValue(onlyDefaultList);
+        vi.mocked(fetchDeckConfigById).mockResolvedValue(defaultConf);
+        vi.mocked(fetchFsrsEnabled).mockResolvedValue(fsrsOff);
+        vi.mocked(fetchFsrsHealthCheck).mockResolvedValue(healthCheckOff);
+        container = document.createElement("div");
+        document.body.appendChild(container);
+    });
+
+    afterEach(() => {
+        container.remove();
+    });
+
+    function clickNotetypesTab(): void {
+        const tab = Array.from(
+            container.querySelectorAll<HTMLButtonElement>(".nav-item"),
+        ).find((b) => b.textContent?.trim() === "Notetypes");
+        expect(tab, "Notetypes nav button must render").toBeDefined();
+        tab!.click();
+    }
+
+    test("clicking the Notetypes tab triggers fetchNotetypes once; rows render with field counts", async () => {
+        vi.mocked(fetchNotetypes).mockResolvedValueOnce(threeNotetypes);
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+            // Tab not yet clicked — fetchNotetypes must NOT have fired
+            // (lazy-load contract; we don't pay the round-trip on every
+            // settings open).
+            expect(vi.mocked(fetchNotetypes)).not.toHaveBeenCalled();
+
+            clickNotetypesTab();
+            await settle();
+
+            expect(vi.mocked(fetchNotetypes)).toHaveBeenCalledTimes(1);
+            const rows = container.querySelectorAll(".nt-row");
+            expect(rows.length).toBe(3);
+            // Names rendered in server-returned order (server already
+            // sorts by lower(name) ascending).
+            const names = Array.from(rows).map(
+                (r) => r.querySelector(".nt-name")?.textContent?.trim(),
+            );
+            expect(names).toEqual([
+                "Basic",
+                "Basic (and reversed card)",
+                "Cloze",
+            ]);
+            // Field count meta line: "2 fields".
+            const metas = Array.from(rows).map(
+                (r) => r.querySelector(".nt-meta")?.textContent?.trim(),
+            );
+            expect(metas[0]).toBe("2 fields");
+            // Idempotent re-click does NOT refetch.
+            clickNotetypesTab();
+            await settle();
+            expect(vi.mocked(fetchNotetypes)).toHaveBeenCalledTimes(1);
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("Rename → Save fires patchNotetypeName with trimmed name; row reflects server-canonical name", async () => {
+        vi.mocked(fetchNotetypes).mockResolvedValueOnce(threeNotetypes);
+        vi.mocked(patchNotetypeName).mockResolvedValueOnce({
+            id: 1_776_837_237_908,
+            name: "Basic Renamed",
+        });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+            clickNotetypesTab();
+            await settle();
+
+            // Click first row's "Rename" button.
+            const firstRow = container.querySelector(".nt-row")!;
+            const renameBtn = Array.from(
+                firstRow.querySelectorAll<HTMLButtonElement>(".ghost-btn"),
+            ).find((b) => b.textContent?.trim() === "Rename");
+            expect(renameBtn).toBeDefined();
+            renameBtn!.click();
+            await settle();
+
+            // Inline input rendered, seeded with current name.
+            const input = firstRow.querySelector<HTMLInputElement>(".nt-input");
+            expect(input).not.toBeNull();
+            // Type new name with surrounding whitespace — server-side
+            // trim is the source of truth so commit must pass through
+            // verbatim and let the server normalise.
+            input!.value = "  Basic Renamed  ";
+            input!.dispatchEvent(new Event("input", { bubbles: true }));
+            flushSync();
+
+            // Click Save.
+            const saveBtn = Array.from(
+                firstRow.querySelectorAll<HTMLButtonElement>(".ghost-btn"),
+            ).find((b) => b.textContent?.trim() === "Save");
+            expect(saveBtn).toBeDefined();
+            saveBtn!.click();
+            await settle();
+
+            expect(vi.mocked(patchNotetypeName)).toHaveBeenCalledTimes(1);
+            // Client trims before sending — the server expects a clean
+            // string and doesn't have a "raw" path, so we mirror its
+            // contract (matches the deck-rename behaviour).
+            expect(vi.mocked(patchNotetypeName)).toHaveBeenCalledWith(
+                1_776_837_237_908,
+                "Basic Renamed",
+            );
+
+            // Row reflects the server-canonical name (NOT the request
+            // input — could differ if server normalisation added a
+            // suffix in the future).
+            const updatedRow = container.querySelector(".nt-row")!;
+            expect(
+                updatedRow.querySelector(".nt-name")?.textContent?.trim(),
+            ).toBe("Basic Renamed");
+            // Edit mode dismissed.
+            expect(updatedRow.querySelector(".nt-input")).toBeNull();
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("Server 400 surfaces inline; row stays in edit mode for retry", async () => {
+        vi.mocked(fetchNotetypes).mockResolvedValueOnce(threeNotetypes);
+        vi.mocked(patchNotetypeName).mockRejectedValueOnce(
+            new Error("400 name must be at most 100 characters"),
+        );
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+            clickNotetypesTab();
+            await settle();
+
+            const firstRow = container.querySelector(".nt-row")!;
+            (
+                Array.from(
+                    firstRow.querySelectorAll<HTMLButtonElement>(".ghost-btn"),
+                ).find((b) => b.textContent?.trim() === "Rename")!
+            ).click();
+            await settle();
+
+            const input = firstRow.querySelector<HTMLInputElement>(".nt-input")!;
+            input.value = "x".repeat(101);
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            flushSync();
+
+            (
+                Array.from(
+                    firstRow.querySelectorAll<HTMLButtonElement>(".ghost-btn"),
+                ).find((b) => b.textContent?.trim() === "Save")!
+            ).click();
+            await settle();
+
+            expect(vi.mocked(patchNotetypeName)).toHaveBeenCalledTimes(1);
+            // Inline error surfaces (NOT the global page banner — this is
+            // a per-row mutation, not a load-time failure).
+            const errors = Array.from(
+                container.querySelectorAll(".field-error"),
+            ).map((e) => e.textContent ?? "");
+            expect(
+                errors.some((t) => t.includes("at most 100 characters")),
+            ).toBe(true);
+            // Still in edit mode so the user can shorten the name and
+            // retry without re-clicking Rename.
+            expect(firstRow.querySelector(".nt-input")).not.toBeNull();
         } finally {
             unmount(instance);
         }

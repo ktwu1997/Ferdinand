@@ -38,6 +38,7 @@ pub fn router() -> Router<AppState> {
                 .patch(notes::patch_by_id),
         )
         .route("/api/notetypes", get(notetypes::list_notetypes))
+        .route("/api/notetypes/{id}", patch(notetypes::patch_by_id))
         .route("/api/study/queue", get(study::get_queue))
         .route("/api/study/answer", post(study::post_answer))
         .route(
