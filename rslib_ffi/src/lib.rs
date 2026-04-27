@@ -29,6 +29,13 @@
 //! without going through the higher-level CardSummary used by the
 //! browse list endpoint. Same NULL-on-missing contract as
 //! [`ferdinand_note_get_json`].
+//! v7 surface (Phase 17-D): `_tag_list_json` returns every collection-
+//! level tag as `[{"name":"...","expanded":bool}, ...]` so a native tag
+//! picker / browse sidebar can hydrate without round-tripping through
+//! the server search endpoint. The `usn` field is intentionally NOT
+//! exposed — it's an internal sync counter and would only confuse
+//! native callers. Returns NULL on a NULL handle or any underlying
+//! storage error; an empty collection yields a successful empty array.
 //!
 //! ## Memory model
 //!
@@ -637,10 +644,77 @@ pub unsafe extern "C" fn ferdinand_card_get_json(
     }
 }
 
+/// One row in the JSON returned by [`ferdinand_tag_list_json`]. Mirrors
+/// what the desktop Tags pane shows — the canonical tag string plus
+/// the persisted "is this branch expanded in the tree view" flag. The
+/// `usn` field on the underlying `Tag` is deliberately omitted: it's an
+/// internal sync counter and exposing it would tempt native callers to
+/// reason about sync state from a read-only API.
+#[derive(Serialize)]
+struct FfiTag {
+    name: String,
+    expanded: bool,
+}
+
+/// Return a heap-allocated NUL-terminated JSON string with every tag in
+/// the collection: `[{"name":"...","expanded":bool}, ...]`. Returns NULL
+/// on a NULL handle or any underlying storage error. An empty
+/// collection (no notes ever tagged) yields a successful empty array.
+///
+/// Tag order matches `storage.all_tags()` — currently insertion order
+/// from the `tags` SQLite table. Native callers that need a sorted or
+/// hierarchical view should re-sort client-side; the FFI deliberately
+/// returns the raw list so different surfaces (sidebar tree vs. flat
+/// picker) can choose their own ordering.
+///
+/// Ownership: the returned pointer is heap-allocated and owned by the
+/// caller. Release with [`ferdinand_free_string`] exactly once — same
+/// contract as every other `*_json` FFI function.
+///
+/// # Safety
+/// - `handle` must be a non-NULL pointer returned by
+///   [`ferdinand_collection_open`] that has not been closed.
+/// - Must NOT be called concurrently with any other FFI call on the
+///   same handle from another thread.
+#[no_mangle]
+pub unsafe extern "C" fn ferdinand_tag_list_json(handle: *mut FerdinandCollection) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    // SAFETY: caller contract — `handle` is a valid open Collection and
+    // is not concurrently accessed from another thread. `storage.all_tags`
+    // takes &self via storage, but reaching `storage` through the raw
+    // pointer requires going through `inner` which we treat as &.
+    let col = unsafe { &(*handle).inner };
+
+    let tags = match col.storage.all_tags() {
+        Ok(t) => t,
+        Err(_) => return ptr::null_mut(),
+    };
+
+    let payload: Vec<FfiTag> = tags
+        .into_iter()
+        .map(|t| FfiTag {
+            name: t.name,
+            expanded: t.expanded,
+        })
+        .collect();
+
+    let json = match serde_json::to_string(&payload) {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+    match CString::new(json) {
+        Ok(s) => s.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
 /// Release a heap C string previously returned by an `*_json` FFI
 /// function ([`ferdinand_list_decks_json`],
 /// [`ferdinand_deck_tree_json`], [`ferdinand_collection_stats_json`],
-/// [`ferdinand_note_get_json`], or [`ferdinand_card_get_json`]).
+/// [`ferdinand_note_get_json`], [`ferdinand_card_get_json`], or
+/// [`ferdinand_tag_list_json`]).
 /// NULL-safe so callers can defensively free after a NULL return
 /// without branching.
 ///
@@ -1278,6 +1352,143 @@ mod tests {
         );
 
         // SAFETY: produced by ferdinand_card_get_json; documented release path.
+        unsafe { ferdinand_free_string(json_ptr) };
+        // SAFETY: `handle` was opened above and not yet closed.
+        unsafe { ferdinand_collection_close(handle) };
+        let _ = std::fs::remove_file(&tmpdir);
+    }
+
+    #[test]
+    fn tag_list_json_returns_null_for_null_handle() {
+        // SAFETY: NULL is the documented sentinel for "no collection".
+        let p = unsafe { ferdinand_tag_list_json(ptr::null_mut()) };
+        assert!(p.is_null());
+    }
+
+    #[test]
+    fn tag_list_json_round_trip_empty_collection() {
+        // Fresh collection has no tags yet — the contract is that an
+        // empty list is a *successful* empty array, not a NULL error
+        // sentinel. This pins the distinction so a SwiftUI tag picker
+        // can rely on `[]` meaning "no tags" rather than "FFI failed".
+        let tmpdir = std::env::temp_dir().join(format!(
+            "ferdinand_ffi_tag_list_empty_test_{}_{}.anki2",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        ));
+        let cpath = CString::new(tmpdir.to_str().unwrap()).unwrap();
+
+        // SAFETY: `cpath` outlives the call.
+        let handle = unsafe { ferdinand_collection_open(cpath.as_ptr()) };
+        assert!(!handle.is_null(), "open should succeed for fresh path");
+
+        // SAFETY: `handle` is a freshly opened, single-threaded handle.
+        let json_ptr = unsafe { ferdinand_tag_list_json(handle) };
+        assert!(
+            !json_ptr.is_null(),
+            "tag_list_json must succeed (return non-NULL) for empty col"
+        );
+
+        // SAFETY: produced by CString::into_raw above; not yet freed.
+        let json = unsafe { CStr::from_ptr(json_ptr) }
+            .to_str()
+            .expect("tag_list_json must return valid UTF-8");
+        let tags: Vec<serde_json::Value> =
+            serde_json::from_str(json).expect("tag_list_json must return a valid JSON array");
+        assert!(
+            tags.is_empty(),
+            "fresh collection has no tags, got {tags:?}"
+        );
+
+        // SAFETY: produced by ferdinand_tag_list_json; documented release path.
+        unsafe { ferdinand_free_string(json_ptr) };
+        // SAFETY: `handle` was opened above and not yet closed.
+        unsafe { ferdinand_collection_close(handle) };
+        let _ = std::fs::remove_file(&tmpdir);
+    }
+
+    #[test]
+    fn tag_list_json_round_trip_against_real_collection() {
+        // Seed two tags via add_note so the registration path is the
+        // same one the desktop browse flow exercises. Round-tripping
+        // through the public surface (rather than poking storage
+        // directly) keeps the test honest about what real callers see.
+        use anki::notes::Note;
+
+        let tmpdir = std::env::temp_dir().join(format!(
+            "ferdinand_ffi_tag_list_test_{}_{}.anki2",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        ));
+        let cpath = CString::new(tmpdir.to_str().unwrap()).unwrap();
+
+        // SAFETY: `cpath` outlives the call.
+        let handle = unsafe { ferdinand_collection_open(cpath.as_ptr()) };
+        assert!(!handle.is_null(), "open should succeed for fresh path");
+
+        // Seed a Basic note tagged with two distinct tags.
+        {
+            // SAFETY: single-threaded; we do not call into FFI again
+            // until this borrow ends.
+            let col = unsafe { &mut (*handle).inner };
+            let basic = col
+                .get_notetype_by_name("Basic")
+                .expect("Basic notetype lookup must succeed")
+                .expect("Basic notetype always seeded on a fresh collection");
+            let mut note = Note::new(&basic);
+            note.set_field(0, "Front").expect("set Front field");
+            note.set_field(1, "Back").expect("set Back field");
+            note.tags = vec!["seed".into(), "ffi::v7".into()];
+            let did = anki::decks::DeckId(1);
+            col.add_note(&mut note, did)
+                .expect("add_note must succeed against fresh collection");
+        }
+
+        // SAFETY: `handle` is a freshly opened, single-threaded handle.
+        let json_ptr = unsafe { ferdinand_tag_list_json(handle) };
+        assert!(
+            !json_ptr.is_null(),
+            "tag_list_json must succeed for seeded col"
+        );
+
+        // SAFETY: produced by CString::into_raw above; not yet freed.
+        let json = unsafe { CStr::from_ptr(json_ptr) }
+            .to_str()
+            .expect("tag_list_json must return valid UTF-8");
+        let tags: Vec<serde_json::Value> =
+            serde_json::from_str(json).expect("tag_list_json must return a valid JSON array");
+
+        // Anki registers tags in canonical (lowercased, sorted-by-name)
+        // form; assert by membership to stay robust against future sort
+        // changes. Same approach as note_get_json's tag assertion.
+        let names: std::collections::HashSet<&str> =
+            tags.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert!(
+            names.contains("seed"),
+            "seed tag must appear in tag_list_json output, got {tags:?}"
+        );
+        assert!(
+            names.contains("ffi::v7"),
+            "namespaced tag must appear in tag_list_json output, got {tags:?}"
+        );
+        // Shape: every entry has name (String) and expanded (bool); the
+        // sync-internal `usn` must NOT leak through.
+        for t in &tags {
+            assert!(t["name"].is_string(), "tag name must be string, got {t}");
+            assert!(t["expanded"].is_boolean(), "expanded must be bool, got {t}");
+            assert!(
+                t.get("usn").is_none(),
+                "usn must not be exposed via FFI, got {t}"
+            );
+        }
+
+        // SAFETY: produced by ferdinand_tag_list_json; documented release path.
         unsafe { ferdinand_free_string(json_ptr) };
         // SAFETY: `handle` was opened above and not yet closed.
         unsafe { ferdinand_collection_close(handle) };
