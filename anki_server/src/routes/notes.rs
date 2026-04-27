@@ -238,6 +238,87 @@ fn validate_delete_id(id: i64) -> Result<(), &'static str> {
     Ok(())
 }
 
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct NoteSummary {
+    pub id: i64,
+    /// Owning notetype id (epoch-ms timestamp on real collections).
+    pub notetype_id: i64,
+    /// Human-readable notetype name (e.g. "Basic", "Cloze"). Lets a
+    /// browse editor render field labels per notetype without a
+    /// follow-up `/api/notetypes` round-trip.
+    pub notetype_name: String,
+    /// Raw field values exactly as stored. Phase 16-A intentionally
+    /// returns the raw HTML — distinct from the rendered `front_html` /
+    /// `back_html` exposed via the browse list endpoints — so editors
+    /// can round-trip through PATCH /api/notes/{id} without losing
+    /// formatting (the v1 plain-text-only limitation from 14-A).
+    pub fields: Vec<String>,
+    /// Persisted tags in canonical order (Anki sorts them alphabetically
+    /// on add). Same canonical shape as `NotePatchResponse.tags`.
+    pub tags: Vec<String>,
+    /// Note modified timestamp (epoch seconds). Same field as
+    /// `NotePatchResponse.modified` so a successful GET → PATCH cycle
+    /// can compare bumps without remembering two field names.
+    pub modified: i64,
+}
+
+/// Phase 16-A: fetch a note by id with raw field values preserved.
+///
+/// Mirrors the FFI shape from Phase 15-D `ferdinand_note_get_json` so
+/// the web client and the native iOS client can share a single mental
+/// model for "the canonical note record". Validation order:
+///   1. id positive (400) — same boundary rule as delete / patch.
+///   2. Existence via `col.storage.get_note(nid)` (404; same strict
+///      lookup as delete to dodge silent-zero sentinels).
+///   3. Notetype lookup so the response can carry `notetype_name`.
+///      Missing notetype on an existing note is a corruption case —
+///      404 with an explicit message rather than 500 because the user-
+///      facing client still wants to render an error banner.
+///
+/// Read-only — no transaction, no mtime bump. Safe to call repeatedly
+/// (e.g. from a Svelte `$effect` keyed on `note_id`) without worrying
+/// about lock contention with concurrent edits in another client.
+#[utoipa::path(
+    get,
+    path = "/api/notes/{id}",
+    responses(
+        (status = 200, body = NoteSummary),
+        (status = 400, body = crate::error::ApiError),
+        (status = 404, body = crate::error::ApiError),
+    ),
+    params(("id" = i64, Path, description = "Note id"))
+)]
+pub async fn get_by_id(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> ApiResult<Json<NoteSummary>> {
+    if id <= 0 {
+        return Err(ServerError::bad_request("id must be a positive integer"));
+    }
+
+    let mut col = state.col.lock().await;
+    let nid = NoteId(id);
+    let note = col
+        .storage
+        .get_note(nid)?
+        .ok_or_else(|| ServerError::not_found(format!("note {id} not found")))?;
+    let notetype = col.get_notetype(note.notetype_id)?.ok_or_else(|| {
+        ServerError::not_found(format!(
+            "notetype {} not found for note {id}",
+            note.notetype_id.0
+        ))
+    })?;
+
+    Ok(Json(NoteSummary {
+        id: note.id.0,
+        notetype_id: note.notetype_id.0,
+        notetype_name: notetype.name.clone(),
+        fields: note.fields().clone(),
+        tags: note.tags.clone(),
+        modified: note.mtime.0,
+    }))
+}
+
 #[derive(Debug, Default, Deserialize)]
 pub struct NotePatchRequest {
     /// New field values in template order. When set, length must match
@@ -561,6 +642,96 @@ mod tests {
             tags: None,
         };
         assert!(validate_patch(&r).is_ok());
+    }
+
+    // Phase 16-A: NoteSummary shape contract tests. The Collection-touching
+    // bits (existence + notetype lookup) are covered by the live curl
+    // smoke + browse contract tests; here we pin the JSON shape so a
+    // future field rename (e.g. "modified" → "mtime") would surface as a
+    // failed snapshot rather than a silent client breakage.
+
+    #[test]
+    fn note_summary_serialises_with_six_documented_keys() {
+        // Pin the exact key set so the FFI v5 surface (Phase 15-D
+        // `ferdinand_note_get_json`) and the new HTTP endpoint stay
+        // in lockstep — both produce the same record shape, just with
+        // different transports.
+        let summary = NoteSummary {
+            id: 1_777_215_902_150,
+            notetype_id: 1_776_837_237_908,
+            notetype_name: "Basic".into(),
+            fields: vec!["<b>Front HTML</b>".into(), "Back plain".into()],
+            tags: vec!["seed".into(), "ffi".into()],
+            modified: 1_777_181_373,
+        };
+        let v: serde_json::Value =
+            serde_json::to_value(&summary).expect("NoteSummary must serialise");
+        let obj = v.as_object().expect("NoteSummary serialises to an object");
+        let keys: std::collections::HashSet<_> = obj.keys().map(|k| k.as_str()).collect();
+        let expected: std::collections::HashSet<_> = [
+            "id",
+            "notetype_id",
+            "notetype_name",
+            "fields",
+            "tags",
+            "modified",
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            keys, expected,
+            "NoteSummary key set must be exactly the v5 shape"
+        );
+        assert_eq!(v["id"], 1_777_215_902_150_i64);
+        assert_eq!(v["notetype_name"], "Basic");
+        // Raw HTML must survive the Serialize round-trip — the whole
+        // point of v1 vs the rendered front/back strings the browse
+        // list endpoint exposes.
+        assert_eq!(v["fields"][0], "<b>Front HTML</b>");
+    }
+
+    #[test]
+    fn note_summary_round_trip_preserves_cjk_and_empty_arrays() {
+        // Covers the two shape edge cases that bit prior phases:
+        // (1) tag-less notes serialise tags as `[]`, not `null` —
+        //     a Some/None confusion in `NotePatchRequest` once let an
+        //     "omitted tags" leak through as `null` and clients had to
+        //     special-case the response.
+        // (2) CJK round-trips byte-for-byte through serde_json (not as
+        //     `\u`-escaped hex).
+        let summary = NoteSummary {
+            id: 1,
+            notetype_id: 1_776_837_237_910,
+            notetype_name: "Cloze".into(),
+            fields: vec!["{{c1::森林}} = forest".into(), "".into()],
+            tags: vec![],
+            modified: 1_700_000_000,
+        };
+        let v = serde_json::to_value(&summary).unwrap();
+        assert!(v["tags"].is_array(), "tags must be array even when empty");
+        assert_eq!(v["tags"].as_array().unwrap().len(), 0);
+        // CJK + cloze deletion markers preserved verbatim.
+        assert_eq!(v["fields"][0], "{{c1::森林}} = forest");
+        // Blank back field allowed (cloze cards bake answer into front).
+        assert_eq!(v["fields"][1], "");
+    }
+
+    #[test]
+    fn note_summary_modified_is_i64_not_string() {
+        // Pin the integer-not-string contract — TypeScript clients that
+        // type `modified: number` would silently mis-render an
+        // accidentally stringified mtime.
+        let summary = NoteSummary {
+            id: 1,
+            notetype_id: 1,
+            notetype_name: "Basic".into(),
+            fields: vec!["x".into()],
+            tags: vec![],
+            modified: 1_777_181_373,
+        };
+        let v = serde_json::to_value(&summary).unwrap();
+        assert!(v["modified"].is_i64());
+        assert_eq!(v["modified"].as_i64(), Some(1_777_181_373));
     }
 
     #[test]

@@ -24,6 +24,7 @@ vi.mock("$lib/api", async (importOriginal) => {
         fetchCards: vi.fn(),
         fetchDecks: vi.fn(),
         fetchDeckConfigs: vi.fn(),
+        fetchNote: vi.fn(),
         fetchTags: vi.fn(),
         patchDeckName: vi.fn(),
         patchDeckPreset: vi.fn(),
@@ -40,6 +41,7 @@ import {
     fetchCards,
     fetchDecks,
     fetchDeckConfigs,
+    fetchNote,
     fetchTags,
     patchDeckName,
     patchDeckPreset,
@@ -137,6 +139,12 @@ describe("BrowsePage contract", () => {
         // "Offline — preset locked" placeholder for unrelated tests.
         vi.mocked(fetchDeckConfigs).mockRejectedValue(
             new Error("preset list unreachable"),
+        );
+        // Phase 16-A: fetchNote default reject so the editor seed effect
+        // silently falls back to the snippet draft. Tests that exercise
+        // raw-HTML-preservation override with mockResolvedValueOnce.
+        vi.mocked(fetchNote).mockRejectedValue(
+            new Error("fetchNote default reject"),
         );
         container = document.createElement("div");
         document.body.appendChild(container);
@@ -955,6 +963,13 @@ describe("BrowsePage contract", () => {
             vi.mocked(fetchDeckConfigs).mockRejectedValue(
                 new Error("preset list unreachable"),
             );
+            // Phase 16-A: default reject so editor seed effect falls
+            // back to snippet draft. 14-A tests pre-date fetchNote and
+            // assert against snippet-derived dirty checks; the reject
+            // path keeps that exact behaviour.
+            vi.mocked(fetchNote).mockRejectedValue(
+                new Error("fetchNote default reject"),
+            );
         });
 
         test("Front textarea blur with dirty draft fires patchNote with [front, back]; refetches page", async () => {
@@ -1116,6 +1131,129 @@ describe("BrowsePage contract", () => {
             }
         });
     });
+
+    // Phase 16-A: editor seed effect now goes through fetchNote so
+    // raw field values (HTML preserved) drive the textareas instead of
+    // the row-preview snippets. Three contract tests: fetchNote called
+    // with the right note id, raw HTML survives a PATCH round-trip,
+    // and a 404 from the server falls through silently to the snippet
+    // draft so the editor remains usable.
+    describe("Phase 16-A note GET + HTML preservation", () => {
+        beforeEach(() => {
+            vi.resetAllMocks();
+            // Same defaults as 14-A, but fetchNote is the focus here so
+            // we override per-test to verify the call shape.
+            vi.mocked(fetchDecks).mockRejectedValue(
+                new Error("decks unreachable"),
+            );
+            vi.mocked(fetchTags).mockRejectedValue(
+                new Error("tags unreachable"),
+            );
+            vi.mocked(fetchDeckConfigs).mockRejectedValue(
+                new Error("preset list unreachable"),
+            );
+        });
+
+        test("fetchNote called with selected card's note_id; raw fields seed the editor", async () => {
+            // Live cards seed → first card has note_id=101. We expect
+            // fetchNote(101) to fire and the front textarea to render
+            // the RAW field value (with `<b>` markup intact), not the
+            // stripped snippet.
+            vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+            vi.mocked(fetchNote).mockResolvedValueOnce({
+                id: 101,
+                notetype_id: 1_776_837_237_908,
+                notetype_name: "Basic",
+                fields: ["<b>hola raw</b>", "<i>hello raw</i>"],
+                tags: ["vocab"],
+                modified: 1_777_000_000,
+            });
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                expect(vi.mocked(fetchNote)).toHaveBeenCalledTimes(1);
+                expect(vi.mocked(fetchNote)).toHaveBeenCalledWith(101);
+
+                const front = container.querySelector(
+                    'textarea[aria-label="Front"]',
+                ) as HTMLTextAreaElement | null;
+                const back = container.querySelector(
+                    'textarea[aria-label="Back"]',
+                ) as HTMLTextAreaElement | null;
+                expect(front).not.toBeNull();
+                expect(back).not.toBeNull();
+                // Raw HTML reaches the textarea — the v1 plain-text-only
+                // limitation from 14-A is closed.
+                expect(front?.value).toBe("<b>hola raw</b>");
+                expect(back?.value).toBe("<i>hello raw</i>");
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("blur with no edit (HTML matches seed) does NOT fire patchNote", async () => {
+            // Pre-16-A this would have diff'd true on every blur because
+            // `<b>hola raw</b>` !== stripped snippet "hola raw". Pin
+            // the post-16-A behaviour so a future regression that
+            // accidentally seeds from snippet again would surface.
+            vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+            vi.mocked(fetchNote).mockResolvedValueOnce({
+                id: 101,
+                notetype_id: 1,
+                notetype_name: "Basic",
+                fields: ["<b>hola raw</b>", "hello raw"],
+                tags: ["vocab"],
+                modified: 1_777_000_000,
+            });
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const front = container.querySelector(
+                    'textarea[aria-label="Front"]',
+                ) as HTMLTextAreaElement;
+                front.dispatchEvent(new Event("blur", { bubbles: true }));
+                await settle();
+
+                expect(vi.mocked(patchNote)).not.toHaveBeenCalled();
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("fetchNote 404 falls back to snippet draft; editor still usable", async () => {
+            // Defensive path — if a card row is selected but the note
+            // record was deleted concurrently from another client, the
+            // server returns 404. Editor must keep the snippet so the
+            // user isn't staring at a blank textarea.
+            vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+            vi.mocked(fetchNote).mockRejectedValueOnce(
+                new Error("404 note 101 not found"),
+            );
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const front = container.querySelector(
+                    'textarea[aria-label="Front"]',
+                ) as HTMLTextAreaElement | null;
+                // Snippet seed already populated synchronously before
+                // the fetchNote attempt; the silent reject leaves it.
+                expect(front?.value).toBe("hola");
+                // No banner — fetchNote falling back is normal-path,
+                // not a user-action failure.
+                expect(
+                    container.querySelector(".error-banner"),
+                ).toBeNull();
+            } finally {
+                unmount(instance);
+            }
+        });
+    });
 });
 
 // Phase 12-A: server-side search wiring. The toolbar `query` input now
@@ -1133,6 +1271,11 @@ describe("BrowsePage server search wiring (Phase 12-A)", () => {
         vi.mocked(fetchTags).mockRejectedValue(new Error("tags unreachable"));
         vi.mocked(fetchDeckConfigs).mockRejectedValue(
             new Error("preset list unreachable"),
+        );
+        // Phase 16-A: default reject so the editor seed effect doesn't
+        // hold up the search-wire timing assertions.
+        vi.mocked(fetchNote).mockRejectedValue(
+            new Error("fetchNote default reject"),
         );
         container = document.createElement("div");
         document.body.appendChild(container);
@@ -1314,6 +1457,9 @@ describe("BrowsePage delete-note flow (Phase 13-A)", () => {
         vi.mocked(fetchDeckConfigs).mockRejectedValue(
             new Error("preset list unreachable"),
         );
+        vi.mocked(fetchNote).mockRejectedValue(
+            new Error("fetchNote default reject"),
+        );
         // Default to "user clicked OK" so test bodies don't repeat the
         // spy install. Tests that need cancellation override per-call.
         confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
@@ -1466,6 +1612,9 @@ describe("BrowsePage delete-deck flow (Phase 15-A)", () => {
         vi.mocked(fetchTags).mockRejectedValue(new Error("tags unreachable"));
         vi.mocked(fetchDeckConfigs).mockRejectedValue(
             new Error("preset list unreachable"),
+        );
+        vi.mocked(fetchNote).mockRejectedValue(
+            new Error("fetchNote default reject"),
         );
         confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
         container = document.createElement("div");

@@ -8,6 +8,7 @@
         fetchCards,
         fetchDecks,
         fetchDeckConfigs,
+        fetchNote,
         fetchTags,
         patchDeckName,
         patchDeckPreset,
@@ -85,18 +86,25 @@
     let isMutatingPreset = $state(false);
 
     // Phase 14-A: live note editing. Front/Back drafts are seeded from
-    // the selected card's stripped snippets (the API returns rendered
-    // HTML, but the editor surface is plain-text-only for v1) and reset
-    // whenever selection changes. PATCH /api/notes/{id} on blur if the
-    // draft differs from the seed; on success the row list refetches so
-    // template-rendered front_html/back_html stays canonical. Tag chips
-    // are clickable to remove; "+ Add" reveals an inline input that
-    // commits on Enter. Plain-text-only is documented in the commit
-    // body — HTML formatting on existing notes is lost on the first
-    // save, so a user with `<b>` markup who edits the front loses the
-    // bold tags.
+    // the selected card's note (preferring raw fields via fetchNote in
+    // live mode, falling back to stripped snippets in fake-data mode so
+    // the surface still works offline). PATCH /api/notes/{id} on blur
+    // if the draft differs from the seed; on success the row list
+    // refetches so template-rendered front_html/back_html stays
+    // canonical. Tag chips are clickable to remove; "+ Add" reveals an
+    // inline input that commits on Enter.
+    // Phase 16-A: drafts now seed from raw fields via fetchNote, so
+    // existing HTML markup (e.g. `<b>` tags, `<img>` references) round-
+    // trips through the edit cycle without being stripped to plain
+    // text. Closes the v1 plain-text-only limitation from 14-A.
     let frontDraft = $state("");
     let backDraft = $state("");
+    // Raw seed values — what the editor most recently fetched/persisted.
+    // Used to compute "is the draft dirty?" so commitFields can no-op
+    // on accidental blur and so the rollback branch knows what to
+    // restore.
+    let frontSeed = $state("");
+    let backSeed = $state("");
     let isAddingTag = $state(false);
     let newTagDraft = $state("");
     let isMutatingNote = $state(false);
@@ -208,19 +216,71 @@
     );
     let selected = $derived(filtered[selectedIdx] ?? filtered[0] ?? rows[0]);
 
-    // Phase 14-A: seed Front/Back drafts when the user picks a different
-    // card. Comparing the card id (rather than re-running on every
-    // selected-derived recompute) keeps mid-edit drafts intact when an
-    // unrelated reactive update fires.
+    // Phase 14-A / 16-A: seed Front/Back drafts when the user picks a
+    // different card. Comparing the card id (rather than re-running on
+    // every selected-derived recompute) keeps mid-edit drafts intact
+    // when an unrelated reactive update fires.
+    //
+    // Live mode: fire fetchNote(note_id) to get the raw note fields
+    // (preserving HTML) so the editor stays loss-less across save
+    // cycles. Fake-data mode falls back to the stripped snippets the
+    // row preview already carries.
     $effect(() => {
         const cardId = selected?.id ?? null;
-        if (cardId !== lastSelectedCardId) {
-            lastSelectedCardId = cardId;
+        if (cardId === lastSelectedCardId) return;
+        lastSelectedCardId = cardId;
+        isAddingTag = false;
+        newTagDraft = "";
+
+        const targetCard = liveCards?.find(
+            (c) => String(c.id) === selected?.id,
+        );
+        if (!targetCard) {
+            // Fake-data mode (or selection cleared) — seed from snippets
+            // so the textarea still has something to edit.
             frontDraft = selected?.frontSnippet ?? "";
             backDraft = selected?.backSnippet ?? "";
-            isAddingTag = false;
-            newTagDraft = "";
+            frontSeed = frontDraft;
+            backSeed = backDraft;
+            return;
         }
+        // Optimistic snippet seed so the editor isn't blank during the
+        // fetchNote round-trip. Replaced once raw fields land.
+        frontDraft = selected?.frontSnippet ?? "";
+        backDraft = selected?.backSnippet ?? "";
+        frontSeed = frontDraft;
+        backSeed = backDraft;
+        const requestedNoteId = targetCard.note_id;
+        fetchNote(requestedNoteId).then(
+            (res) => {
+                // Discard if the user moved on to a different card while
+                // the request was in flight — comparing against the
+                // current `selected.id`'s mapped note_id would be racy
+                // because that mapping can change on liveCards mutation,
+                // so we reach back through the same lookup here.
+                const stillSelected = liveCards?.find(
+                    (c) => String(c.id) === selected?.id,
+                );
+                if (!stillSelected || stillSelected.note_id !== requestedNoteId) {
+                    return;
+                }
+                // Field 0 → front, field 1 → back. Notetypes with more
+                // fields (e.g. Cloze "Text" + "Back Extra") are still
+                // edited via the same two textareas for now; a richer
+                // editor lives in a later phase.
+                frontDraft = res.fields[0] ?? "";
+                backDraft = res.fields[1] ?? "";
+                frontSeed = frontDraft;
+                backSeed = backDraft;
+            },
+            () => {
+                // Silent fallback — the snippet seed already applied
+                // above is good enough to type into. errorBanner stays
+                // clear because no user action has failed yet; if the
+                // user blurs and a save fails, _that_ surfaces a
+                // banner via commitFields' catch arm.
+            },
+        );
     });
 
     // Phase 11-A: derive the selected card's current preset_id from the
@@ -602,15 +662,21 @@
             errorBanner = "Edit unavailable on fake data";
             return;
         }
-        const initialFront = selected.frontSnippet;
-        const initialBack = selected.backSnippet;
-        if (frontDraft === initialFront && backDraft === initialBack) return;
+        // Phase 16-A: compare against the raw seed (frontSeed/backSeed),
+        // not the row-preview snippet — otherwise an unchanged note with
+        // pre-existing HTML would diff true on every blur because the
+        // snippet has already been stripped.
+        if (frontDraft === frontSeed && backDraft === backSeed) return;
         isMutatingNote = true;
         errorBanner = null;
         try {
             await patchNote(targetCard.note_id, {
                 fields: [frontDraft, backDraft],
             });
+            // Refresh seeds first so a follow-up blur sees a clean state
+            // even if the row-list refetch below fails.
+            frontSeed = frontDraft;
+            backSeed = backDraft;
             // Refetch the current page so row previews reflect the new
             // template render. Tags-only mirroring would be enough for
             // tag patches, but front/back go through {{Field}} on the
@@ -620,8 +686,8 @@
             liveTotal = res.total;
         } catch (e) {
             errorBanner = e instanceof Error ? e.message : "Edit failed";
-            frontDraft = initialFront;
-            backDraft = initialBack;
+            frontDraft = frontSeed;
+            backDraft = backSeed;
         } finally {
             isMutatingNote = false;
         }
