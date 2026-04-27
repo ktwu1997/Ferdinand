@@ -9,7 +9,7 @@ pub mod stats;
 pub mod study;
 pub mod tags;
 
-use axum::routing::{delete, get, patch, post};
+use axum::routing::{get, patch, post};
 use axum::Router;
 use serde::Serialize;
 
