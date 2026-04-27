@@ -26,31 +26,37 @@ vi.mock("$lib/api", async (importOriginal) => {
         fetchDeckConfigs: vi.fn(),
         fetchNote: vi.fn(),
         fetchNotetypes: vi.fn(),
+        fetchSavedSearches: vi.fn(),
         fetchTags: vi.fn(),
         patchDeckName: vi.fn(),
         patchDeckPreset: vi.fn(),
         patchNote: vi.fn(),
         postCardSuspend: vi.fn(),
         postCardFlag: vi.fn(),
+        postSavedSearch: vi.fn(),
         deleteNote: vi.fn(),
         deleteDeck: vi.fn(),
+        deleteSavedSearch: vi.fn(),
     };
 });
 
 import {
     deleteDeck,
     deleteNote,
+    deleteSavedSearch,
     fetchCards,
     fetchDecks,
     fetchDeckConfigs,
     fetchNote,
     fetchNotetypes,
+    fetchSavedSearches,
     fetchTags,
     patchDeckName,
     patchDeckPreset,
     patchNote,
     postCardFlag,
     postCardSuspend,
+    postSavedSearch,
 } from "$lib/api";
 
 const emptyDecks: ApiDeckListResponse = { decks: [] };
@@ -168,6 +174,13 @@ describe("BrowsePage contract", () => {
         // the page calls must be default-mocked in every beforeEach.
         vi.mocked(fetchNotetypes).mockRejectedValue(
             new Error("fetchNotetypes default reject"),
+        );
+        // Phase 18-C: saved-search default reject — silent fallback
+        // to fakeSavedSearches in the sidebar. Tests that exercise
+        // live saved-search CRUD override per-test with
+        // mockResolvedValueOnce.
+        vi.mocked(fetchSavedSearches).mockRejectedValue(
+            new Error("fetchSavedSearches default reject"),
         );
         container = document.createElement("div");
         document.body.appendChild(container);
@@ -1108,6 +1121,9 @@ describe("BrowsePage contract", () => {
             vi.mocked(fetchNotetypes).mockRejectedValue(
                 new Error("fetchNotetypes default reject"),
             );
+            vi.mocked(fetchSavedSearches).mockRejectedValue(
+                new Error("fetchSavedSearches default reject"),
+            );
         });
 
         test("Front textarea blur with dirty draft fires patchNote with [front, back]; refetches page", async () => {
@@ -1297,6 +1313,9 @@ describe("BrowsePage contract", () => {
             vi.mocked(fetchNotetypes).mockRejectedValue(
                 new Error("fetchNotetypes default reject"),
             );
+            vi.mocked(fetchSavedSearches).mockRejectedValue(
+                new Error("fetchSavedSearches default reject"),
+            );
         });
 
         test("fetchNote called with selected card's note_id; raw fields seed the editor", async () => {
@@ -1418,6 +1437,9 @@ describe("BrowsePage contract", () => {
             );
             vi.mocked(fetchDeckConfigs).mockRejectedValue(
                 new Error("preset list unreachable"),
+            );
+            vi.mocked(fetchSavedSearches).mockRejectedValue(
+                new Error("fetchSavedSearches default reject"),
             );
         });
 
@@ -1629,10 +1651,209 @@ describe("BrowsePage contract", () => {
             }
         });
     });
+
+    // Phase 18-C: persisted saved-search list. Three contract tests:
+    // (a) live fetch landed → live entries render with delete button
+    //     and click wires query into the toolbar; the static
+    //     fakeSavedSearches fallback is no longer visible.
+    // (b) "+ New saved search" inline form posts a {name, query}
+    //     and appends the server response to liveSaved.
+    // (c) Delete button removes the row optimistically after the
+    //     server returns 200; live list shrinks by one.
+    describe("Phase 18-C saved searches CRUD", () => {
+        beforeEach(() => {
+            vi.resetAllMocks();
+            vi.mocked(fetchDecks).mockRejectedValue(
+                new Error("decks unreachable"),
+            );
+            vi.mocked(fetchTags).mockRejectedValue(
+                new Error("tags unreachable"),
+            );
+            vi.mocked(fetchDeckConfigs).mockRejectedValue(
+                new Error("preset list unreachable"),
+            );
+            vi.mocked(fetchNote).mockRejectedValue(
+                new Error("fetchNote default reject"),
+            );
+            vi.mocked(fetchNotetypes).mockRejectedValue(
+                new Error("fetchNotetypes default reject"),
+            );
+        });
+
+        test("fetchSavedSearches success: live entries render; click sets toolbar query", async () => {
+            vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+            vi.mocked(fetchSavedSearches).mockResolvedValueOnce({
+                searches: [
+                    {
+                        name: "Hard reviews",
+                        query: "tag:hard is:due",
+                        created_at: 1_777_000_000,
+                    },
+                    {
+                        name: "Newly added",
+                        query: "added:1",
+                        created_at: 1_777_000_100,
+                    },
+                ],
+            });
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                // Live entries render with their server-canonical names.
+                const items = container.querySelectorAll(
+                    ".saved-row .item.saved span",
+                );
+                const names = Array.from(items).map((n) =>
+                    n.textContent?.trim(),
+                );
+                expect(names).toEqual(["Hard reviews", "Newly added"]);
+
+                // Click "Hard reviews" → query set to its expression
+                // (the existing search debounce will pick up the change
+                // and refetch /api/cards).
+                const hardBtn = Array.from(
+                    container.querySelectorAll<HTMLButtonElement>(
+                        ".saved-row .item.saved",
+                    ),
+                ).find((b) => b.textContent?.includes("Hard reviews"));
+                expect(hardBtn).toBeDefined();
+                hardBtn!.click();
+                await settle();
+
+                const search = container.querySelector<HTMLInputElement>(
+                    'input[type="search"]',
+                );
+                expect(search?.value).toBe("tag:hard is:due");
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("'+ New saved search' inline form posts {name, query} and appends response", async () => {
+            vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+            vi.mocked(fetchSavedSearches).mockResolvedValueOnce({
+                searches: [],
+            });
+            vi.mocked(postSavedSearch).mockResolvedValueOnce({
+                name: "Cram",
+                query: "deck:Spanish is:due",
+                created_at: 1_777_222_000,
+            });
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const newBtn = container.querySelector<HTMLButtonElement>(
+                    "button.saved-new-btn",
+                );
+                expect(newBtn).not.toBeNull();
+                newBtn!.click();
+                flushSync();
+
+                const nameInput = container.querySelector<HTMLInputElement>(
+                    'input[aria-label="New saved search name"]',
+                );
+                const queryInput = container.querySelector<HTMLInputElement>(
+                    'input[aria-label="New saved search query"]',
+                );
+                expect(nameInput).not.toBeNull();
+                expect(queryInput).not.toBeNull();
+
+                nameInput!.value = "Cram";
+                nameInput!.dispatchEvent(
+                    new Event("input", { bubbles: true }),
+                );
+                queryInput!.value = "deck:Spanish is:due";
+                queryInput!.dispatchEvent(
+                    new Event("input", { bubbles: true }),
+                );
+                queryInput!.dispatchEvent(
+                    new KeyboardEvent("keydown", {
+                        key: "Enter",
+                        bubbles: true,
+                    }),
+                );
+                await settle();
+
+                expect(vi.mocked(postSavedSearch)).toHaveBeenCalledTimes(1);
+                expect(vi.mocked(postSavedSearch)).toHaveBeenCalledWith({
+                    name: "Cram",
+                    query: "deck:Spanish is:due",
+                });
+                // The new entry appears in the sidebar.
+                const names = Array.from(
+                    container.querySelectorAll(".saved-row .item.saved span"),
+                ).map((n) => n.textContent?.trim());
+                expect(names).toEqual(["Cram"]);
+                // Form collapses back to "+ New saved search" button.
+                expect(
+                    container.querySelector(
+                        'input[aria-label="New saved search name"]',
+                    ),
+                ).toBeNull();
+                expect(
+                    container.querySelector("button.saved-new-btn"),
+                ).not.toBeNull();
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("delete X removes the row after server returns 200", async () => {
+            vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+            vi.mocked(fetchSavedSearches).mockResolvedValueOnce({
+                searches: [
+                    {
+                        name: "Hard",
+                        query: "tag:hard",
+                        created_at: 1_777_000_000,
+                    },
+                    {
+                        name: "Easy",
+                        query: "tag:easy",
+                        created_at: 1_777_000_100,
+                    },
+                ],
+            });
+            vi.mocked(deleteSavedSearch).mockResolvedValueOnce({
+                removed_name: "Hard",
+            });
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                // Delete the first entry.
+                const deleteBtn = container.querySelector<HTMLButtonElement>(
+                    'button[aria-label="Delete saved search: Hard"]',
+                );
+                expect(deleteBtn).not.toBeNull();
+                deleteBtn!.click();
+                await settle();
+
+                expect(vi.mocked(deleteSavedSearch)).toHaveBeenCalledTimes(1);
+                expect(vi.mocked(deleteSavedSearch)).toHaveBeenCalledWith(
+                    "Hard",
+                );
+                // List shrinks; only "Easy" remains.
+                const names = Array.from(
+                    container.querySelectorAll(".saved-row .item.saved span"),
+                ).map((n) => n.textContent?.trim());
+                expect(names).toEqual(["Easy"]);
+            } finally {
+                unmount(instance);
+            }
+        });
+    });
 });
 
 // Phase 12-A: server-side search wiring. The toolbar `query` input now
 // drives a debounced fetchCards(q, ...) instead of only a local filter.
+// Local filter is preserved as the silent fallback when the server
+// search fails — typing should narrow rows even if the backend is down.
 // Local filter is preserved as the silent fallback when the server
 // search fails — typing should narrow rows even if the backend is down.
 describe("BrowsePage server search wiring (Phase 12-A)", () => {
@@ -1660,6 +1881,13 @@ describe("BrowsePage server search wiring (Phase 12-A)", () => {
         // the page calls must be default-mocked in every beforeEach.
         vi.mocked(fetchNotetypes).mockRejectedValue(
             new Error("fetchNotetypes default reject"),
+        );
+        // Phase 18-C: saved-search default reject — silent fallback
+        // to fakeSavedSearches in the sidebar. Tests that exercise
+        // live saved-search CRUD override per-test with
+        // mockResolvedValueOnce.
+        vi.mocked(fetchSavedSearches).mockRejectedValue(
+            new Error("fetchSavedSearches default reject"),
         );
         container = document.createElement("div");
         document.body.appendChild(container);
@@ -1847,6 +2075,13 @@ describe("BrowsePage delete-note flow (Phase 13-A)", () => {
         vi.mocked(fetchNotetypes).mockRejectedValue(
             new Error("fetchNotetypes default reject"),
         );
+        // Phase 18-C: saved-search default reject — silent fallback
+        // to fakeSavedSearches in the sidebar. Tests that exercise
+        // live saved-search CRUD override per-test with
+        // mockResolvedValueOnce.
+        vi.mocked(fetchSavedSearches).mockRejectedValue(
+            new Error("fetchSavedSearches default reject"),
+        );
         // Default to "user clicked OK" so test bodies don't repeat the
         // spy install. Tests that need cancellation override per-call.
         confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
@@ -2005,6 +2240,13 @@ describe("BrowsePage delete-deck flow (Phase 15-A)", () => {
         );
         vi.mocked(fetchNotetypes).mockRejectedValue(
             new Error("fetchNotetypes default reject"),
+        );
+        // Phase 18-C: saved-search default reject — silent fallback
+        // to fakeSavedSearches in the sidebar. Tests that exercise
+        // live saved-search CRUD override per-test with
+        // mockResolvedValueOnce.
+        vi.mocked(fetchSavedSearches).mockRejectedValue(
+            new Error("fetchSavedSearches default reject"),
         );
         confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
         container = document.createElement("div");

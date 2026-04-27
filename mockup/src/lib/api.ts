@@ -538,6 +538,75 @@ export async function postDeck(
     return postJson<ApiDeckCreateResponse>("/api/decks", { name });
 }
 
+export interface ApiSavedSearch {
+    /** Unique label, ≤60 chars, no `/`. Trimmed at the boundary. */
+    name: string;
+    /** Anki search expression. Server doesn't validate the syntax
+     * here; /api/cards judges it at run time when the user clicks
+     * the saved search. */
+    query: string;
+    /** Epoch seconds when the search was added. */
+    created_at: number;
+}
+
+export interface ApiSavedSearchListResponse {
+    searches: ApiSavedSearch[];
+}
+
+export interface ApiSavedSearchCreateRequest {
+    name: string;
+    query: string;
+}
+
+export interface ApiSavedSearchDeleteResponse {
+    removed_name: string;
+}
+
+/**
+ * Phase 18-C: list every persisted saved search. Empty array on a
+ * fresh collection (server treats key-absent as empty list, not 404,
+ * to avoid a cosmetic "first save" round-trip).
+ */
+export async function fetchSavedSearches(): Promise<ApiSavedSearchListResponse> {
+    return getJson<ApiSavedSearchListResponse>("/api/saved_searches");
+}
+
+/**
+ * Phase 18-C: append a new saved search. Server validates name shape
+ * (1..=60 chars, no `/`), query non-empty (1..=1000 chars), and name
+ * uniqueness; conflicts and shape errors all return 400.
+ */
+export async function postSavedSearch(
+    req: ApiSavedSearchCreateRequest,
+): Promise<ApiSavedSearch> {
+    return postJson<ApiSavedSearch>("/api/saved_searches", req);
+}
+
+/**
+ * Phase 18-C: remove a saved search by name. Name is URL-encoded
+ * before going into the path so spaces and CJK round-trip cleanly.
+ * Missing name → 404, malformed name → 400.
+ */
+export async function deleteSavedSearch(
+    name: string,
+): Promise<ApiSavedSearchDeleteResponse> {
+    const encoded = encodeURIComponent(name);
+    const res = await fetch(`${apiBase()}/api/saved_searches/${encoded}`, {
+        method: "DELETE",
+    });
+    if (!res.ok) {
+        let detail = res.statusText;
+        try {
+            const body = (await res.json()) as { message?: string };
+            if (body.message) detail = body.message;
+        } catch {
+            // Fall through with statusText so we still surface something.
+        }
+        throw new Error(`${res.status} ${detail}`);
+    }
+    return (await res.json()) as ApiSavedSearchDeleteResponse;
+}
+
 export interface ApiFilteredDeckCreateRequest {
     /** Same shape rules as a normal deck name (Phase 14-C). */
     name: string;
