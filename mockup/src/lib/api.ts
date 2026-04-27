@@ -491,6 +491,47 @@ export async function patchNote(
     return patchJson<ApiNotePatchResponse>(`/api/notes/${id}`, patch);
 }
 
+export interface ApiNoteSummary {
+    id: number;
+    /** Owning notetype id (epoch-ms timestamp on real collections). */
+    notetype_id: number;
+    /** Notetype name, e.g. "Basic" / "Cloze". */
+    notetype_name: string;
+    /** Raw field values exactly as stored — preserves HTML so the
+     * editor can round-trip without losing formatting. Distinct from
+     * the rendered `front_html` / `back_html` on ApiCardSummary which
+     * have already been through `{{Field}}` template expansion. */
+    fields: string[];
+    /** Persisted tags in canonical alphabetical order. */
+    tags: string[];
+    /** Note modified timestamp (epoch seconds). */
+    modified: number;
+}
+
+/**
+ * Phase 16-A: fetch a single note by id with raw field values
+ * preserved. Mirrors the Phase 15-D FFI shape so the web client and
+ * native iOS client share the same record model. Server validates
+ * id positive (400) and existence (404). Read-only — safe to call
+ * repeatedly from a Svelte effect without lock contention.
+ */
+export async function fetchNote(id: number): Promise<ApiNoteSummary> {
+    const res = await fetch(`${apiBase()}/api/notes/${id}`, {
+        headers: { accept: "application/json" },
+    });
+    if (!res.ok) {
+        let detail = res.statusText;
+        try {
+            const parsed = (await res.json()) as { message?: string };
+            if (parsed?.message) detail = parsed.message;
+        } catch {
+            // body wasn't JSON — fall through with statusText
+        }
+        throw new Error(`${res.status} ${detail}`);
+    }
+    return (await res.json()) as ApiNoteSummary;
+}
+
 export async function fetchDeckConfigById(id: number): Promise<ApiDeckConfigDefault> {
     return getJson<ApiDeckConfigDefault>(`/api/deck_config/${id}`);
 }
