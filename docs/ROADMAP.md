@@ -136,13 +136,17 @@ media path lists. New FFI surface required.
 ## Ascii view
 
 ```text
-M1 Web Daily Driver ━━━━━━━━━━━━━━━━━━━━ (52%→70%)
+M1 Web Daily Driver ━━━━━━━━━━━━━━━━━━━━ (52%→70%, Phase 20 closes)
+                                          │
+                                          ▼
+M5 Production ━━━━━━━ (build + deploy)
+                                          │
+                                          ▼
+              🟢 WEB-LAUNCH MILESTONE — kt's daily driver online
                                           │
                                           ▼
                        ┌──────────────────┴────────────┐
-                       │ Switch to macOS host;         │
-                       │ M1 polish can run in the      │
-                       │ background (saved searches v2 etc.) │
+                       │ Switch to macOS host          │
                        └──────────────────┬────────────┘
                                           ▼
 M2 iOS Read-Only ━━━━━━━━━━━━━━━ (70%→82%)
@@ -152,9 +156,6 @@ M3 iOS Full Review ━━━━━━━━━━━━━━━━━━━━ 
                                           │
                                           ▼
 M4 Sync ━━━━━━━━━━━ (94%→97%)
-                                          │
-                                          ▼
-M5 Production ━━━━━━━ (97%→100%)
 ```
 
 ---
@@ -168,21 +169,44 @@ work is the priority; those quads don't block iOS.
 
 ---
 
-## Recommended execution order
+## First-deliverable milestone target (locked 2026-04-27)
 
-For the fastest path to "good enough for personal use":
+**Goal**: web 版正式上線 — kt 本人能在乾淨環境（重灌 / 換機）一小時
+內把整套服務拉起來當 daily driver 用，不靠手動 cargo build / npm
+build / SQLite 路徑接管。
 
-1. **M1 Phase 17-18 quads** (next 2 sessions, ~6h Linux) — push web to
-   "daily driver" state.
-2. **Jump to M2 Phase 21-23 quads** (3 sessions, ~10h macOS) — unlock
-   commute-time iPhone browsing.
-3. **Loop back to M1 Phase 19-20** (2 sessions, ~6h Linux) — notetype
-   edits + bulk ops.
-4. **M3 + M4** as the main push (~6-7 sessions, ~25-30h).
-5. **M5** last.
+**Target = M1 完整 + M5 Phase 30**：
+- M1 Phase 20 quad（4 phases，~6h）— 補完 daily-driver UX 缺口
+- M5 Phase 30 quad（~5-8h）— single-binary release build + launchd /
+  Docker / setup README
 
-The win: each milestone exit ships a real, usable artifact. No "wait
-for 100% before turning the machine on."
+**Estimated wall**: 11-14h（2-3 個 session）。Phase 17/18/19 的 quad
+節奏已經穩，Phase 20 應該在 1 個 session 內封盤；M5 因為涉及 build
+pipeline + 跨平台 plist，預期 1.5-2 個 session。
+
+**M2/M3/M4 順延**：iOS 解鎖（M2）、iOS full review（M3）、sync（M4）
+都晚於 web-launch 目標。第 11 次 deferral 的 FFI v8 surface 也跟著
+往後挪。
+
+---
+
+## Recommended execution order (revised post-19, milestone-locked)
+
+For the **web-launch-first** path:
+
+1. **M1 Phase 20 quad** (1 session, ~6h Linux) — tag override / burn-
+   recovery / per-card review history viewer / bulk multi-select.
+   Closes M1 DoD.
+2. **M5 Phase 30 quad** (1-2 sessions, ~5-8h Linux) — single-binary
+   release + launchd plist + Docker image + setup README.
+   🟢 **Web-launch milestone exit here.**
+3. **M2 Phase 21-23 quads** (3 sessions, ~10h macOS) — iOS read-only
+   viewer (deferred until web-launch lands).
+4. **M3 + M4** (~6-7 sessions, ~25-30h) — iOS full review + sync.
+
+The win: web-launch ships a real, usable artifact in ≤14h. iOS work
+is delayed but not blocked — M5 doesn't pay down any FFI surface, so
+M2's first phase still has the same v8 build to do.
 
 ---
 
