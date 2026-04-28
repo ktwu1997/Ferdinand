@@ -23,6 +23,46 @@ script. M1 + M5 closed in 2 sessions over 2 days; only macOS-side M2/M3
 
 ---
 
+## ⚡ Acceleration plan — Phase 21 quad as 5-track parallel orchestrate
+
+Decision 2026-04-28: speed up by parallelizing every host-agnostic
+sub-phase that doesn't strictly need Xcode. Phase 21's original "Xcode
+scaffold + 3 Swift sub-phases" expands to 5 tracks because (a) FFI v8
+notetype-ops surface (12th deferral) is pure Rust + cbindgen and (b) M4
+Phase 28a sync-design decision is a docs-only spec doc — both can run in
+parallel with the 3 Xcode tracks once we're on macOS.
+
+Tracks (file-disjoint, 5-way orchestrate in one Agent message):
+
+1. **21-A · FFI v8 notetype-ops** — `rslib_ffi/src/lib.rs` adds
+   `_notetype_list_json` / `_notetype_get_json` / `_notetype_field_add`
+   / `_notetype_field_remove` / `_notetype_rename`; cbindgen header
+   regen; C ABI tests. Host-agnostic (Linux OR macOS).
+2. **21-B · Xcode project scaffold** — `ios/Ferdinand.xcodeproj/`,
+   target iOS 17+, link rslib_ffi staticlib (cargo build
+   --target aarch64-apple-ios + sim universal lib); bridging header.
+   Requires macOS.
+3. **21-C · SwiftUI App entry + ContentView** — `ios/Ferdinand/App.swift`,
+   `ContentView.swift`, calls `ferdinand_version()` and prints to
+   console. Requires macOS.
+4. **21-D · Collection lifecycle** — `ferdinand_collection_open(path)` /
+   `ferdinand_collection_close(handle)` Swift wrappers, App lifecycle
+   `.onAppear` / `.onDisappear`, bundles a sample `collection.anki2`
+   (Phase 30 baseline 206-card file is reusable). Requires macOS.
+5. **28a · M4 sync design decision (pulled forward)** — `docs/design/sync-decision.md`
+   evaluates Option A (AnkiWeb sync, ~3 quads) vs B (LAN/Tailscale file
+   sync, ~1 quad — current default) vs C (self-hosted simple sync, ~2
+   quads); recommendation + spec for chosen option. Host-agnostic.
+
+Optional pre-bake on Linux before macOS switch: tracks 1 + 5 are
+host-agnostic and could ship in this dev container immediately as a
+"Phase 21-warmup" mini-quad to land the macOS switch with only 3 tracks
+remaining. Recommended only if user wants an extra acceleration step
+before the host change; otherwise all 5 tracks orchestrated on macOS
+gives end-to-end FFI validation in one ship.
+
+---
+
 ## Status as of 2026-04-28 (post Phase 30 quad — M5 shipped, web-launch reached)
 
 - **Web + Server**: ✅ ~98% complete (M1 closed Phase 20 + 4-way parallel
