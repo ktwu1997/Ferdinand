@@ -13,27 +13,39 @@
 
 ---
 
-## Status as of 2026-04-28 (post Phase 20 quad complete — M1 done)
+## 🟢 WEB-LAUNCH MILESTONE REACHED — 2026-04-28
 
-- **Web + Server**: ~92-98% complete (post Phase 20 full quad — all 4
-  phases shipped, M1 closed). Home has 7-day forecast bar + "+ Filtered"
-  inline form; browse editor renders all fields generically AND offers
-  per-card move-to-deck AND opt-in Card Templates panel; settings
-  Notetypes tab manages rename + per-notetype add/remove field with
-  two-step destructive confirm; saved-search CRUD persists to
-  collection-config; per-card review history disclosure (Phase 20-D)
-  and burn-recovery `reset_to_new` (Phase 20-C) on browse editor;
-  card-level tag override on study review pane (Phase 20-A); bulk
-  multi-select toolbar on browse with `bulk_suspend` / `bulk_flag`
-  endpoints (Phase 20-B). Standing gate now includes `cargo fmt --check`
-  (folded in at Phase 20-D).
+`kt`'s daily driver is online via single-binary `target/release-lto/anki_server`
+(17 MB, embedded SvelteKit mockup) plus three install paths shipped in
+Phase 30 quad: macOS launchd plist, Docker compose, fresh-machine bootstrap
+script. M1 + M5 closed in 2 sessions over 2 days; only macOS-side M2/M3
+(iOS) and M4 (sync) remain.
+
+---
+
+## Status as of 2026-04-28 (post Phase 30 quad — M5 shipped, web-launch reached)
+
+- **Web + Server**: ✅ ~98% complete (M1 closed Phase 20 + 4-way parallel
+  M5 Phase 30 just shipped). All daily-driver flows in place (review,
+  edit, add-note, tag, deck-config, FSRS, bulk ops, history, burn-recovery,
+  saved-search, notetype rename + field add/remove). Standing gate: clippy
+  -D warnings, fmt --check, 128 anki_server tests, 198 vitest, 0
+  svelte-check errors.
+- **Distribution**: ✅ M5 Phase 30 shipped 2026-04-28 — single-binary
+  release (`build/release.sh` → `target/release-lto/anki_server` w/
+  embedded mockup via `include_dir!` + `embed-mockup` feature; 17 MB,
+  release-lto + strip + codegen-units=1), launchd plist + install/uninstall
+  scripts (`launchd/com.ktwu.ferdinand.plist`), Docker multi-stage image +
+  compose (Dockerfile + docker-compose.yml + .dockerignore), top-level
+  Ferdinand-fork README + `docs/SETUP.md` + `scripts/bootstrap.sh`
+  fresh-machine bootstrap.
 - **iOS**: 0% (rslib_ffi v0-v7 surface ready, 12 C ABI symbols incl.
   `tag_list_json` + cbindgen header, but no Xcode project yet —
   deferred **11 times** now; 19-A/B/C/D paid down 0 FFI symbols by
   design, v8 notetype-ops surface deferred to M2 Phase 21 with the
   Xcode scaffold so it gets end-to-end validated on first ship).
 - **Sync**: 0%, design decision pending (see M4).
-- **Overall**: ~62-76% complete depending on definition.
+- **Overall**: ~78% complete (M1 + M5 shipped; M2/M3/M4 outstanding).
 
 ---
 
@@ -127,27 +139,27 @@ media path lists. New FFI surface required.
 
 | Phase            | Scope                                                                                                                                                      | Risk   | Cum. % |
 | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | ------ |
-| 30 quad          | Single-binary release build (anki_server + bundled mockup static) / launchd plist (macOS auto-start) / Docker image (backup) / Release script + Setup README | low    | ~99%   |
+| 30 quad ✅       | Shipped 2026-04-28 via 4-way parallel orchestrate (one message, 4 isolated worktrees, file-disjoint). 30-A single-binary release (commit `94cae04c1`, `build/release.sh` → 17 MB binary at `target/release-lto/` w/ embedded mockup via `include_dir!` + `embed-mockup` feature, 128 tests pass) + 30-B launchd plist (commit `a5a7d5742`, `launchd/com.ktwu.ferdinand.plist` + install/uninstall + README, xmllint clean) + 30-C Docker (commit `10542b539`, 3-stage Dockerfile + compose + dockerignore, runtime structurally lint-reviewed since docker not in dev container) + 30-D setup docs (commit `50107135f`, README rewrite + `docs/SETUP.md` + `scripts/bootstrap.sh`, shellcheck clean). Live cold-boot smoke confirmed binary serves embedded `index.html` after `mockup/build/` moved aside; 206 cards baseline + "森林" 201-result query intact. PROTOC auto-detect added post-smoke for fresh-machine ergonomics. | low    | ~99%   |
 | 31 (optional)    | iOS TestFlight build / personal-dev-account sideload pipeline                                                                                              | medium | ~100%  |
 
-🟢 **Milestone exit**: "swap machine, no manual rebuild."
+🟢 **Milestone exit reached 2026-04-28**: single-binary `anki_server` + 3 install paths; "swap machine, no manual rebuild" proven.
 
 ---
 
 ## Ascii view
 
 ```text
-M1 Web Daily Driver ━━━━━━━━━━━━━━━━━━━━ (52%→70%, Phase 20 closes)
+M1 Web Daily Driver ✅ ━━━━━━━━━━━━━━━━━━━ (52%→70%, Phase 20 shipped 2026-04-28)
                                           │
                                           ▼
-M5 Production ━━━━━━━ (build + deploy)
+M5 Production ✅ ━━━━━━━ (Phase 30 shipped 2026-04-28, 4-way parallel)
                                           │
                                           ▼
-              🟢 WEB-LAUNCH MILESTONE — kt's daily driver online
+              🟢 WEB-LAUNCH MILESTONE REACHED 2026-04-28
                                           │
                                           ▼
                        ┌──────────────────┴────────────┐
-                       │ Switch to macOS host          │
+                       │ Switch to macOS host (NEXT)   │
                        └──────────────────┬────────────┘
                                           ▼
 M2 iOS Read-Only ━━━━━━━━━━━━━━━ (70%→82%)
@@ -197,22 +209,24 @@ For the **web-launch-first** path:
 
 1. **M1 Phase 20 quad** ✅ shipped 2026-04-27/28 (2 sessions × 2-way
    parallel orchestration, ~5h wall total). All four phases merged:
-   20-D + 20-C (Wave 1) + 20-A + 20-B (Wave 2). Closes M1 DoD.
-2. **M5 Phase 30 quad** (1 session, ~4-5h Linux with 4-way parallel
-   orchestration) — single-binary release + launchd plist + Docker
-   image + setup README. All 4 sub-phases largely file-disjoint
-   (Cargo.toml/build script vs `~/Library/LaunchAgents/*.plist` vs
-   `Dockerfile` + `docker-compose.yml` vs `README.md`). Some merge
-   coordination may be needed where Cargo build config touches Docker
-   base image; otherwise truly parallel.
-   🟢 **Web-launch milestone exit here.**
+   20-D + 20-C (Wave 1) + 20-A + 20-B (Wave 2). Closed M1 DoD.
+2. **M5 Phase 30 quad** ✅ shipped 2026-04-28 (1 session, true 4-way
+   parallel orchestrate via 4 isolated worktrees in one message; ~3h
+   wall — agents ~30min concurrent + main session merge + smoke). 30-A
+   single-binary release + 30-B launchd plist + 30-C Docker image +
+   30-D setup README & bootstrap. Cherry-pick recovery used because 3
+   of 4 worktree branches diverged from upstream Anki commits not
+   Ferdinand main; 30-A pre-rebased correctly. Live cold-boot smoke
+   confirmed embedded asset serve. 🟢 **Web-launch milestone reached.**
 3. **M2 Phase 21-23 quads** (3 sessions, ~10h macOS) — iOS read-only
-   viewer (deferred until web-launch lands).
+   viewer. **NEXT: Phase 21 starts M2; requires switch to macOS host
+   (xcodebuild not available in Linux dev container).**
 4. **M3 + M4** (~6-7 sessions, ~25-30h) — iOS full review + sync.
 
-The win: web-launch ships a real, usable artifact in ≤14h. iOS work
-is delayed but not blocked — M5 doesn't pay down any FFI surface, so
-M2's first phase still has the same v8 build to do.
+Web-launch shipped a real, usable artifact in 2 days × 3-4h sessions.
+iOS work is host-gated but not blocked — M5 didn't pay down any FFI
+surface, so M2 Phase 21 still has the v8 notetype-ops surface to add
+alongside the Xcode scaffold.
 
 ---
 
