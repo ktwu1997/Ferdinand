@@ -21,12 +21,18 @@ vi.mock("$lib/api", async (importOriginal) => {
         fetchDecks: vi.fn(),
         fetchQueue: vi.fn(),
         postAnswer: vi.fn(),
+        patchNote: vi.fn(),
     };
 });
 
-import { fetchDecks, fetchQueue, postAnswer } from "$lib/api";
+import { fetchDecks, fetchQueue, patchNote, postAnswer } from "$lib/api";
 
-function card(id: number, front: string, back: string): ApiCardSummary {
+function card(
+    id: number,
+    front: string,
+    back: string,
+    tags: string[] = [],
+): ApiCardSummary {
     return {
         id,
         note_id: id,
@@ -35,7 +41,7 @@ function card(id: number, front: string, back: string): ApiCardSummary {
         template_idx: 0,
         front_html: front,
         back_html: back,
-        tags: [],
+        tags,
         state: "new",
         ease_factor: 2500,
         // Phase 17-A: flag=0 (no flag) is the default for fixtures that
@@ -294,5 +300,236 @@ describe("StudyPage contract", () => {
         } finally {
             unmount(instance);
         }
+    });
+
+    // Phase 20-A: per-card tag override on the study review pane. Tags
+    // belong to the underlying note (so all sibling cards inherit them);
+    // the editor mirrors server-canonical tags onto `currentCard` after
+    // each PATCH and reverts the optimistic state on failure.
+    describe("tag override (Phase 20-A)", () => {
+        const queueWithTags: ApiQueueResponse = {
+            new: 5,
+            learning: 2,
+            review: 3,
+            cards: [
+                card(101, "<p>Front 101</p>", "<p>Back 101</p>", [
+                    "alpha",
+                    "beta",
+                ]),
+            ],
+        };
+
+        test("renders existing tags as removable chips", async () => {
+            vi.mocked(fetchDecks).mockResolvedValueOnce(decksOk);
+            vi.mocked(fetchQueue).mockResolvedValueOnce(queueWithTags);
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const chips = container.querySelectorAll(
+                    '[data-testid="tag-edit"] .tag-removable',
+                );
+                expect(chips.length).toBe(2);
+                expect(chips[0].textContent).toContain("alpha");
+                expect(chips[1].textContent).toContain("beta");
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("adding a tag fires patchNote with merged list and shows the new chip", async () => {
+            vi.mocked(fetchDecks).mockResolvedValueOnce(decksOk);
+            vi.mocked(fetchQueue).mockResolvedValueOnce(queueWithTags);
+            vi.mocked(patchNote).mockResolvedValueOnce({
+                note_id: 101,
+                fields: ["x", "y"],
+                tags: ["alpha", "beta", "gamma"],
+                modified: 1,
+            });
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const addBtn = container.querySelector<HTMLButtonElement>(
+                    '[data-testid="tag-add-btn"]',
+                );
+                expect(addBtn).not.toBeNull();
+                addBtn!.click();
+                await settle();
+
+                const input = container.querySelector<HTMLInputElement>(
+                    '[data-testid="tag-input"]',
+                );
+                expect(input).not.toBeNull();
+                input!.value = "gamma";
+                input!.dispatchEvent(new Event("input", { bubbles: true }));
+                flushSync();
+                input!.dispatchEvent(
+                    new KeyboardEvent("keydown", {
+                        key: "Enter",
+                        bubbles: true,
+                    }),
+                );
+                await settle();
+
+                expect(vi.mocked(patchNote)).toHaveBeenCalledTimes(1);
+                expect(vi.mocked(patchNote)).toHaveBeenCalledWith(101, {
+                    tags: ["alpha", "beta", "gamma"],
+                });
+
+                const chips = container.querySelectorAll(
+                    '[data-testid="tag-edit"] .tag-removable',
+                );
+                expect(chips.length).toBe(3);
+                expect(chips[2].textContent).toContain("gamma");
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("removing a tag fires patchNote with the filtered list and drops the chip", async () => {
+            vi.mocked(fetchDecks).mockResolvedValueOnce(decksOk);
+            vi.mocked(fetchQueue).mockResolvedValueOnce(queueWithTags);
+            vi.mocked(patchNote).mockResolvedValueOnce({
+                note_id: 101,
+                fields: ["x", "y"],
+                tags: ["beta"],
+                modified: 1,
+            });
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const removeAlpha = container.querySelector<HTMLButtonElement>(
+                    '[aria-label="Remove tag alpha"]',
+                );
+                expect(removeAlpha).not.toBeNull();
+                removeAlpha!.click();
+                await settle();
+
+                expect(vi.mocked(patchNote)).toHaveBeenCalledTimes(1);
+                expect(vi.mocked(patchNote)).toHaveBeenCalledWith(101, {
+                    tags: ["beta"],
+                });
+
+                const chips = container.querySelectorAll(
+                    '[data-testid="tag-edit"] .tag-removable',
+                );
+                expect(chips.length).toBe(1);
+                expect(chips[0].textContent).toContain("beta");
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("duplicate add is a no-op (no patchNote call)", async () => {
+            vi.mocked(fetchDecks).mockResolvedValueOnce(decksOk);
+            vi.mocked(fetchQueue).mockResolvedValueOnce(queueWithTags);
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                container
+                    .querySelector<HTMLButtonElement>(
+                        '[data-testid="tag-add-btn"]',
+                    )!
+                    .click();
+                await settle();
+
+                const input = container.querySelector<HTMLInputElement>(
+                    '[data-testid="tag-input"]',
+                );
+                input!.value = "alpha"; // already on the card
+                input!.dispatchEvent(new Event("input", { bubbles: true }));
+                flushSync();
+                input!.dispatchEvent(
+                    new KeyboardEvent("keydown", {
+                        key: "Enter",
+                        bubbles: true,
+                    }),
+                );
+                await settle();
+
+                expect(vi.mocked(patchNote)).not.toHaveBeenCalled();
+
+                const chips = container.querySelectorAll(
+                    '[data-testid="tag-edit"] .tag-removable',
+                );
+                expect(chips.length).toBe(2);
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("patchNote rejection reverts the optimistic state and surfaces tag-error", async () => {
+            vi.mocked(fetchDecks).mockResolvedValueOnce(decksOk);
+            vi.mocked(fetchQueue).mockResolvedValueOnce(queueWithTags);
+            vi.mocked(patchNote).mockRejectedValueOnce(
+                new Error("400 invalid tag"),
+            );
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                container
+                    .querySelector<HTMLButtonElement>(
+                        '[aria-label="Remove tag alpha"]',
+                    )!
+                    .click();
+                await settle();
+
+                expect(vi.mocked(patchNote)).toHaveBeenCalledTimes(1);
+
+                // Optimistic remove was reverted → both chips back.
+                const chips = container.querySelectorAll(
+                    '[data-testid="tag-edit"] .tag-removable',
+                );
+                expect(chips.length).toBe(2);
+
+                const errEl = container.querySelector('[data-testid="tag-error"]');
+                expect(errEl).not.toBeNull();
+                expect(errEl?.textContent).toContain("400 invalid tag");
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        test("answering advances to next card and shows that note's tags", async () => {
+            vi.mocked(fetchDecks).mockResolvedValueOnce(decksOk);
+            vi.mocked(fetchQueue).mockResolvedValueOnce(queueWithTags);
+            vi.mocked(postAnswer).mockResolvedValueOnce({
+                new: 4,
+                learning: 2,
+                review: 3,
+                cards: [
+                    card(102, "<p>Front 102</p>", "<p>Back 102</p>", [
+                        "delta",
+                    ]),
+                ],
+            });
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                pressKey(" ");
+                await settle();
+                pressKey("3");
+                await settle();
+
+                const chips = container.querySelectorAll(
+                    '[data-testid="tag-edit"] .tag-removable',
+                );
+                expect(chips.length).toBe(1);
+                expect(chips[0].textContent).toContain("delta");
+            } finally {
+                unmount(instance);
+            }
+        });
     });
 });
