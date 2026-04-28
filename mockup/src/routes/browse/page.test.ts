@@ -21,6 +21,8 @@ vi.mock("$lib/api", async (importOriginal) => {
     const actual = await importOriginal<typeof import("$lib/api")>();
     return {
         ...actual,
+        bulkFlag: vi.fn(),
+        bulkSuspend: vi.fn(),
         fetchCards: vi.fn(),
         fetchDecks: vi.fn(),
         fetchDeckConfigs: vi.fn(),
@@ -45,6 +47,8 @@ vi.mock("$lib/api", async (importOriginal) => {
 });
 
 import {
+    bulkFlag,
+    bulkSuspend,
     deleteDeck,
     deleteNote,
     deleteSavedSearch,
@@ -3005,6 +3009,343 @@ describe("BrowsePage Review History panel (Phase 20-D)", () => {
             const empty = container.querySelector(".history-empty");
             expect(empty).not.toBeNull();
             expect(empty?.textContent).toContain("No reviews yet");
+        } finally {
+            unmount(instance);
+        }
+    });
+});
+
+// Phase 20-B: bulk multi-select + bulk_suspend / bulk_flag toolbar.
+// Selection state is the single Set<number> in +page.svelte; the
+// toolbar mirrors it visually, the bulk endpoints take it as the
+// payload, and the "Clear selection" button collapses it back to
+// empty. Re-using the same liveThree fixture (cards 101/102/103)
+// the rest of the suite seeds with so the row identities are stable
+// across this block.
+describe("BrowsePage bulk multi-select (Phase 20-B)", () => {
+    let container: HTMLDivElement;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        resetPageStub();
+        vi.mocked(fetchDecks).mockRejectedValue(new Error("decks unreachable"));
+        vi.mocked(fetchTags).mockRejectedValue(new Error("tags unreachable"));
+        vi.mocked(fetchDeckConfigs).mockRejectedValue(
+            new Error("preset list unreachable"),
+        );
+        vi.mocked(fetchNote).mockRejectedValue(
+            new Error("fetchNote default reject"),
+        );
+        vi.mocked(fetchNotetypes).mockRejectedValue(
+            new Error("fetchNotetypes default reject"),
+        );
+        vi.mocked(fetchSavedSearches).mockRejectedValue(
+            new Error("fetchSavedSearches default reject"),
+        );
+        vi.mocked(getCardHistory).mockRejectedValue(
+            new Error("getCardHistory default reject"),
+        );
+        container = document.createElement("div");
+        document.body.appendChild(container);
+    });
+
+    afterEach(() => {
+        container.remove();
+    });
+
+    function rowCheckboxes(root: HTMLElement): HTMLInputElement[] {
+        return Array.from(
+            root.querySelectorAll<HTMLInputElement>(".list .row-check"),
+        );
+    }
+
+    function selectAllCheckbox(root: HTMLElement): HTMLInputElement | null {
+        return root.querySelector<HTMLInputElement>(".select-all");
+    }
+
+    function bulkToolbar(root: HTMLElement): HTMLElement | null {
+        return root.querySelector<HTMLElement>(".bulk-toolbar");
+    }
+
+    function bulkButtonByText(
+        root: HTMLElement,
+        label: string,
+    ): HTMLButtonElement | null {
+        const btns = Array.from(
+            root.querySelectorAll<HTMLButtonElement>(".bulk-toolbar .bulk-btn"),
+        );
+        return btns.find((b) => b.textContent?.trim() === label) ?? null;
+    }
+
+    test("bulk toolbar is hidden when selection is empty; appears when at least one row is checked", async () => {
+        vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            // Header strip is always present (master checkbox), but
+            // the action toolbar shows up only when there's a
+            // selection.
+            expect(selectAllCheckbox(container)).not.toBeNull();
+            expect(bulkToolbar(container)).toBeNull();
+
+            const checks = rowCheckboxes(container);
+            expect(checks.length).toBe(3);
+            checks[0]!.click();
+            await settle();
+
+            expect(bulkToolbar(container)).not.toBeNull();
+            // "X selected" copy in the strip echoes Set size.
+            const text = container.querySelector(".select-all-text")
+                ?.textContent;
+            expect(text).toContain("1 selected");
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("toggling a row checkbox adds and removes its id from the selection", async () => {
+        vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            const checks = rowCheckboxes(container);
+            // Tick rows 0 and 2 (ids 101, 103).
+            checks[0]!.click();
+            checks[2]!.click();
+            await settle();
+            expect(
+                container.querySelector(".select-all-text")?.textContent,
+            ).toContain("2 selected");
+
+            // Untick row 0 — strip count drops to 1.
+            checks[0]!.click();
+            await settle();
+            expect(
+                container.querySelector(".select-all-text")?.textContent,
+            ).toContain("1 selected");
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("master checkbox selects every visible row; clicking again clears them", async () => {
+        vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            const master = selectAllCheckbox(container);
+            expect(master).not.toBeNull();
+            master!.click();
+            await settle();
+            expect(
+                container.querySelector(".select-all-text")?.textContent,
+            ).toContain("3 selected");
+            // Per-row checkboxes reflect the master tick.
+            const checked = rowCheckboxes(container).filter((c) => c.checked);
+            expect(checked.length).toBe(3);
+
+            // Click again — the master collapses to clear.
+            master!.click();
+            await settle();
+            expect(
+                container.querySelector(".select-all-text")?.textContent,
+            ).toContain("Select all");
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("Suspend toolbar action posts bulkSuspend with the selection and refetches the page", async () => {
+        vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+        vi.mocked(bulkSuspend).mockResolvedValueOnce({
+            count: 2,
+            suspended: true,
+        });
+        // The handler refetches after the mutation lands; second
+        // call returns a fresh page with the two cards now suspended.
+        vi.mocked(fetchCards).mockResolvedValueOnce({
+            total: 3,
+            cards: [
+                card(101, "<p>hola</p>", "<p>hello</p>", { state: "suspended" }),
+                card(102, "<p>gato</p>", "<p>cat</p>", { state: "suspended" }),
+                card(103, "<p>perro</p>", "<p>dog</p>"),
+            ],
+        });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            const checks = rowCheckboxes(container);
+            checks[0]!.click(); // 101
+            checks[1]!.click(); // 102
+            await settle();
+
+            const suspendBtn = bulkButtonByText(container, "Suspend");
+            expect(suspendBtn).not.toBeNull();
+            suspendBtn!.click();
+            await settle();
+
+            expect(vi.mocked(bulkSuspend)).toHaveBeenCalledTimes(1);
+            // Set iteration order is insertion order for numeric keys,
+            // so the wire payload is [101, 102].
+            expect(vi.mocked(bulkSuspend)).toHaveBeenCalledWith([101, 102], true);
+            // Refetch fired so the row state reflects the persisted
+            // change (server-canonical, not optimistic).
+            expect(vi.mocked(fetchCards)).toHaveBeenCalledTimes(2);
+            expect(container.querySelector(".error-banner")).toBeNull();
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("Unsuspend toolbar action posts bulkSuspend(ids, false)", async () => {
+        const suspendedThree: ApiCardListResponse = {
+            total: 3,
+            cards: [
+                card(101, "<p>hola</p>", "<p>hello</p>", { state: "suspended" }),
+                card(102, "<p>gato</p>", "<p>cat</p>", { state: "suspended" }),
+                card(103, "<p>perro</p>", "<p>dog</p>"),
+            ],
+        };
+        vi.mocked(fetchCards).mockResolvedValueOnce(suspendedThree);
+        vi.mocked(bulkSuspend).mockResolvedValueOnce({
+            count: 2,
+            suspended: false,
+        });
+        vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            const checks = rowCheckboxes(container);
+            checks[0]!.click();
+            checks[1]!.click();
+            await settle();
+
+            const unsuspendBtn = bulkButtonByText(container, "Unsuspend");
+            expect(unsuspendBtn).not.toBeNull();
+            unsuspendBtn!.click();
+            await settle();
+
+            expect(vi.mocked(bulkSuspend)).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(bulkSuspend)).toHaveBeenCalledWith(
+                [101, 102],
+                false,
+            );
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("flag chip in toolbar posts bulkFlag with the chip's value", async () => {
+        vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+        vi.mocked(bulkFlag).mockResolvedValueOnce({ count: 2, flag: 3 });
+        vi.mocked(fetchCards).mockResolvedValueOnce({
+            total: 3,
+            cards: [
+                card(101, "<p>hola</p>", "<p>hello</p>", { flag: 3 }),
+                card(102, "<p>gato</p>", "<p>cat</p>", { flag: 3 }),
+                card(103, "<p>perro</p>", "<p>dog</p>"),
+            ],
+        });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            const checks = rowCheckboxes(container);
+            checks[0]!.click();
+            checks[1]!.click();
+            await settle();
+
+            // Flag chips inside the bulk toolbar — the clear button is
+            // first (∅), then the seven colour chips. Index 3 = green
+            // (flag value 3).
+            const chips = Array.from(
+                container.querySelectorAll<HTMLButtonElement>(
+                    ".bulk-toolbar .bulk-flag-chip",
+                ),
+            );
+            // 1 (clear) + 7 colours = 8.
+            expect(chips.length).toBe(8);
+            chips[3]!.click(); // green, value 3
+            await settle();
+
+            expect(vi.mocked(bulkFlag)).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(bulkFlag)).toHaveBeenCalledWith([101, 102], 3);
+            expect(container.querySelector(".error-banner")).toBeNull();
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("clear-selection button empties the selection Set without calling any bulk endpoint", async () => {
+        vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            const checks = rowCheckboxes(container);
+            checks[0]!.click();
+            checks[1]!.click();
+            checks[2]!.click();
+            await settle();
+            expect(
+                container.querySelector(".select-all-text")?.textContent,
+            ).toContain("3 selected");
+
+            const clearBtn = bulkButtonByText(container, "Clear selection");
+            expect(clearBtn).not.toBeNull();
+            clearBtn!.click();
+            await settle();
+
+            // Toolbar is hidden again after clear.
+            expect(bulkToolbar(container)).toBeNull();
+            expect(
+                container.querySelector(".select-all-text")?.textContent,
+            ).toContain("Select all");
+            // No mutation endpoints were touched.
+            expect(vi.mocked(bulkSuspend)).not.toHaveBeenCalled();
+            expect(vi.mocked(bulkFlag)).not.toHaveBeenCalled();
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("bulkSuspend rejection surfaces error banner; selection is preserved", async () => {
+        vi.mocked(fetchCards).mockResolvedValueOnce(liveThree);
+        vi.mocked(bulkSuspend).mockRejectedValueOnce(
+            new Error("400 card_ids must not be empty"),
+        );
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            const checks = rowCheckboxes(container);
+            checks[0]!.click();
+            await settle();
+
+            const suspendBtn = bulkButtonByText(container, "Suspend");
+            suspendBtn!.click();
+            await settle();
+
+            const banner = container.querySelector(".error-banner");
+            expect(banner).not.toBeNull();
+            expect(banner?.textContent).toContain("must not be empty");
+            // Selection survives the failure so the user can retry.
+            expect(
+                container.querySelector(".select-all-text")?.textContent,
+            ).toContain("1 selected");
         } finally {
             unmount(instance);
         }

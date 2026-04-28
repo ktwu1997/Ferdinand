@@ -33,6 +33,8 @@ pub fn router() -> Router<AppState> {
         .route("/api/decks/{id}/preset", patch(decks::patch_deck_preset))
         .route("/api/cards", get(cards::list_cards))
         .route("/api/cards/move", post(cards::post_move_cards))
+        .route("/api/cards/bulk_suspend", post(cards::post_bulk_suspend))
+        .route("/api/cards/bulk_flag", post(cards::post_bulk_flag))
         .route("/api/cards/{id}", get(cards::get_card))
         .route("/api/cards/{id}/suspend", post(cards::post_suspend))
         .route("/api/cards/{id}/flag", post(cards::post_flag))

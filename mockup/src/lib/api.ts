@@ -1068,3 +1068,62 @@ export interface ApiResetResponse {
 export async function resetCardToNew(id: number): Promise<ApiResetResponse> {
     return postJson<ApiResetResponse>(`/api/cards/${id}/reset_to_new`, {});
 }
+
+/**
+ * Phase 20-B: bulk suspend / unsuspend response. `count` is the
+ * deduplicated input length the server processed; rslib silently
+ * skips unknown ids inside the slice, so a partial-hit batch still
+ * reports the dedup-collapsed input length here. Compare against the
+ * request's `cardIds.length` client-side to detect dedup-collapse.
+ * `suspended` echoes the requested target state.
+ */
+export interface ApiBulkSuspendResponse {
+    count: number;
+    suspended: boolean;
+}
+
+/**
+ * Phase 20-B: bulk flag response. Same `count` convention as
+ * `ApiBulkSuspendResponse`. `flag` echoes the persisted value
+ * (0..=7) so the caller can mirror it across selected rows without
+ * a refetch.
+ */
+export interface ApiBulkFlagResponse {
+    count: number;
+    flag: number;
+}
+
+/**
+ * Phase 20-B: bulk suspend or unsuspend a set of cards. Wraps
+ * rslib's slice-aware `bury_or_suspend_cards` /
+ * `unbury_or_unsuspend_cards`. Idempotent under repeated calls with
+ * the same target state. Server validates non-empty, positive,
+ * deduped, ≤1000 ids (400 on violation); unknown ids inside the
+ * batch are silently skipped.
+ */
+export async function bulkSuspend(
+    cardIds: number[],
+    suspended: boolean,
+): Promise<ApiBulkSuspendResponse> {
+    return postJson<ApiBulkSuspendResponse>("/api/cards/bulk_suspend", {
+        card_ids: cardIds,
+        suspended,
+    });
+}
+
+/**
+ * Phase 20-B: bulk set/clear flag on a set of cards. Wraps rslib's
+ * slice-aware `set_card_flag`. Idempotent under repeated calls with
+ * the same flag value. Server validates the id list (same rules as
+ * `bulkSuspend`) plus `flag` in 0..=7 (400 on violation); unknown
+ * ids inside the batch are silently skipped.
+ */
+export async function bulkFlag(
+    cardIds: number[],
+    flag: number,
+): Promise<ApiBulkFlagResponse> {
+    return postJson<ApiBulkFlagResponse>("/api/cards/bulk_flag", {
+        card_ids: cardIds,
+        flag,
+    });
+}

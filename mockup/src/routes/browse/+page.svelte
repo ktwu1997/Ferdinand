@@ -3,6 +3,8 @@
     import { cards as fakeCards, decks as fakeDecks, savedSearches, tags as fakeTags } from "$lib/data";
     import Kbd from "$lib/components/Kbd.svelte";
     import {
+        bulkFlag,
+        bulkSuspend,
         deleteDeck,
         deleteNote,
         deleteSavedSearch,
@@ -97,6 +99,14 @@
     // editor footer disables itself while a move is in flight so the
     // user can't fire a second move at a stale row mid-update.
     let isMutatingMove = $state(false);
+    // Phase 20-B: bulk multi-select on the result list. The Set holds
+    // numeric card ids (the wire-level int matches the bulk endpoints'
+    // payload shape). A Svelte reactive Set is reassigned wholesale on
+    // mutation to trigger reruns — `selectedIds = new Set(selectedIds)`
+    // — rather than mutating in place. `isMutatingBulk` gates the
+    // toolbar so a rapid double-click can't race a refetch in flight.
+    let selectedIds = $state<Set<number>>(new Set());
+    let isMutatingBulk = $state(false);
     let deckInput = $state<HTMLInputElement | null>(null);
 
     // Phase 9-S: tree-sidebar inline rename. Per-row edit state (only one row
@@ -320,6 +330,28 @@
         ),
     );
     let selected = $derived(filtered[selectedIdx] ?? filtered[0] ?? rows[0]);
+
+    // Phase 20-B: master-checkbox state. `allVisibleSelected` is true
+    // only when every visible row is in the selection Set; the
+    // "indeterminate" middle ground (`someVisibleSelected` && not all)
+    // drives the header checkbox's indeterminate flag so the user can
+    // tell at a glance whether they're selecting the page or just a
+    // subset. Numeric ids — fake-data rows carry a non-numeric id so
+    // they're filtered out (bulk endpoints only run against live
+    // rows).
+    let visibleNumericIds = $derived(
+        filtered
+            .map((r) => Number(r.id))
+            .filter((id) => Number.isFinite(id) && id > 0),
+    );
+    let allVisibleSelected = $derived(
+        visibleNumericIds.length > 0 &&
+            visibleNumericIds.every((id) => selectedIds.has(id)),
+    );
+    let someVisibleSelected = $derived(
+        !allVisibleSelected &&
+            visibleNumericIds.some((id) => selectedIds.has(id)),
+    );
 
     // Phase 14-A / 16-A: seed Front/Back drafts when the user picks a
     // different card. Comparing the card id (rather than re-running on
@@ -1131,6 +1163,106 @@
     }
 
     /**
+     * Phase 20-B: bulk multi-select helpers. `toggleRowSelected` flips
+     * a single row's membership in the selection Set; `toggleSelectAll`
+     * adds or removes every currently-visible (i.e. filtered) card id
+     * at once. Both reassign the Set wholesale so Svelte's reactivity
+     * picks up the change. `clearSelection` collapses the selection
+     * back to empty — surfaced as a toolbar button so the user can
+     * exit bulk mode without unticking each row.
+     */
+    function toggleRowSelected(cardId: number) {
+        const next = new Set(selectedIds);
+        if (next.has(cardId)) {
+            next.delete(cardId);
+        } else {
+            next.add(cardId);
+        }
+        selectedIds = next;
+    }
+
+    function toggleSelectAll() {
+        const visibleIds = filtered
+            .map((r) => Number(r.id))
+            .filter((id) => Number.isFinite(id) && id > 0);
+        if (visibleIds.length === 0) return;
+        const allSelected = visibleIds.every((id) => selectedIds.has(id));
+        const next = new Set(selectedIds);
+        if (allSelected) {
+            for (const id of visibleIds) next.delete(id);
+        } else {
+            for (const id of visibleIds) next.add(id);
+        }
+        selectedIds = next;
+    }
+
+    function clearSelection() {
+        if (selectedIds.size === 0) return;
+        selectedIds = new Set();
+    }
+
+    /**
+     * Phase 20-B: bulk suspend / unsuspend. Posts the current
+     * selection to /api/cards/bulk_suspend, then re-fetches the
+     * current page so row state labels reflect the persisted
+     * change. Re-fetch (rather than optimistic mirror) keeps the
+     * server-canonical state authoritative — the cheaper mirror
+     * we use for single-card flips is fine for one row but would
+     * skew if a partial-hit bulk skipped some unknown ids.
+     */
+    async function bulkSuspendSelected(suspended: boolean) {
+        if (selectedIds.size === 0 || isMutatingBulk) return;
+        const ids = Array.from(selectedIds);
+        isMutatingBulk = true;
+        errorBanner = null;
+        try {
+            await bulkSuspend(ids, suspended);
+            const res = await fetchCards(query, PAGE_SIZE, pageOffset);
+            liveCards = res.cards;
+            liveTotal = res.total;
+            // Drop ids that no longer match the current page from the
+            // selection set — server-canonical row list is the source
+            // of truth, so a row that scrolled off the page should
+            // exit the selection too.
+            const visibleIds = new Set(res.cards.map((c) => c.id));
+            selectedIds = new Set(
+                Array.from(selectedIds).filter((id) => visibleIds.has(id)),
+            );
+        } catch (e) {
+            errorBanner = e instanceof Error ? e.message : "Bulk suspend failed";
+        } finally {
+            isMutatingBulk = false;
+        }
+    }
+
+    /**
+     * Phase 20-B: bulk flag set/clear. Posts the current selection
+     * plus a 0..=7 flag value to /api/cards/bulk_flag, then re-fetches
+     * the current page so row-flag rendering stays canonical. Same
+     * re-fetch rationale as `bulkSuspendSelected`.
+     */
+    async function bulkFlagSelected(flag: number) {
+        if (selectedIds.size === 0 || isMutatingBulk) return;
+        const ids = Array.from(selectedIds);
+        isMutatingBulk = true;
+        errorBanner = null;
+        try {
+            await bulkFlag(ids, flag);
+            const res = await fetchCards(query, PAGE_SIZE, pageOffset);
+            liveCards = res.cards;
+            liveTotal = res.total;
+            const visibleIds = new Set(res.cards.map((c) => c.id));
+            selectedIds = new Set(
+                Array.from(selectedIds).filter((id) => visibleIds.has(id)),
+            );
+        } catch (e) {
+            errorBanner = e instanceof Error ? e.message : "Bulk flag failed";
+        } finally {
+            isMutatingBulk = false;
+        }
+    }
+
+    /**
      * Phase 19-A: hydrate the Card Templates panel for the currently
      * selected note's notetype. Lazy — only fires when the panel is
      * actually open or the user explicitly opens it for a notetype
@@ -1560,6 +1692,84 @@
             </div>
         </div>
 
+        <!--
+            Phase 20-B: select-all + bulk toolbar. The header strip is
+            always rendered (so the master checkbox sits in a stable
+            slot above the rows), but the action toolbar only appears
+            when the selection is non-empty — keeps the chrome quiet
+            during single-card editing.
+        -->
+        <div class="select-strip">
+            <label class="select-all-label">
+                <input
+                    type="checkbox"
+                    class="select-all"
+                    aria-label="Select all visible cards"
+                    checked={allVisibleSelected}
+                    indeterminate={someVisibleSelected}
+                    disabled={visibleNumericIds.length === 0 || isMutatingBulk}
+                    onchange={toggleSelectAll}
+                />
+                <span class="select-all-text">
+                    {#if selectedIds.size === 0}
+                        Select all
+                    {:else}
+                        {selectedIds.size} selected
+                    {/if}
+                </span>
+            </label>
+            {#if selectedIds.size > 0}
+                <div class="bulk-toolbar" role="toolbar" aria-label="Bulk actions">
+                    <button
+                        class="bulk-btn"
+                        type="button"
+                        disabled={isMutatingBulk}
+                        onclick={() => bulkSuspendSelected(true)}
+                    >Suspend</button>
+                    <button
+                        class="bulk-btn"
+                        type="button"
+                        disabled={isMutatingBulk}
+                        onclick={() => bulkSuspendSelected(false)}
+                    >Unsuspend</button>
+                    <div class="bulk-flag-strip" role="radiogroup" aria-label="Bulk flag">
+                        <button
+                            type="button"
+                            class="bulk-flag-chip clear"
+                            aria-label="Clear flag"
+                            title="Clear flag"
+                            disabled={isMutatingBulk}
+                            onclick={() => bulkFlagSelected(0)}
+                        >∅</button>
+                        {#each [
+                            { value: 1, label: "Red", color: "#dc3545" },
+                            { value: 2, label: "Orange", color: "#fd7e14" },
+                            { value: 3, label: "Green", color: "#28a745" },
+                            { value: 4, label: "Blue", color: "#0d6efd" },
+                            { value: 5, label: "Pink", color: "#e83e8c" },
+                            { value: 6, label: "Turquoise", color: "#20c997" },
+                            { value: 7, label: "Purple", color: "#6f42c1" },
+                        ] as chip (chip.value)}
+                            <button
+                                type="button"
+                                class="bulk-flag-chip"
+                                aria-label="Flag {chip.label}"
+                                title="Flag {chip.label}"
+                                style="--flag-color: {chip.color}"
+                                disabled={isMutatingBulk}
+                                onclick={() => bulkFlagSelected(chip.value)}
+                            ></button>
+                        {/each}
+                    </div>
+                    <button
+                        class="bulk-btn bulk-btn-clear"
+                        type="button"
+                        onclick={clearSelection}
+                    >Clear selection</button>
+                </div>
+            {/if}
+        </div>
+
         <div class="list" role="list">
             {#if loading}
                 {#each [0, 1, 2, 3, 4] as i (i)}
@@ -1575,18 +1785,30 @@
                 </div>
             {:else}
                 {#each filtered as r, i (r.id)}
-                    <BrowseRow
-                        id={r.id}
-                        frontHtml={r.frontHtml}
-                        backHtml={r.backHtml}
-                        deckName={r.deckName}
-                        deckEmoji={r.deckEmoji}
-                        tags={r.tags}
-                        due={r.due}
-                        state={r.state}
-                        selected={selected?.id === r.id}
-                        onSelect={() => selectRow(i)}
-                    />
+                    {@const numericId = Number(r.id)}
+                    {@const idValid = Number.isFinite(numericId) && numericId > 0}
+                    <div class="row-wrap" class:row-wrap-checked={idValid && selectedIds.has(numericId)}>
+                        <input
+                            type="checkbox"
+                            class="row-check"
+                            aria-label="Select card {r.id}"
+                            checked={idValid && selectedIds.has(numericId)}
+                            disabled={!idValid || isMutatingBulk}
+                            onchange={() => idValid && toggleRowSelected(numericId)}
+                        />
+                        <BrowseRow
+                            id={r.id}
+                            frontHtml={r.frontHtml}
+                            backHtml={r.backHtml}
+                            deckName={r.deckName}
+                            deckEmoji={r.deckEmoji}
+                            tags={r.tags}
+                            due={r.due}
+                            state={r.state}
+                            selected={selected?.id === r.id}
+                            onSelect={() => selectRow(i)}
+                        />
+                    </div>
                 {/each}
             {/if}
         </div>
@@ -2208,6 +2430,134 @@
         padding: 3px 8px;
         background: var(--bg-subtle);
         border-radius: var(--radius-sm);
+    }
+
+    /* Phase 20-B: bulk-select strip + toolbar. The strip is sticky
+       below the search/pagination toolbar so the master checkbox and
+       per-row counts stay reachable while the row list scrolls. */
+    .select-strip {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+        padding: var(--space-2) var(--space-6);
+        border-bottom: 1px solid var(--border);
+        background: var(--bg-subtle);
+        flex-wrap: wrap;
+        position: sticky;
+        top: 0;
+        z-index: 2;
+    }
+    .select-all-label {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--space-2);
+        font-size: var(--text-xs);
+        color: var(--text-muted);
+        cursor: pointer;
+    }
+    .select-all-label input[type="checkbox"] {
+        cursor: pointer;
+    }
+    .select-all-label input[type="checkbox"]:disabled {
+        cursor: not-allowed;
+    }
+    .select-all-text {
+        font-variant-numeric: tabular-nums;
+    }
+    .bulk-toolbar {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--space-2);
+        flex-wrap: wrap;
+        margin-left: auto;
+    }
+    .bulk-btn {
+        padding: 0.3rem 0.7rem;
+        font-size: var(--text-xs);
+        font-weight: 500;
+        background: #ffffff;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        color: var(--text);
+        cursor: pointer;
+        transition:
+            border-color var(--duration-fast) var(--ease),
+            background var(--duration-fast) var(--ease);
+    }
+    :global([data-theme="dark"]) .bulk-btn {
+        background: var(--bg-elevated);
+    }
+    .bulk-btn:hover:not(:disabled) {
+        border-color: var(--border-strong);
+        background: var(--bg-hover);
+    }
+    .bulk-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+    .bulk-btn-clear {
+        color: var(--text-subtle);
+    }
+    .bulk-flag-strip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 3px 6px;
+        background: #ffffff;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+    }
+    :global([data-theme="dark"]) .bulk-flag-strip {
+        background: var(--bg-elevated);
+    }
+    .bulk-flag-chip {
+        width: 18px;
+        height: 18px;
+        border-radius: var(--radius-full);
+        background: var(--flag-color, var(--bg-subtle));
+        border: 1px solid color-mix(in oklch, var(--flag-color, var(--border)) 70%, transparent);
+        cursor: pointer;
+        padding: 0;
+        transition:
+            transform var(--duration-fast) var(--ease),
+            box-shadow var(--duration-fast) var(--ease);
+    }
+    .bulk-flag-chip:hover:not(:disabled) {
+        transform: scale(1.1);
+        box-shadow: var(--shadow-sm);
+    }
+    .bulk-flag-chip:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+    .bulk-flag-chip.clear {
+        background: var(--bg-subtle);
+        border: 1px dashed var(--border-strong);
+        color: var(--text-subtle);
+        font-size: 0.75rem;
+        line-height: 1;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .row-wrap {
+        display: grid;
+        grid-template-columns: 24px 1fr;
+        align-items: center;
+        gap: var(--space-2);
+    }
+    .row-wrap-checked {
+        background: color-mix(in oklch, var(--accent) 6%, transparent);
+        border-radius: var(--radius-md);
+    }
+    .row-check {
+        cursor: pointer;
+        margin-left: var(--space-2);
+    }
+    .row-check:disabled {
+        cursor: not-allowed;
+        opacity: 0.4;
     }
 
     .list {

@@ -410,6 +410,19 @@ const MOVE_MAX_CARDS: usize = 1000;
 /// Returns the deduplicated, sorted card-id list so the handler doesn't
 /// have to redo the work.
 fn validate_move(card_ids: &[i64], deck_id: i64) -> Result<(Vec<i64>, i64), &'static str> {
+    let deduped = validate_card_id_list(card_ids)?;
+    if deck_id <= 0 {
+        return Err("deck_id must be a positive integer");
+    }
+    Ok((deduped, deck_id))
+}
+
+/// Phase 20-B: shared validation helper for bulk card-id payloads.
+/// Mirrors the `validate_move` shape (non-empty, positive, ≤1000,
+/// deduped+sorted) without the deck_id leg, so bulk_suspend and
+/// bulk_flag can reuse the same boundary checks. Returns the
+/// deduplicated, sorted list so handlers don't redo the work.
+fn validate_card_id_list(card_ids: &[i64]) -> Result<Vec<i64>, &'static str> {
     if card_ids.is_empty() {
         return Err("card_ids must not be empty");
     }
@@ -419,13 +432,10 @@ fn validate_move(card_ids: &[i64], deck_id: i64) -> Result<(Vec<i64>, i64), &'st
     if card_ids.iter().any(|&id| id <= 0) {
         return Err("card_ids must all be positive integers");
     }
-    if deck_id <= 0 {
-        return Err("deck_id must be a positive integer");
-    }
     let mut deduped = card_ids.to_vec();
     deduped.sort_unstable();
     deduped.dedup();
-    Ok((deduped, deck_id))
+    Ok(deduped)
 }
 
 /// Bulk-move a set of cards into a target deck. Wraps rslib's
@@ -475,6 +485,117 @@ pub async fn post_move_cards(
     })?;
     Ok(Json(MoveResponse {
         moved: result.output,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BulkSuspendRequest {
+    /// Target card ids. Same shape as `MoveRequest.card_ids` —
+    /// non-empty, positive, deduped server-side, capped at 1000 per
+    /// call.
+    pub card_ids: Vec<i64>,
+    /// If true (default), suspend the cards; if false, unsuspend. The
+    /// underlying rslib calls are slice-aware and idempotent, so
+    /// re-sending the same value is a safe no-op.
+    #[serde(default = "default_suspended")]
+    pub suspended: bool,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct BulkSuspendResponse {
+    /// Count of input ids after dedup. Echoes the size of the batch
+    /// the server actually processed; rslib silently skips unknown
+    /// ids inside the slice, so a partial-hit batch still reports the
+    /// post-dedup input length here. Compare against
+    /// `request.card_ids.len()` client-side to detect dedup-collapse.
+    pub count: usize,
+    /// Echo of the requested target state so the client can update
+    /// its row-state cache without re-fetching.
+    pub suspended: bool,
+}
+
+/// Phase 20-B: bulk suspend / unsuspend. Wraps rslib's slice-aware
+/// `bury_or_suspend_cards` / `unbury_or_unsuspend_cards`. Idempotent
+/// under repeated calls with the same target state — re-sending the
+/// same payload is a safe no-op. Unknown card ids inside the batch
+/// are silently skipped at the rslib layer; the response `count`
+/// reflects the deduplicated input length, NOT the count of rows
+/// rslib actually mutated.
+#[utoipa::path(
+    post,
+    path = "/api/cards/bulk_suspend",
+    request_body = inline(serde_json::Value),
+    responses(
+        (status = 200, body = BulkSuspendResponse),
+        (status = 400, body = crate::error::ApiError),
+    )
+)]
+pub async fn post_bulk_suspend(
+    State(state): State<AppState>,
+    Json(req): Json<BulkSuspendRequest>,
+) -> ApiResult<Json<BulkSuspendResponse>> {
+    let deduped_ids = validate_card_id_list(&req.card_ids).map_err(ServerError::bad_request)?;
+    let mut col = state.col.lock().await;
+    let cids: Vec<CardId> = deduped_ids.iter().copied().map(CardId).collect();
+    if req.suspended {
+        col.bury_or_suspend_cards(&cids, BuryOrSuspendMode::Suspend)?;
+    } else {
+        col.unbury_or_unsuspend_cards(&cids)?;
+    }
+    Ok(Json(BulkSuspendResponse {
+        count: deduped_ids.len(),
+        suspended: req.suspended,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BulkFlagRequest {
+    /// Target card ids. Same shape as `MoveRequest.card_ids`.
+    pub card_ids: Vec<i64>,
+    /// Flag value 0..=7. 0 clears; 1..=7 set one of the seven
+    /// supported colours (red, orange, green, blue, pink, turquoise,
+    /// purple — same colour ordering as the desktop browse pane).
+    pub flag: u32,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct BulkFlagResponse {
+    /// Count of input ids after dedup. Same convention as
+    /// `BulkSuspendResponse.count` — see that doc for the
+    /// silently-skipped-unknown-id note.
+    pub count: usize,
+    /// Echo of the requested flag so the client can update its
+    /// row-flag cache without re-fetching.
+    pub flag: u32,
+}
+
+/// Phase 20-B: bulk flag set/clear. Wraps rslib's slice-aware
+/// `set_card_flag`. Idempotent under repeated calls with the same
+/// flag value (rslib no-ops when the byte is unchanged). Unknown
+/// card ids inside the batch are silently skipped at the rslib
+/// layer; the response `count` reflects the deduplicated input
+/// length, NOT the count of rows rslib actually mutated.
+#[utoipa::path(
+    post,
+    path = "/api/cards/bulk_flag",
+    request_body = inline(serde_json::Value),
+    responses(
+        (status = 200, body = BulkFlagResponse),
+        (status = 400, body = crate::error::ApiError),
+    )
+)]
+pub async fn post_bulk_flag(
+    State(state): State<AppState>,
+    Json(req): Json<BulkFlagRequest>,
+) -> ApiResult<Json<BulkFlagResponse>> {
+    let deduped_ids = validate_card_id_list(&req.card_ids).map_err(ServerError::bad_request)?;
+    let flag = validate_flag(req.flag).map_err(ServerError::bad_request)?;
+    let mut col = state.col.lock().await;
+    let cids: Vec<CardId> = deduped_ids.iter().copied().map(CardId).collect();
+    col.set_card_flag(&cids, flag)?;
+    Ok(Json(BulkFlagResponse {
+        count: deduped_ids.len(),
+        flag,
     }))
 }
 
@@ -768,6 +889,78 @@ mod tests {
         assert_eq!(button_label(5), "manual");
         assert_eq!(button_label(99), "manual");
         assert_eq!(button_label(u8::MAX), "manual");
+    }
+
+    // Phase 20-B: shared bulk-id validation. The bulk_suspend /
+    // bulk_flag handlers reuse validate_card_id_list, so the cheap
+    // boundary cases stay covered as pure functions even though the
+    // handler bodies require a Collection fixture (deferred — same
+    // pattern as post_move_cards).
+    #[test]
+    fn validate_card_id_list_rejects_empty() {
+        assert_eq!(
+            validate_card_id_list(&[]).unwrap_err(),
+            "card_ids must not be empty"
+        );
+    }
+
+    #[test]
+    fn validate_card_id_list_rejects_oversize_batch() {
+        let oversize = vec![1_i64; MOVE_MAX_CARDS + 1];
+        assert_eq!(
+            validate_card_id_list(&oversize).unwrap_err(),
+            "card_ids must contain at most 1000 entries"
+        );
+    }
+
+    #[test]
+    fn validate_card_id_list_accepts_max_batch_at_boundary() {
+        let at_limit = vec![1_i64; MOVE_MAX_CARDS];
+        assert!(validate_card_id_list(&at_limit).is_ok());
+    }
+
+    #[test]
+    fn validate_card_id_list_rejects_non_positive_id() {
+        assert_eq!(
+            validate_card_id_list(&[0]).unwrap_err(),
+            "card_ids must all be positive integers"
+        );
+        assert_eq!(
+            validate_card_id_list(&[-1]).unwrap_err(),
+            "card_ids must all be positive integers"
+        );
+        assert_eq!(
+            validate_card_id_list(&[1, 2, -3]).unwrap_err(),
+            "card_ids must all be positive integers"
+        );
+    }
+
+    #[test]
+    fn validate_card_id_list_dedupes() {
+        let ids = validate_card_id_list(&[3, 1, 2, 1, 3]).unwrap();
+        assert_eq!(ids, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn validate_card_id_list_passes_through_singleton() {
+        let ids = validate_card_id_list(&[42]).unwrap();
+        assert_eq!(ids, vec![42]);
+    }
+
+    #[test]
+    fn validate_move_still_rejects_deck_after_card_id_extraction() {
+        // After extracting validate_card_id_list, validate_move must
+        // still reject a non-positive deck_id even when the card_ids
+        // pass — covers the post-refactor split so a future tweak to
+        // the helper can't silently drop the deck-id leg.
+        assert_eq!(
+            validate_move(&[1, 2, 3], 0).unwrap_err(),
+            "deck_id must be a positive integer"
+        );
+        assert_eq!(
+            validate_move(&[1, 2, 3], -1).unwrap_err(),
+            "deck_id must be a positive integer"
+        );
     }
 
     #[test]
