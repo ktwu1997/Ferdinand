@@ -1,3 +1,62 @@
-node_modules/
+# Ferdinand .dockerignore (Phase 30-C).
+#
+# Keep the build context lean: rust target dir, generated out/, node_modules,
+# editor and CI scaffolding, local secrets, and stale mockup build output.
+#
+# IMPORTANT: do NOT exclude `mockup/` — Stage 1 of the Dockerfile builds
+# from mockup/ source. We DO exclude `mockup/build/` so the in-image build
+# is authoritative rather than copying a stale local artifact.
+# We DO NOT exclude Cargo.lock — the rust-builder stage needs it for
+# reproducible dependency resolution.
+
+# Rust build artifacts
 target/
+**/target/
+
+# Anki ninja-generated artifacts
 out/
+
+# Node modules (every workspace + nested)
+node_modules/
+**/node_modules/
+
+# Mockup build outputs / dev caches (force in-image rebuild)
+mockup/build/
+mockup/.svelte-kit/
+
+# Python / venvs
+.venv/
+**/.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+
+# Editor / OS clutter
+.vscode/
+.idea/
+.DS_Store
+
+# VCS + CI metadata
+.git/
+.gitignore
+.github/
+.gitattributes
+
+# Claude / agent worktree machinery
+.claude/
+
+# Docs (not needed inside the image)
+docs/
+
+# Logs and local env
+*.log
+.env
+.env.*
+
+# Local data dir mounted at runtime — never bake into the image
+data/
+
+# Self
+Dockerfile
+docker-compose.yml
+.dockerignore

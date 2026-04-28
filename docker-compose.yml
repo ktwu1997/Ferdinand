@@ -1,0 +1,45 @@
+# Ferdinand — local docker-compose entry (Phase 30-C).
+#
+# Usage:
+#     # First-time setup: seed your collection file before booting.
+#     mkdir -p ./data
+#     cp /path/to/your/collection.anki2 ./data/collection.anki2
+#
+#     # Build + run:
+#     docker compose up --build
+#
+#     # Background:
+#     docker compose up -d --build
+#
+#     # Tail logs:
+#     docker compose logs -f ferdinand
+#
+# The container expects ./data/collection.anki2 to exist on the host before
+# first run. The bind mount maps ./data on the host to /data in the
+# container, and the binary defaults to ANKI_COLLECTION=/data/collection.anki2.
+#
+# Port 40001 is published on the host. If you already have something on
+# 40001 (kt's docker dev clutter), change the left side of the ports map.
+
+services:
+  ferdinand:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ferdinand:local
+    container_name: ferdinand
+    ports:
+      - "40001:40001"
+    volumes:
+      - ./data:/data
+    environment:
+      ANKI_COLLECTION: /data/collection.anki2
+      ANKI_SERVER_PORT: "40001"
+      RUST_LOG: info,anki_server=debug
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:40001/api/health"]
+      interval: 30s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
