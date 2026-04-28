@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTD/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ktwu.ferdinand</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__HOME__/.local/bin/anki_server</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/Ferdinand/anki_server.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/Ferdinand/anki_server.err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>ANKI_COLLECTION</key>
+        <string>__HOME__/Library/Application Support/Ferdinand/collection.anki2</string>
+        <key>RUST_LOG</key>
+        <string>info,anki_server=debug</string>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>__HOME__</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>
