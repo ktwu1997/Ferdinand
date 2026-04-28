@@ -13,19 +13,20 @@
 
 ---
 
-## Status as of 2026-04-27 (post Phase 19 quad complete)
+## Status as of 2026-04-28 (post Phase 20 quad complete — M1 done)
 
-- **Web + Server**: ~88-95% complete (post Phase 19 full quad, all 4
-  phases shipped). home has 7-day forecast bar + "+ Filtered" inline
-  form; browse editor renders all fields generically AND offers per-card
-  move-to-deck via flattened deck dropdown AND opt-in Card Templates
-  panel for per-template `qfmt`/`afmt` edits; settings Notetypes tab
-  manages notetype rename + per-notetype add/remove field with two-step
-  destructive confirm; saved-search CRUD persists to collection-config;
-  clippy `--all-targets --workspace -- -D warnings` is the standing
-  quality gate (the 18-B/C rustfmt drift was cleaned up at the head of
-  19-A; `cargo fmt --check` still NOT in the gate — hygiene mini-phase
-  candidate before 20).
+- **Web + Server**: ~92-98% complete (post Phase 20 full quad — all 4
+  phases shipped, M1 closed). Home has 7-day forecast bar + "+ Filtered"
+  inline form; browse editor renders all fields generically AND offers
+  per-card move-to-deck AND opt-in Card Templates panel; settings
+  Notetypes tab manages rename + per-notetype add/remove field with
+  two-step destructive confirm; saved-search CRUD persists to
+  collection-config; per-card review history disclosure (Phase 20-D)
+  and burn-recovery `reset_to_new` (Phase 20-C) on browse editor;
+  card-level tag override on study review pane (Phase 20-A); bulk
+  multi-select toolbar on browse with `bulk_suspend` / `bulk_flag`
+  endpoints (Phase 20-B). Standing gate now includes `cargo fmt --check`
+  (folded in at Phase 20-D).
 - **iOS**: 0% (rslib_ffi v0-v7 surface ready, 12 C ABI symbols incl.
   `tag_list_json` + cbindgen header, but no Xcode project yet —
   deferred **11 times** now; 19-A/B/C/D paid down 0 FFI symbols by
@@ -47,7 +48,7 @@
 | 17 ✅      | tag_list_json FFI / new_card_order toggle (+ 12-B clippy cleanup) / card flag chips / forecast bar — shipped 2026-04-27                | low    | ~52%   |
 | 18 ✅      | Saved searches CRUD / Browse editor all-fields generic / Filtered deck create / Hygiene (`--all-targets` CI gate) — shipped 2026-04-27 | medium | ~58%   |
 | 19 ✅      | Card-level move-to-deck (19-D LOW) / Template HTML edit (19-A MED) / Notetype add field (19-B MED-HIGH, additive) / Notetype remove field (19-C HIGH, destructive). Risk-gradient ordering proven; FFI v8 surface for notetype ops deferred to M2 Phase 21. Shipped 2026-04-27 commit 21ec7d654. | high   | ~64%   |
-| 20 ◐ 2/4   | Wave 1 ✅: 20-D Per-card review history viewer (LOW, read-only) + 20-C Burn-recovery (MED-HIGH, destructive — single-card reset_to_new). Dispatched in parallel via Agent worktree isolation; both merged 2026-04-27 commits 4e7ba4ee3 + 1d5ace64e. Hygiene mini-phase folded in: `cargo fmt --check` now part of standing gate. **Wave 2 pending**: 20-A Card-level tag override (review-time tag edit on browse editor) + 20-B Bulk operations multi-select. | medium | ~67%   |
+| 20 ✅      | Quad shipped via 2-wave parallel orchestration. Wave 1 (2026-04-27): 20-D Per-card review history viewer (LOW, read-only, commits 260803815 + 4e7ba4ee3) + 20-C Burn-recovery single-card `reset_to_new` (MED-HIGH, destructive, commits 65c499bec + 1d5ace64e). Hygiene mini-phase folded in: `cargo fmt --check` now part of standing gate. Wave 2 (2026-04-28): 20-A Card-level tag override on study review pane (LOW, optimistic patchNote, commits 81c24548a + a7b40cb87) + 20-B Bulk operations multi-select on browse with `bulk_suspend` / `bulk_flag` endpoints (MED, idempotent, commit 6eb48d9ee). Quad pattern proven: 4 file-disjoint phases shipped via 2× 2-way parallel Agent worktree dispatch, ~3.5h Wave 1 + ~1.5h Wave 2 wall. | medium | ~70%   |
 
 🟢 **Milestone exit**: web is `kt`'s daily driver, desktop Anki retired.
 
@@ -194,11 +195,16 @@ pipeline + 跨平台 plist，預期 1.5-2 個 session。
 
 For the **web-launch-first** path:
 
-1. **M1 Phase 20 quad** (1 session, ~6h Linux) — tag override / burn-
-   recovery / per-card review history viewer / bulk multi-select.
-   Closes M1 DoD.
-2. **M5 Phase 30 quad** (1-2 sessions, ~5-8h Linux) — single-binary
-   release + launchd plist + Docker image + setup README.
+1. **M1 Phase 20 quad** ✅ shipped 2026-04-27/28 (2 sessions × 2-way
+   parallel orchestration, ~5h wall total). All four phases merged:
+   20-D + 20-C (Wave 1) + 20-A + 20-B (Wave 2). Closes M1 DoD.
+2. **M5 Phase 30 quad** (1 session, ~4-5h Linux with 4-way parallel
+   orchestration) — single-binary release + launchd plist + Docker
+   image + setup README. All 4 sub-phases largely file-disjoint
+   (Cargo.toml/build script vs `~/Library/LaunchAgents/*.plist` vs
+   `Dockerfile` + `docker-compose.yml` vs `README.md`). Some merge
+   coordination may be needed where Cargo build config touches Docker
+   base image; otherwise truly parallel.
    🟢 **Web-launch milestone exit here.**
 3. **M2 Phase 21-23 quads** (3 sessions, ~10h macOS) — iOS read-only
    viewer (deferred until web-launch lands).
