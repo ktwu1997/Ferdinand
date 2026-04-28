@@ -177,3 +177,8 @@ debug = 0
 [profile.release-lto]
 inherits = "release"
 lto = true
+# Phase 30-A: shrink the single-binary distribution. `strip = "symbols"`
+# discards debug symbols (we ship a release binary, not a debug build),
+# and `codegen-units = 1` lets LTO produce smaller, faster code.
+strip = "symbols"
+codegen-units = 1

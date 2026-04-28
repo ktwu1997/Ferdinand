@@ -24,7 +24,16 @@ regex.workspace = true
 serde = { workspace = true }
 serde_json.workspace = true
 tokio = { workspace = true, features = ["fs", "rt-multi-thread", "macros", "signal", "sync"] }
-tower-http = { version = "0.6.6", features = ["trace", "cors"] }
+tower-http = { version = "0.6.6", features = ["trace", "cors", "fs"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 utoipa = { version = "5.3", features = ["axum_extras"] }
+include_dir = { version = "0.7", optional = true }
+
+[features]
+default = []
+# When enabled, the SvelteKit `mockup/build/` output is embedded into the
+# binary at compile time (Phase 30-A: single-binary release). When disabled
+# (default), `anki_server` will optionally serve `../mockup/build/` from disk
+# if it exists at runtime — handy for `cargo run` during development.
+embed-mockup = ["dep:include_dir"]

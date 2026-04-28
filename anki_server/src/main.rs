@@ -6,6 +6,7 @@ mod bootstrap;
 mod error;
 mod routes;
 mod state;
+mod static_assets;
 
 use std::net::SocketAddr;
 
@@ -75,8 +76,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         bootstrap::seed_if_requested(&mut col)?;
     }
 
-    let app = Router::new()
-        .merge(routes::router())
+    let api = Router::new().merge(routes::router());
+    let app = static_assets::attach(api)
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::very_permissive())
         .with_state(state);
