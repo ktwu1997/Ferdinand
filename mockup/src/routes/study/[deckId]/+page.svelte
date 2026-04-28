@@ -1,10 +1,11 @@
 <script lang="ts">
-    import { onMount } from "svelte";
+    import { onMount, tick } from "svelte";
     import { page } from "$app/stores";
     import { decks, cards as fakeCards } from "$lib/data";
     import {
         fetchDecks,
         fetchQueue,
+        patchNote,
         postAnswer,
         type ApiCardSummary,
         type AnswerRating,
@@ -36,6 +37,21 @@
     );
 
     let showAnswer = $state(false);
+
+    // Phase 20-A: per-card tag override. Tags belong to the underlying
+    // note (so all sibling cards inherit them); we mirror server-canonical
+    // tags onto `currentCard` after each PATCH so the chip strip rerenders
+    // without a refetch. `tagInput` is bound for focus, `isAddingTag`
+    // toggles the inline input, `isMutatingTags` disables the controls
+    // while a PATCH is in flight, and `tagError` surfaces a per-tag
+    // failure message above the chip strip (kept distinct from the
+    // queue-level `lastError` so a tag-edit failure doesn't look like
+    // an answer-post failure).
+    let tagInput = $state<HTMLInputElement | null>(null);
+    let isAddingTag = $state(false);
+    let newTagDraft = $state("");
+    let isMutatingTags = $state(false);
+    let tagError = $state<string | null>(null);
 
     onMount(async () => {
         try {
@@ -157,6 +173,90 @@
         }
     }
 
+    // Phase 20-A: optimistic tag remove. Mirrors the browse-page contract
+    // (filter → patch → mirror server-canonical tags back). On error the
+    // optimistic state is reverted so the chip reappears with its prior
+    // value.
+    async function removeTag(tag: string): Promise<void> {
+        if (mode !== "live" || !currentCard) return;
+        const prevTags = currentCard.tags;
+        const optimistic = prevTags.filter((t) => t !== tag);
+        currentCard = { ...currentCard, tags: optimistic };
+        const noteId = currentCard.note_id;
+        isMutatingTags = true;
+        tagError = null;
+        try {
+            const res = await patchNote(noteId, { tags: optimistic });
+            // Only mirror if we're still on the same note — moving to the
+            // next card mid-flight should not stomp the new card's tags.
+            if (currentCard && currentCard.note_id === noteId) {
+                currentCard = { ...currentCard, tags: res.tags };
+            }
+        } catch (err) {
+            if (currentCard && currentCard.note_id === noteId) {
+                currentCard = { ...currentCard, tags: prevTags };
+            }
+            tagError = err instanceof Error ? err.message : "Tag remove failed";
+        } finally {
+            isMutatingTags = false;
+        }
+    }
+
+    async function startAddTag(): Promise<void> {
+        if (mode !== "live" || !currentCard) return;
+        isAddingTag = true;
+        newTagDraft = "";
+        tagError = null;
+        await tick();
+        tagInput?.focus();
+    }
+
+    function cancelAddTag(): void {
+        isAddingTag = false;
+        newTagDraft = "";
+    }
+
+    // Phase 20-A: optimistic tag add. Empty/dup short-circuit (no patch
+    // fired) — matching the browse-page editor so a stray Enter on a
+    // duplicate doesn't churn the server. Trim only; the server is the
+    // authority on further normalization.
+    async function commitAddTag(): Promise<void> {
+        if (mode !== "live" || !currentCard) {
+            cancelAddTag();
+            return;
+        }
+        const trimmed = newTagDraft.trim();
+        if (trimmed === "") {
+            cancelAddTag();
+            return;
+        }
+        if (currentCard.tags.includes(trimmed)) {
+            cancelAddTag();
+            return;
+        }
+        const prevTags = currentCard.tags;
+        const optimistic = [...prevTags, trimmed];
+        currentCard = { ...currentCard, tags: optimistic };
+        const noteId = currentCard.note_id;
+        isAddingTag = false;
+        newTagDraft = "";
+        isMutatingTags = true;
+        tagError = null;
+        try {
+            const res = await patchNote(noteId, { tags: optimistic });
+            if (currentCard && currentCard.note_id === noteId) {
+                currentCard = { ...currentCard, tags: res.tags };
+            }
+        } catch (err) {
+            if (currentCard && currentCard.note_id === noteId) {
+                currentCard = { ...currentCard, tags: prevTags };
+            }
+            tagError = err instanceof Error ? err.message : "Tag add failed";
+        } finally {
+            isMutatingTags = false;
+        }
+    }
+
     function onKey(e: KeyboardEvent) {
         if (e.target instanceof HTMLElement && ["INPUT", "TEXTAREA"].includes(e.target.tagName)) return;
         if (done) return;
@@ -230,6 +330,58 @@
                     <article class="card-face back">
                         <CardFace html={backHtml} css={cardCss} testid="card-face-back" />
                     </article>
+                {/if}
+                {#if mode === "live" && currentCard}
+                    <!-- Phase 20-A: per-card tag override. Edits apply to
+                         the underlying note, so sibling cards (same
+                         note_id) inherit the change. Keyed on note_id so
+                         the chip strip resets when the queue advances. -->
+                    {#key currentCard.note_id}
+                        <section class="tag-pane" aria-label="Edit tags">
+                            {#if tagError}
+                                <div class="tag-error" role="alert" data-testid="tag-error">{tagError}</div>
+                            {/if}
+                            <div class="tag-edit" data-testid="tag-edit">
+                                {#each currentCard.tags as t (t)}
+                                    <button
+                                        type="button"
+                                        class="tag tag-removable"
+                                        disabled={isMutatingTags}
+                                        onclick={() => removeTag(t)}
+                                        aria-label="Remove tag {t}"
+                                    >#{t}<span class="x" aria-hidden="true">×</span></button>
+                                {/each}
+                                {#if isAddingTag}
+                                    <input
+                                        bind:this={tagInput}
+                                        bind:value={newTagDraft}
+                                        class="tag-input"
+                                        disabled={isMutatingTags}
+                                        aria-label="New tag"
+                                        data-testid="tag-input"
+                                        onkeydown={(e) => {
+                                            if (e.key === "Enter") {
+                                                e.preventDefault();
+                                                commitAddTag();
+                                            } else if (e.key === "Escape") {
+                                                e.preventDefault();
+                                                cancelAddTag();
+                                            }
+                                        }}
+                                        onblur={cancelAddTag}
+                                    />
+                                {:else}
+                                    <button
+                                        type="button"
+                                        class="add-tag"
+                                        disabled={isMutatingTags}
+                                        onclick={startAddTag}
+                                        data-testid="tag-add-btn"
+                                    >+ Add tag</button>
+                                {/if}
+                            </div>
+                        </section>
+                    {/key}
                 {/if}
             </div>
         {/if}
@@ -582,5 +734,83 @@
     .empty-back:hover {
         border-color: var(--accent);
         background: var(--bg-hover);
+    }
+
+    /* Phase 20-A: tag pane below the card stack. Mirrors the browse-page
+       chip strip (font-mono / subtle background) so the editor reads as
+       part of the same vocabulary. Centered to align with the card. */
+    .tag-pane {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-2);
+        align-items: center;
+        margin-top: var(--space-2);
+    }
+    .tag-edit {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-2);
+        justify-content: center;
+        max-width: 640px;
+    }
+    .tag {
+        font-family: var(--font-mono);
+        font-size: 0.7rem;
+        color: var(--text-subtle);
+        background: var(--bg-subtle);
+        padding: 1px 6px;
+        border-radius: var(--radius-sm);
+    }
+    .tag-removable {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        cursor: pointer;
+        transition:
+            color var(--duration-fast) var(--ease),
+            background var(--duration-fast) var(--ease);
+    }
+    .tag-removable:hover {
+        color: var(--accent);
+        background: var(--bg-hover);
+    }
+    .tag-removable:disabled {
+        opacity: 0.55;
+        cursor: progress;
+    }
+    .tag-removable .x {
+        font-size: 0.85rem;
+        line-height: 1;
+        opacity: 0.7;
+    }
+    .tag-input {
+        font-family: var(--font-mono);
+        font-size: 0.7rem;
+        padding: 1px 6px;
+        border: 1px solid var(--accent);
+        border-radius: var(--radius-sm);
+        background: transparent;
+        color: var(--text);
+        outline: none;
+        min-width: 80px;
+    }
+    .add-tag {
+        font-size: var(--text-xs);
+        color: var(--text-subtle);
+        padding: 1px 6px;
+        border: 1px dashed var(--border);
+        border-radius: var(--radius-sm);
+        transition:
+            color var(--duration-fast) var(--ease),
+            border-color var(--duration-fast) var(--ease);
+    }
+    .add-tag:hover {
+        color: var(--accent);
+        border-color: var(--accent);
+    }
+    .tag-error {
+        font-size: var(--text-xs);
+        color: var(--again);
+        text-align: center;
     }
 </style>
