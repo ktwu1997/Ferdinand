@@ -5,6 +5,7 @@
 mod bootstrap;
 mod error;
 mod routes;
+mod seed_notetypes;
 mod state;
 mod static_assets;
 
@@ -74,6 +75,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     {
         let mut col = state.col.lock().await;
         bootstrap::seed_if_requested(&mut col)?;
+        seed_notetypes::seed_if_missing(&mut col)?;
     }
 
     let api = Router::new().merge(routes::router());
