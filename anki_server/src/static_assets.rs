@@ -95,7 +95,7 @@ mod disk {
     use std::path::PathBuf;
 
     use axum::Router;
-    use tower_http::services::ServeDir;
+    use tower_http::services::{ServeDir, ServeFile};
 
     use crate::state::AppState;
 
@@ -113,7 +113,13 @@ mod disk {
         match dir {
             Some(path) => {
                 tracing::info!(?path, "serving mockup from disk (dev fallback)");
-                let serve = ServeDir::new(&path).append_index_html_on_directories(true);
+                // SPA fallback: unknown paths serve index.html so client-side
+                // routing keeps working on hard-refresh of a sub-route.
+                // Mirrors the embedded path's behaviour at line 76.
+                let index = ServeFile::new(path.join("index.html"));
+                let serve = ServeDir::new(&path)
+                    .append_index_html_on_directories(true)
+                    .not_found_service(index);
                 api.fallback_service(serve)
             }
             None => {

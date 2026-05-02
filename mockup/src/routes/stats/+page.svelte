@@ -1,21 +1,75 @@
 <script lang="ts">
+    import { onMount } from "svelte";
     import Card from "$lib/components/Card.svelte";
-    import Sparkline from "$lib/components/Sparkline.svelte";
-    import { history, answerDistribution } from "$lib/data";
+    import {
+        fetchStatsRecent,
+        fetchAnswerButtons,
+        type ApiDayCount,
+        type ApiAnswerButtons,
+    } from "$lib/api";
 
-    let range = $state<"1M" | "3M" | "1Y" | "ALL">("1M");
+    type Range = "1M" | "3M" | "1Y" | "ALL";
+    const RANGE_DAYS: Record<Range, number> = {
+        "1M": 30,
+        "3M": 90,
+        "1Y": 365,
+        ALL: 365,
+    };
 
-    const values = history.map((d) => d.reviews);
-    const retentions = history.map((d) => Math.round(d.retention * 100));
-    const totalReviews = values.reduce((a, v) => a + v, 0);
-    const avgRetention = Math.round(
-        (history.reduce((a, d) => a + d.retention, 0) / history.length) * 100,
+    let range = $state<Range>("1M");
+
+    let history = $state<ApiDayCount[] | null>(null);
+    let answerButtons = $state<ApiAnswerButtons | null>(null);
+    let loadError = $state<string | null>(null);
+
+    async function load(days: number) {
+        loadError = null;
+        try {
+            const [h, ab] = await Promise.all([
+                fetchStatsRecent(days),
+                fetchAnswerButtons(days),
+            ]);
+            history = h.history;
+            answerButtons = ab;
+        } catch (e) {
+            history = [];
+            answerButtons = { days, again: 0, hard: 0, good: 0, easy: 0 };
+            loadError = e instanceof Error ? e.message : "Couldn't load stats";
+        }
+    }
+
+    onMount(() => load(RANGE_DAYS[range]));
+
+    function setRange(r: Range) {
+        range = r;
+        load(RANGE_DAYS[r]);
+    }
+
+    let values = $derived((history ?? []).map((d) => d.reviews));
+    let totalReviews = $derived(values.reduce((a, v) => a + v, 0));
+    let maxBar = $derived(Math.max(1, ...values));
+
+    // Streak = consecutive non-zero days counted backwards from today.
+    let streak = $derived.by(() => {
+        let n = 0;
+        for (let i = values.length - 1; i >= 0; i--) {
+            if (values[i] > 0) n++;
+            else break;
+        }
+        return n;
+    });
+
+    let answerEntries = $derived(
+        answerButtons
+            ? ([
+                  ["again", answerButtons.again],
+                  ["hard", answerButtons.hard],
+                  ["good", answerButtons.good],
+                  ["easy", answerButtons.easy],
+              ] as const)
+            : [],
     );
-    const streak = 12;
-    const maturityPct = 68;
-
-    const maxBar = Math.max(...values);
-    const totalAns = Object.values(answerDistribution).reduce((a, b) => a + b, 0);
+    let totalAns = $derived(answerEntries.reduce((a, [, v]) => a + v, 0));
 </script>
 
 <svelte:head><title>Stats — Anki</title></svelte:head>
@@ -31,32 +85,26 @@
                 <button
                     class="range-opt"
                     class:active={range === r}
-                    onclick={() => (range = r as typeof range)}>{r}</button
+                    onclick={() => setRange(r as Range)}>{r}</button
                 >
             {/each}
         </div>
     </header>
 
+    {#if loadError}
+        <div class="error-banner">Couldn't load stats: {loadError}</div>
+    {/if}
+
     <div class="kpi-grid">
         <Card padding="md">
             <div class="kpi-label">Reviews</div>
             <div class="kpi-value">{totalReviews.toLocaleString()}</div>
-            <div class="kpi-delta up">+14% vs previous</div>
-        </Card>
-        <Card padding="md">
-            <div class="kpi-label">Retention</div>
-            <div class="kpi-value">{avgRetention}<span class="unit">%</span></div>
-            <div class="kpi-delta down">−1.2% vs target</div>
+            <div class="kpi-delta">last {RANGE_DAYS[range]} days</div>
         </Card>
         <Card padding="md">
             <div class="kpi-label">Streak</div>
             <div class="kpi-value">{streak}<span class="unit">days</span></div>
-            <div class="kpi-delta up">Longest: 34</div>
-        </Card>
-        <Card padding="md">
-            <div class="kpi-label">Mature</div>
-            <div class="kpi-value">{maturityPct}<span class="unit">%</span></div>
-            <div class="kpi-delta">of 5,412 cards</div>
+            <div class="kpi-delta">consecutive non-zero days</div>
         </Card>
     </div>
 
@@ -64,9 +112,9 @@
         <Card padding="lg">
             <div class="card-head">
                 <h3>Daily reviews</h3>
-                <span class="subtle">last 30 days</span>
+                <span class="subtle">last {RANGE_DAYS[range]} days</span>
             </div>
-            <div class="bars">
+            <div class="bars" style:grid-template-columns="repeat({Math.max(1, values.length)}, 1fr)">
                 {#each values as v, i (i)}
                     <div class="bar-col">
                         <div class="bar" style:height="{(v / maxBar) * 100}%"></div>
@@ -74,20 +122,8 @@
                 {/each}
             </div>
             <div class="x-axis">
-                <span>30d ago</span>
+                <span>{RANGE_DAYS[range]}d ago</span>
                 <span>today</span>
-            </div>
-        </Card>
-
-        <Card padding="lg">
-            <div class="card-head">
-                <h3>Retention</h3>
-                <span class="subtle">rolling 7-day</span>
-            </div>
-            <Sparkline values={retentions} height={180} color="var(--success)" />
-            <div class="x-axis">
-                <span>80%</span>
-                <span>100%</span>
             </div>
         </Card>
 
@@ -96,45 +132,23 @@
                 <h3>Answer buttons</h3>
                 <span class="subtle">{totalAns} total</span>
             </div>
-            <div class="ans-chart">
-                {#each Object.entries(answerDistribution) as [k, v] (k)}
-                    {@const pct = (v / totalAns) * 100}
-                    <div class="ans-row">
-                        <span class="ans-k ans-k-{k}">{k}</span>
-                        <div class="ans-bar">
-                            <div class="ans-fill ans-fill-{k}" style:width="{pct}%"></div>
+            {#if totalAns === 0}
+                <div class="empty">No reviews in this window.</div>
+            {:else}
+                <div class="ans-chart">
+                    {#each answerEntries as [k, v] (k)}
+                        {@const pct = (v / totalAns) * 100}
+                        <div class="ans-row">
+                            <span class="ans-k ans-k-{k}">{k}</span>
+                            <div class="ans-bar">
+                                <div class="ans-fill ans-fill-{k}" style:width="{pct}%"></div>
+                            </div>
+                            <span class="ans-v">{v}</span>
+                            <span class="ans-pct">{pct.toFixed(0)}%</span>
                         </div>
-                        <span class="ans-v">{v}</span>
-                        <span class="ans-pct">{pct.toFixed(0)}%</span>
-                    </div>
-                {/each}
-            </div>
-        </Card>
-
-        <Card padding="lg">
-            <div class="card-head">
-                <h3>Heatmap</h3>
-                <span class="subtle">past 365 days</span>
-            </div>
-            <div class="heatmap">
-                {#each Array(52 * 7) as _, i (i)}
-                    {@const intensity = ((i * 7) % 9) / 8}
-                    <div
-                        class="cell"
-                        style:opacity={0.1 + intensity * 0.9}
-                    ></div>
-                {/each}
-            </div>
-            <div class="legend">
-                <span>Less</span>
-                <div class="legend-swatches">
-                    <div class="cell" style:opacity="0.15"></div>
-                    <div class="cell" style:opacity="0.4"></div>
-                    <div class="cell" style:opacity="0.65"></div>
-                    <div class="cell" style:opacity="0.9"></div>
+                    {/each}
                 </div>
-                <span>More</span>
-            </div>
+            {/if}
         </Card>
     </div>
 </div>
@@ -223,6 +237,22 @@
     }
     .kpi-delta.down {
         color: var(--danger);
+    }
+
+    .error-banner {
+        padding: var(--space-3) var(--space-4);
+        border: 1px solid var(--border);
+        background: var(--bg-subtle);
+        border-radius: var(--radius-md);
+        font-size: var(--text-sm);
+        color: var(--danger);
+    }
+
+    .empty {
+        padding: var(--space-6) 0;
+        text-align: center;
+        color: var(--text-subtle);
+        font-size: var(--text-sm);
     }
 
     .charts-grid {
@@ -334,32 +364,4 @@
         text-align: right;
     }
 
-    .heatmap {
-        display: grid;
-        grid-template-columns: repeat(52, 1fr);
-        grid-auto-flow: column;
-        grid-template-rows: repeat(7, 1fr);
-        gap: 2px;
-    }
-    .cell {
-        aspect-ratio: 1;
-        background: var(--accent);
-        border-radius: 2px;
-    }
-    .legend {
-        display: flex;
-        align-items: center;
-        gap: var(--space-2);
-        margin-top: var(--space-3);
-        font-size: var(--text-xs);
-        color: var(--text-subtle);
-    }
-    .legend-swatches {
-        display: flex;
-        gap: 2px;
-    }
-    .legend-swatches .cell {
-        width: 10px;
-        height: 10px;
-    }
 </style>

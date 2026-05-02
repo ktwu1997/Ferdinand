@@ -127,12 +127,21 @@ export interface ApiFsrsOptimizeResponse {
     params: number[];
 }
 
-const DEFAULT_BASE = "http://localhost:40001";
+// SSR fallback only — used when there's no `window` (e.g. during build).
+// At runtime in the browser the default is the page's own origin, so the
+// single-binary deployment (mockup served from anki_server on :40001)
+// works whether opened via localhost, a container IP, or a remote host.
+// `?api=` query param and `VITE_ANKI_API` env var still override (dev mode
+// where the vite dev server on :5174 calls anki_server on :40001).
+const SSR_FALLBACK_BASE = "http://localhost:40001";
 
 export function apiBase(): string {
-    if (!browser) return DEFAULT_BASE;
+    if (!browser) return SSR_FALLBACK_BASE;
     const qp = new URLSearchParams(window.location.search).get("api");
-    return qp ?? (import.meta.env.VITE_ANKI_API as string | undefined) ?? DEFAULT_BASE;
+    if (qp) return qp;
+    const env = import.meta.env.VITE_ANKI_API as string | undefined;
+    if (env) return env;
+    return window.location.origin;
 }
 
 /** Base URL (with trailing slash) for collection media served by anki_server. */
@@ -223,6 +232,19 @@ export interface ApiStatsRecent {
 export async function fetchStatsRecent(days = 30): Promise<ApiStatsRecent> {
     const query = new URLSearchParams({ days: String(days) });
     return getJson<ApiStatsRecent>(`/api/stats/recent?${query}`);
+}
+
+export interface ApiAnswerButtons {
+    days: number;
+    again: number;
+    hard: number;
+    good: number;
+    easy: number;
+}
+
+export async function fetchAnswerButtons(days = 30): Promise<ApiAnswerButtons> {
+    const query = new URLSearchParams({ days: String(days) });
+    return getJson<ApiAnswerButtons>(`/api/stats/answer_buttons?${query}`);
 }
 
 /**

@@ -102,6 +102,73 @@ pub async fn get_recent(
     Ok(Json(StatsRecentResponse { days, history }))
 }
 
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct AnswerButtonsResponse {
+    /// Echoed window length (days, after clamping).
+    pub days: u32,
+    /// Count of `Again` (FSRS rating 1) reviews in the window.
+    pub again: u32,
+    /// Count of `Hard` (FSRS rating 2) reviews in the window.
+    pub hard: u32,
+    /// Count of `Good` (FSRS rating 3) reviews in the window.
+    pub good: u32,
+    /// Count of `Easy` (FSRS rating 4) reviews in the window.
+    pub easy: u32,
+}
+
+// `revlog.ease` stores the four-button rating (1=Again, 2=Hard, 3=Good,
+// 4=Easy). Manual rating-overrides (rated:1:1 etc.) and resets land in
+// the same column, so this matches the user's intuition of "how often
+// did I press each button". Window is the same `[id >= cutoff_ms]`
+// shape as get_recent so the two endpoints stay consistent.
+const ANSWER_BUTTONS_SQL: &str =
+    "SELECT ease, COUNT(*) FROM revlog WHERE id >= ?1 GROUP BY ease";
+
+/// Distribution of Again/Hard/Good/Easy presses in the last `days` days.
+#[utoipa::path(
+    get,
+    path = "/api/stats/answer_buttons",
+    params(("days" = Option<u32>, Query, description = "Window length, 1..=365 (default 30)")),
+    responses(
+        (status = 200, body = AnswerButtonsResponse),
+        (status = 400, body = crate::error::ApiError),
+    )
+)]
+pub async fn get_answer_buttons(
+    State(state): State<AppState>,
+    Query(q): Query<RecentQuery>,
+) -> ApiResult<Json<AnswerButtonsResponse>> {
+    let days = validate_days(q.days).map_err(ServerError::bad_request)?;
+    let cutoff_ms: i64 = TimestampSecs::now().0 * 1000 - (days as i64 - 1) * 86_400_000;
+
+    let col = state.col.lock().await;
+    let mut stmt = col.storage.db().prepare(ANSWER_BUTTONS_SQL)?;
+    let mut again = 0u32;
+    let mut hard = 0u32;
+    let mut good = 0u32;
+    let mut easy = 0u32;
+    for row in stmt.query_map([cutoff_ms], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, u32>(1)?))
+    })? {
+        let (ease, n) = row?;
+        match ease {
+            1 => again = n,
+            2 => hard = n,
+            3 => good = n,
+            4 => easy = n,
+            _ => {}
+        }
+    }
+
+    Ok(Json(AnswerButtonsResponse {
+        days,
+        again,
+        hard,
+        good,
+        easy,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -86,6 +86,10 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/fsrs/optimize", post(fsrs::post_optimize))
         .route("/api/stats/recent", get(stats::get_recent))
+        .route(
+            "/api/stats/answer_buttons",
+            get(stats::get_answer_buttons),
+        )
         .route("/api/tags", get(tags::list_tags))
         .route(
             "/api/saved_searches",

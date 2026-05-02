@@ -1,7 +1,9 @@
 <script lang="ts">
+    import { onMount } from "svelte";
     import { page } from "$app/stores";
     import ThemeToggle from "./ThemeToggle.svelte";
     import Kbd from "./Kbd.svelte";
+    import { fetchDecks, type ApiDeckSummary } from "$lib/api";
 
     const nav = [
         { href: "/", label: "Today", hint: "H", icon: "home" },
@@ -16,6 +18,32 @@
     }
 
     let currentPath = $derived($page.url.pathname);
+
+    interface SidebarDeck {
+        id: number;
+        name: string;
+        due: number;
+    }
+
+    // Live decks from /api/decks. `null` while loading or after a fetch
+    // error — the sidebar simply hides the deck section in that case
+    // rather than leaking fake fixtures (which would mask outages).
+    let liveDecks: SidebarDeck[] | null = $state(null);
+
+    onMount(async () => {
+        try {
+            const res = await fetchDecks();
+            liveDecks = res.decks
+                .filter((d: ApiDeckSummary) => d.id !== 0 && d.level >= 1)
+                .map((d: ApiDeckSummary) => ({
+                    id: d.id,
+                    name: d.name,
+                    due: d.new_count + d.learn_count + d.review_count,
+                }));
+        } catch {
+            liveDecks = [];
+        }
+    });
 </script>
 
 <aside>
@@ -51,29 +79,20 @@
         {/each}
     </nav>
 
-    <div class="section-label">Decks</div>
-    <nav class="deck-list">
-        <a href="/study/jp-n2" class="deck-item">
-            <span class="emoji">🎌</span>
-            <span class="deck-name">日文 N2</span>
-            <span class="badge">31</span>
-        </a>
-        <a href="/study/rust" class="deck-item">
-            <span class="emoji">🦀</span>
-            <span class="deck-name">Rust ownership</span>
-            <span class="badge">13</span>
-        </a>
-        <a href="/study/history" class="deck-item">
-            <span class="emoji">📜</span>
-            <span class="deck-name">World History</span>
-            <span class="badge">15</span>
-        </a>
-        <a href="/study/anatomy" class="deck-item">
-            <span class="emoji">🫁</span>
-            <span class="deck-name">Anatomy</span>
-            <span class="badge">37</span>
-        </a>
-    </nav>
+    {#if liveDecks && liveDecks.length > 0}
+        <div class="section-label">Decks</div>
+        <nav class="deck-list">
+            {#each liveDecks as deck (deck.id)}
+                <a href="/study/{deck.id}" class="deck-item">
+                    <span class="emoji">📚</span>
+                    <span class="deck-name">{deck.name}</span>
+                    {#if deck.due > 0}
+                        <span class="badge">{deck.due}</span>
+                    {/if}
+                </a>
+            {/each}
+        </nav>
+    {/if}
 
     <div class="spacer"></div>
 
