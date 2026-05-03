@@ -24,3 +24,18 @@ ts/.svelte-kit
 .venv
 docs/_build/
 docs/autoapi/
+
+# Anki runtime collection — local SQLite DB, never commit
+data/collection.anki2
+data/collection.anki2-wal
+data/collection.anki2-shm
+data/collection.media/
+
+# TOEIC pipeline runtime state (committed: wordlist.jsonl + cards.jsonl)
+data/toeic/done.txt
+data/toeic/ingested.txt
+data/toeic/failed.jsonl
+data/toeic/cards.invalid.jsonl
+data/toeic/cards.v1.jsonl
+
+.claude/

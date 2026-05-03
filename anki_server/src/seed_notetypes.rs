@@ -116,53 +116,64 @@ fn reverse_afmt() -> String {
     .join("\n")
 }
 
+/// Notetype CSS pulls from mockup design tokens (mockup/src/lib/tokens.css)
+/// so cards inherit theme colours from the host page. Falls back to literal
+/// oklch values for renderers that don't expose the parent stylesheet.
+/// No coloured section backgrounds — sections are differentiated by label
+/// typography + spacing only, matching Notion/Linear flat-doc aesthetic.
 const CONCEPT_DEEP_CSS: &str = r#"
 .card {
-    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
-    font-size: 18px;
-    line-height: 1.6;
-    color: #1d1d1f;
-    background-color: #fafaf7;
-    padding: 24px 32px;
+    font-family: var(--font-sans, "Inter", "Noto Sans TC", "PingFang TC", system-ui, sans-serif);
+    font-size: var(--text-base, 1rem);
+    line-height: 1.7;
+    color: var(--text, oklch(22% 0.012 60));
+    background: transparent;
+    padding: var(--space-8, 2rem) var(--space-6, 1.5rem);
     text-align: left;
-    max-width: 720px;
+    max-width: var(--content-max, 720px);
     margin: 0 auto;
 }
-.front-q { font-size: 1.4em; font-weight: 600; }
-.back { font-size: 1.1em; }
-.section { margin-top: 1.2em; }
+.front-q {
+    font-size: var(--text-2xl, 1.5rem);
+    font-weight: 600;
+    color: var(--text, oklch(22% 0.012 60));
+}
+.back {
+    font-size: var(--text-lg, 1.125rem);
+    font-weight: 500;
+    color: var(--text, oklch(22% 0.012 60));
+    margin-top: var(--space-2, 0.5rem);
+}
+.section {
+    margin-top: var(--space-6, 1.5rem);
+}
 .section-label {
-    font-size: 0.75em;
+    font-size: var(--text-xs, 0.75rem);
+    font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: #888;
-    margin-bottom: 0.25em;
+    color: var(--text-subtle, oklch(65% 0.006 60));
+    margin-bottom: var(--space-1, 0.25rem);
 }
-.why     { border-left: 3px solid #6b8afd; padding-left: 12px; }
+.section > :not(.section-label) {
+    color: var(--text-muted, oklch(50% 0.008 60));
+}
 .example pre, .example code {
-    background: #f0ede5;
-    padding: 8px 12px;
-    border-radius: 4px;
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
-    font-size: 0.9em;
-    overflow-x: auto;
-    display: block;
-    white-space: pre-wrap;
+    font-family: var(--font-mono, ui-monospace, "JetBrains Mono", Menlo, monospace);
+    font-size: var(--text-sm, 0.875rem);
 }
-.contrast { color: #b34a2c; font-style: italic; }
-.mnemonic { background: #fff8d6; padding: 8px 12px; border-radius: 4px; }
-.source   { font-size: 0.8em; color: #999; margin-top: 1.5em; }
+.source {
+    margin-top: var(--space-8, 2rem);
+    padding-top: var(--space-3, 0.75rem);
+    border-top: 1px solid var(--border, oklch(88% 0.015 80));
+    font-size: var(--text-xs, 0.75rem);
+    color: var(--text-subtle, oklch(65% 0.006 60));
+}
 hr#answer {
     border: 0;
-    border-top: 1px solid #d8d4c7;
-    margin: 1em 0;
+    border-top: 1px solid var(--border, oklch(88% 0.015 80));
+    margin: var(--space-5, 1.25rem) 0;
 }
-.nightMode .card { color: #e8e6df; background-color: #1f1f1d; }
-.nightMode .why { border-left-color: #8aa6ff; }
-.nightMode .example pre, .nightMode .example code { background: #2a2a28; }
-.nightMode .mnemonic { background: #3a3520; color: #f7e9b3; }
-.nightMode .contrast { color: #ff9876; }
-.nightMode .source { color: #777; }
 "#;
 
 // ---------- Cloze-Deep ----------
@@ -196,46 +207,45 @@ fn cloze_afmt() -> String {
 
 const CLOZE_DEEP_CSS: &str = r#"
 .card {
-    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
-    font-size: 18px;
-    line-height: 1.6;
-    color: #1d1d1f;
-    background-color: #fafaf7;
-    padding: 24px 32px;
+    font-family: var(--font-sans, "Inter", "Noto Sans TC", "PingFang TC", system-ui, sans-serif);
+    font-size: var(--text-base, 1rem);
+    line-height: 1.7;
+    color: var(--text, oklch(22% 0.012 60));
+    background: transparent;
+    padding: var(--space-8, 2rem) var(--space-6, 1.5rem);
     text-align: left;
-    max-width: 720px;
+    max-width: var(--content-max, 720px);
     margin: 0 auto;
 }
 .cloze {
     font-weight: 600;
-    color: #2c5cdc;
-    background: #e8efff;
-    padding: 0 4px;
-    border-radius: 3px;
+    color: var(--accent, oklch(50% 0.13 40));
 }
-.section { margin-top: 1.2em; }
+.section {
+    margin-top: var(--space-6, 1.5rem);
+}
 .section-label {
-    font-size: 0.75em;
+    font-size: var(--text-xs, 0.75rem);
+    font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: #888;
-    margin-bottom: 0.25em;
+    color: var(--text-subtle, oklch(65% 0.006 60));
+    margin-bottom: var(--space-1, 0.25rem);
 }
-.why { border-left: 3px solid #6b8afd; padding-left: 12px; }
+.section > :not(.section-label) {
+    color: var(--text-muted, oklch(50% 0.008 60));
+}
 .example pre, .example code {
-    background: #f0ede5;
-    padding: 8px 12px;
-    border-radius: 4px;
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
-    font-size: 0.9em;
-    overflow-x: auto;
-    display: block;
-    white-space: pre-wrap;
+    font-family: var(--font-mono, ui-monospace, "JetBrains Mono", Menlo, monospace);
+    font-size: var(--text-sm, 0.875rem);
 }
-.source { font-size: 0.8em; color: #999; margin-top: 1.5em; }
-.nightMode .card { color: #e8e6df; background-color: #1f1f1d; }
-.nightMode .cloze { color: #8eb0ff; background: #1f2d4d; }
-.nightMode .example pre, .nightMode .example code { background: #2a2a28; }
+.source {
+    margin-top: var(--space-8, 2rem);
+    padding-top: var(--space-3, 0.75rem);
+    border-top: 1px solid var(--border, oklch(88% 0.015 80));
+    font-size: var(--text-xs, 0.75rem);
+    color: var(--text-subtle, oklch(65% 0.006 60));
+}
 "#;
 
 #[cfg(test)]
