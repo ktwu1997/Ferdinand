@@ -13,3 +13,38 @@
 {"id":"despite","phrase":"despite the","cloze_part":"Despite","category":"conjunction","level":"700","theme":"communication"}
 {"id":"although","phrase":"although the","cloze_part":"Although","category":"conjunction","level":"600","theme":"communication"}
 {"id":"will-have","phrase":"will have completed","cloze_part":"will have completed","category":"tense","level":"700","theme":"scheduling"}
+{"id":"consist-of","phrase":"consist of","cloze_part":"of","category":"preposition","level":"600","theme":"business"}
+{"id":"depend-on","phrase":"depend on","cloze_part":"on","category":"preposition","level":"600","theme":"business"}
+{"id":"result-in","phrase":"result in","cloze_part":"in","category":"preposition","level":"700","theme":"business"}
+{"id":"account-for","phrase":"account for","cloze_part":"for","category":"preposition","level":"700","theme":"finance"}
+{"id":"benefit-from","phrase":"benefit from","cloze_part":"from","category":"preposition","level":"600","theme":"business"}
+{"id":"specialize-in","phrase":"specialize in","cloze_part":"in","category":"preposition","level":"700","theme":"business"}
+{"id":"engage-in","phrase":"engage in","cloze_part":"in","category":"preposition","level":"800","theme":"business"}
+{"id":"refrain-from","phrase":"refrain from","cloze_part":"from","category":"preposition","level":"800","theme":"office"}
+{"id":"aware-of","phrase":"aware of","cloze_part":"of","category":"preposition","level":"600","theme":"communication"}
+{"id":"familiar-with","phrase":"familiar with","cloze_part":"with","category":"preposition","level":"600","theme":"HR"}
+{"id":"subject-to","phrase":"subject to","cloze_part":"to","category":"preposition","level":"800","theme":"legal"}
+{"id":"contrary-to","phrase":"contrary to","cloze_part":"to","category":"preposition","level":"800","theme":"communication"}
+{"id":"bring-up","phrase":"bring up","cloze_part":"bring up","category":"phrasal_verb","level":"600","theme":"communication"}
+{"id":"come-up-with","phrase":"come up with","cloze_part":"come up with","category":"phrasal_verb","level":"700","theme":"business"}
+{"id":"get-back-to","phrase":"get back to","cloze_part":"get back to","category":"phrasal_verb","level":"600","theme":"communication"}
+{"id":"hand-in","phrase":"hand in","cloze_part":"hand in","category":"phrasal_verb","level":"600","theme":"office"}
+{"id":"put-off","phrase":"put off","cloze_part":"put off","category":"phrasal_verb","level":"700","theme":"scheduling"}
+{"id":"run-out-of","phrase":"run out of","cloze_part":"run out of","category":"phrasal_verb","level":"700","theme":"logistics"}
+{"id":"take-over","phrase":"take over","cloze_part":"take over","category":"phrasal_verb","level":"700","theme":"business"}
+{"id":"turn-down","phrase":"turn down","cloze_part":"turn down","category":"phrasal_verb","level":"700","theme":"business"}
+{"id":"make-a-decision","phrase":"make a decision","cloze_part":"make","category":"collocation","level":"600","theme":"business"}
+{"id":"take-responsibility","phrase":"take responsibility","cloze_part":"take","category":"collocation","level":"700","theme":"business"}
+{"id":"raise-an-issue","phrase":"raise an issue","cloze_part":"raise","category":"collocation","level":"700","theme":"communication"}
+{"id":"conduct-research","phrase":"conduct research","cloze_part":"conduct","category":"collocation","level":"700","theme":"business"}
+{"id":"launch-a-campaign","phrase":"launch a campaign","cloze_part":"launch","category":"collocation","level":"700","theme":"marketing"}
+{"id":"secure-a-contract","phrase":"secure a contract","cloze_part":"secure","category":"collocation","level":"800","theme":"business"}
+{"id":"exceed-expectations","phrase":"exceed expectations","cloze_part":"exceed","category":"collocation","level":"700","theme":"business"}
+{"id":"file-a-complaint","phrase":"file a complaint","cloze_part":"file","category":"collocation","level":"600","theme":"customer-service"}
+{"id":"nonetheless","phrase":"nonetheless","cloze_part":"nonetheless","category":"conjunction","level":"800","theme":"communication"}
+{"id":"whereas","phrase":"whereas","cloze_part":"whereas","category":"conjunction","level":"700","theme":"communication"}
+{"id":"given-that","phrase":"given that","cloze_part":"given","category":"conjunction","level":"700","theme":"communication"}
+{"id":"in-spite-of","phrase":"in spite of","cloze_part":"in spite of","category":"conjunction","level":"700","theme":"communication"}
+{"id":"unless","phrase":"unless","cloze_part":"unless","category":"conjunction","level":"600","theme":"communication"}
+{"id":"has-been-working","phrase":"has been working","cloze_part":"has been working","category":"tense","level":"700","theme":"HR"}
+{"id":"would-have-known","phrase":"would have known","cloze_part":"would have known","category":"tense","level":"800","theme":"communication"}

@@ -53,13 +53,19 @@ def resolve_notetype_id(base: str) -> int:
 
 
 def resolve_deck_id(base: str, deck_name: str, auto_create: bool = False) -> int:
+    """Walk reconstructs full `Parent::Child` paths — see ingest_toeic_cards.py
+    docstring for the rationale (API returns only leaf `name`, comparing
+    against a hierarchical query misses nested decks and triggers duplicate
+    POSTs that Anki disambiguates with a "+" suffix).
+    """
     data = http_get_json(f"{base}/api/decks")
 
-    def walk(decks):
+    def walk(decks, prefix: str = "") -> int | None:
         for d in decks:
-            if d["name"] == deck_name and not d.get("filtered"):
+            full = f"{prefix}::{d['name']}" if prefix else d["name"]
+            if full == deck_name and not d.get("filtered"):
                 return d["id"]
-            found = walk(d.get("children", []))
+            found = walk(d.get("children", []), full)
             if found:
                 return found
         return None

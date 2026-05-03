@@ -61,14 +61,21 @@ def resolve_deck_id(base: str, deck_name: str, auto_create: bool = False) -> int
     """Find a deck by full human name (with `::` nesting). When
     `auto_create=True`, POST /api/decks if missing — Anki creates any
     intermediate parent decks atomically in the same call.
+
+    NOTE: GET /api/decks returns each deck's `name` as the leaf only, with
+    children nested. Reconstruct the full `Parent::Child::Grandchild` path
+    during the walk — comparing leaf name against a hierarchical query
+    silently misses every nested deck and triggers duplicate POSTs that
+    Anki disambiguates with a "+" suffix.
     """
     data = http_get_json(f"{base}/api/decks")
 
-    def walk(decks):
+    def walk(decks, prefix: str = "") -> int | None:
         for d in decks:
-            if d["name"] == deck_name and not d.get("filtered"):
+            full = f"{prefix}::{d['name']}" if prefix else d["name"]
+            if full == deck_name and not d.get("filtered"):
                 return d["id"]
-            found = walk(d.get("children", []))
+            found = walk(d.get("children", []), full)
             if found:
                 return found
         return None
