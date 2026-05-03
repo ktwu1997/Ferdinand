@@ -37,5 +37,8 @@ data/toeic/ingested.txt
 data/toeic/failed.jsonl
 data/toeic/cards.invalid.jsonl
 data/toeic/cards.v1.jsonl
+data/toeic/cloze_done.txt
+data/toeic/cloze_ingested.txt
+data/toeic/cloze_failed.jsonl
 
 .claude/

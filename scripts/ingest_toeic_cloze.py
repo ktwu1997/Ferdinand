@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Ingest TOEIC cards.jsonl into the running anki_server collection.
+"""Ingest TOEIC cloze_cards.jsonl into the running anki_server collection.
 
-Phase E of the TOEIC card workflow. Posts each card to POST /api/notes
-using the Concept-Deep notetype. Idempotent via ingested.txt.
+Sister script to ingest_toeic_cards.py — same architecture but targets
+the Cloze-Deep notetype (4 fields: Text/Why/Example/Source) and reads
+data/toeic/cloze_cards.jsonl. Tracking key is `_meta.id` (e.g.
+"responsible-for") since cloze cards have no single-word identifier.
 
 Usage:
-    ./scripts/ingest_toeic_cards.py                       # all pending
-    ./scripts/ingest_toeic_cards.py --only abandon        # one word
-    ./scripts/ingest_toeic_cards.py --base http://...     # custom host
-    ./scripts/ingest_toeic_cards.py --deck "My Deck"      # custom deck
+    ./scripts/ingest_toeic_cloze.py                                    # → Default deck
+    ./scripts/ingest_toeic_cloze.py --deck "TOEIC::Cloze::Pilot"
+    ./scripts/ingest_toeic_cloze.py --deck-template "TOEIC::Cloze::L{level}"
 """
 from __future__ import annotations
 
@@ -19,19 +20,13 @@ import urllib.request
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-CARDS_IN = REPO_ROOT / "data" / "toeic" / "cards.jsonl"
-INGESTED_TXT = REPO_ROOT / "data" / "toeic" / "ingested.txt"
+CARDS_IN = REPO_ROOT / "data" / "toeic" / "cloze_cards.jsonl"
+INGESTED_TXT = REPO_ROOT / "data" / "toeic" / "cloze_ingested.txt"
 
-CONCEPT_DEEP = "Concept-Deep"
-FIELD_ORDER = (
-    "Front", "Back", "Why", "Example",
-    "Contrast", "Mnemonic", "Source", "ReverseEnabled",
-)
+CLOZE_DEEP = "Cloze-Deep"
+FIELD_ORDER = ("Text", "Why", "Example", "Source")
 DEFAULT_BASE = "http://127.0.0.1:40001"
-DEFAULT_DECK = "Ferdinand demo"
-# Deck-template supports {level}, {pos}, {theme} placeholders pulled from
-# the card's _meta block. Parent decks are auto-created via POST /api/decks
-# (Anki creates intermediate parents in the same call).
+DEFAULT_DECK = "Default"
 DEFAULT_DECK_TEMPLATE = None
 
 
@@ -52,16 +47,12 @@ def http_post_json(url: str, payload: dict) -> dict:
 def resolve_notetype_id(base: str) -> int:
     data = http_get_json(f"{base}/api/notetypes")
     for nt in data.get("notetypes", []):
-        if nt["name"] == CONCEPT_DEEP:
+        if nt["name"] == CLOZE_DEEP:
             return nt["id"]
-    sys.exit(f"notetype {CONCEPT_DEEP!r} not found — start the server with seeding enabled")
+    sys.exit(f"notetype {CLOZE_DEEP!r} not found — start the server with seeding enabled")
 
 
 def resolve_deck_id(base: str, deck_name: str, auto_create: bool = False) -> int:
-    """Find a deck by full human name (with `::` nesting). When
-    `auto_create=True`, POST /api/decks if missing — Anki creates any
-    intermediate parent decks atomically in the same call.
-    """
     data = http_get_json(f"{base}/api/decks")
 
     def walk(decks):
@@ -84,7 +75,7 @@ def resolve_deck_id(base: str, deck_name: str, auto_create: bool = False) -> int
 
 
 def load_cards() -> list[dict]:
-    with CARDS_IN.open() as fh:
+    with CARDS_IN.open(encoding="utf-8") as fh:
         return [json.loads(line) for line in fh if line.strip()]
 
 
@@ -95,60 +86,56 @@ def load_ingested() -> set[str]:
 
 
 def build_tags(card: dict) -> list[str]:
-    tags = ["toeic"]
+    tags = ["toeic", "cloze"]
     meta = card.get("_meta", {})
     if level := meta.get("level"):
         tags.append(f"level-{level}")
+    if category := meta.get("category"):
+        tags.append(f"category-{category}")
     if theme := meta.get("theme"):
         tags.append(f"theme-{theme}")
-    if pos := meta.get("pos"):
-        tags.append(f"pos-{pos}")
     return tags
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--base", default=DEFAULT_BASE)
-    ap.add_argument("--deck", default=DEFAULT_DECK,
-                    help="single-deck mode (default). Ignored if --deck-template set.")
+    ap.add_argument("--deck", default=DEFAULT_DECK)
     ap.add_argument("--deck-template", default=DEFAULT_DECK_TEMPLATE,
-                    help="route each card to a deck via Python format-string of _meta keys, "
-                         "e.g. 'TOEIC::Vocabulary::L{level}'. Implies --auto-create.")
-    ap.add_argument("--auto-create", action="store_true",
-                    help="POST /api/decks for any deck not already present")
-    ap.add_argument("--only", default=None, help="ingest one specific word")
+                    help="route via _meta keys, e.g. 'TOEIC::Cloze::L{level}'")
+    ap.add_argument("--auto-create", action="store_true")
+    ap.add_argument("--only", default=None, help="ingest one specific cloze id")
     args = ap.parse_args()
 
     if not CARDS_IN.exists():
         sys.exit(f"cards file missing: {CARDS_IN}")
 
     notetype_id = resolve_notetype_id(args.base)
-
     use_template = bool(args.deck_template)
     auto_create = args.auto_create or use_template
     if use_template:
-        print(f"[ingest] notetype={CONCEPT_DEEP} ({notetype_id})  deck_template={args.deck_template!r}")
+        print(f"[ingest-cloze] notetype={CLOZE_DEEP} ({notetype_id})  deck_template={args.deck_template!r}")
     else:
         deck_id = resolve_deck_id(args.base, args.deck, auto_create=auto_create)
-        print(f"[ingest] notetype={CONCEPT_DEEP} ({notetype_id})  deck={args.deck} ({deck_id})")
+        print(f"[ingest-cloze] notetype={CLOZE_DEEP} ({notetype_id})  deck={args.deck} ({deck_id})")
     deck_id_cache: dict[str, int] = {}
 
     cards = load_cards()
     ingested = load_ingested()
 
     if args.only:
-        cards = [c for c in cards if c.get("Front", "").lower() == args.only.lower()]
+        cards = [c for c in cards if c.get("_meta", {}).get("id") == args.only]
         if not cards:
-            sys.exit(f"no card with Front={args.only!r} found in {CARDS_IN}")
+            sys.exit(f"no card with id={args.only!r} found")
 
-    pending = [c for c in cards if c["Front"] not in ingested]
-    print(f"[ingest] {len(pending)} pending of {len(cards)} ({len(ingested)} already ingested)")
+    pending = [c for c in cards if c["_meta"]["id"] not in ingested]
+    print(f"[ingest-cloze] {len(pending)} pending of {len(cards)} ({len(ingested)} already ingested)")
 
     INGESTED_TXT.parent.mkdir(parents=True, exist_ok=True)
     ok = fail = 0
     with INGESTED_TXT.open("a", encoding="utf-8") as ingested_fh:
         for card in pending:
-            front = card["Front"]
+            cid = card["_meta"]["id"]
             try:
                 if use_template:
                     deck_name = args.deck_template.format(**card.get("_meta", {}))
@@ -166,16 +153,16 @@ def main() -> int:
                     "tags": build_tags(card),
                 }
                 resp = http_post_json(f"{args.base}/api/notes", payload)
-                ingested_fh.write(front + "\n")
+                ingested_fh.write(cid + "\n")
                 ingested_fh.flush()
                 ok += 1
                 deck_label = f" → {deck_name}" if use_template else ""
-                print(f"  ok    {front:14}  note_id={resp['note_id']}  cards={resp['card_count']}{deck_label}")
-            except Exception as exc:  # noqa: BLE001 — keep going on per-card failure
+                print(f"  ok    {cid:25}  note_id={resp['note_id']}  cards={resp['card_count']}{deck_label}")
+            except Exception as exc:  # noqa: BLE001
                 fail += 1
-                print(f"  FAIL  {front:14}  {type(exc).__name__}: {exc}")
+                print(f"  FAIL  {cid:25}  {type(exc).__name__}: {exc}")
 
-    print(f"\n[ingest] done: ok={ok} fail={fail}")
+    print(f"\n[ingest-cloze] done: ok={ok} fail={fail}")
     return 0 if fail == 0 else 1
 
 
