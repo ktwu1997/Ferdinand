@@ -40,5 +40,11 @@ data/toeic/cards.v1.jsonl
 data/toeic/cloze_done.txt
 data/toeic/cloze_ingested.txt
 data/toeic/cloze_failed.jsonl
+# Image backfill runtime state (Concept-Deep Image field)
+data/toeic/image_done.txt
+data/toeic/image_skip.txt
+data/toeic/image_fail.jsonl
+data/toeic/image_verified.jsonl
+data/toeic/concept_image_map.json
 
 .claude/
