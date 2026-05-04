@@ -2328,6 +2328,7 @@
         display: flex;
         flex-direction: column;
         min-width: 0;
+        min-height: 0;
         border-right: 1px solid var(--border);
     }
     .toolbar {

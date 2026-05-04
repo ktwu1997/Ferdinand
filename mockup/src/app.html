@@ -18,9 +18,11 @@
                 try {
                     const params = new URLSearchParams(window.location.search);
                     const fromUrl = params.get("theme");
-                    const stored = localStorage.getItem("theme");
+                    let stored = localStorage.getItem("theme");
+                    if (stored !== "light" && stored !== "dark" && stored !== "auto") stored = "auto";
                     const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-                    const theme = fromUrl ?? stored ?? (prefersDark ? "dark" : "light");
+                    const choice = fromUrl ?? stored;
+                    const theme = choice === "auto" ? (prefersDark ? "dark" : "light") : choice;
                     document.documentElement.dataset.theme = theme;
                 } catch (_) {}
             })();

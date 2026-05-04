@@ -2,6 +2,11 @@
     import { onMount } from "svelte";
     import Card from "$lib/components/Card.svelte";
     import {
+        getThemeChoice,
+        setThemeChoice,
+        type ThemeChoice,
+    } from "$lib/theme";
+    import {
         deleteDeckConfig,
         deleteNotetypeField,
         fetchDeckConfigById,
@@ -37,6 +42,7 @@
     ];
 
     let active = $state("fsrs");
+    let themeChoice: ThemeChoice = $state("light");
 
     // FSRS settings wired to anki_server (Phase 9-N2; optimize/reschedule 9-O2;
     // multi-preset selector 9-O''). Server stores desired_retention as a
@@ -200,6 +206,7 @@
     }
 
     onMount(async () => {
+        themeChoice = getThemeChoice();
         try {
             const [list, fsrs, hc] = await Promise.all([
                 fetchDeckConfigs(),
@@ -1154,17 +1161,35 @@
                     </div>
                     <div class="theme-grid">
                         <label class="theme-opt">
-                            <input type="radio" name="theme" checked />
+                            <input
+                                type="radio"
+                                name="theme"
+                                value="light"
+                                bind:group={themeChoice}
+                                onchange={() => setThemeChoice("light")}
+                            />
                             <div class="swatch light"></div>
                             <span>Light</span>
                         </label>
                         <label class="theme-opt">
-                            <input type="radio" name="theme" />
+                            <input
+                                type="radio"
+                                name="theme"
+                                value="dark"
+                                bind:group={themeChoice}
+                                onchange={() => setThemeChoice("dark")}
+                            />
                             <div class="swatch dark"></div>
                             <span>Dark</span>
                         </label>
                         <label class="theme-opt">
-                            <input type="radio" name="theme" />
+                            <input
+                                type="radio"
+                                name="theme"
+                                value="auto"
+                                bind:group={themeChoice}
+                                onchange={() => setThemeChoice("auto")}
+                            />
                             <div class="swatch auto"></div>
                             <span>System</span>
                         </label>
