@@ -48,3 +48,53 @@
 {"id":"unless","phrase":"unless","cloze_part":"unless","category":"conjunction","level":"600","theme":"communication"}
 {"id":"has-been-working","phrase":"has been working","cloze_part":"has been working","category":"tense","level":"700","theme":"HR"}
 {"id":"would-have-known","phrase":"would have known","cloze_part":"would have known","category":"tense","level":"800","theme":"communication"}
+{"id":"interested-in","phrase":"interested in","cloze_part":"in","category":"preposition","level":"600","theme":"general"}
+{"id":"capable-of","phrase":"capable of","cloze_part":"of","category":"preposition","level":"600","theme":"business"}
+{"id":"different-from","phrase":"different from","cloze_part":"from","category":"preposition","level":"600","theme":"general"}
+{"id":"superior-to","phrase":"superior to","cloze_part":"to","category":"preposition","level":"700","theme":"product"}
+{"id":"committed-to","phrase":"committed to","cloze_part":"to","category":"preposition","level":"700","theme":"business"}
+{"id":"opposed-to","phrase":"opposed to","cloze_part":"to","category":"preposition","level":"700","theme":"business"}
+{"id":"prone-to","phrase":"prone to","cloze_part":"to","category":"preposition","level":"800","theme":"manufacturing"}
+{"id":"adjacent-to","phrase":"adjacent to","cloze_part":"to","category":"preposition","level":"800","theme":"office"}
+{"id":"in-charge-of","phrase":"in charge of","cloze_part":"of","category":"preposition","level":"600","theme":"business"}
+{"id":"on-behalf-of","phrase":"on behalf of","cloze_part":"of","category":"preposition","level":"700","theme":"business"}
+{"id":"fill-out","phrase":"fill out","cloze_part":"out","category":"phrasal_verb","level":"600","theme":"forms"}
+{"id":"drop-off","phrase":"drop off","cloze_part":"off","category":"phrasal_verb","level":"600","theme":"logistics"}
+{"id":"pick-up","phrase":"pick up","cloze_part":"up","category":"phrasal_verb","level":"600","theme":"logistics"}
+{"id":"go-over","phrase":"go over","cloze_part":"over","category":"phrasal_verb","level":"600","theme":"meeting"}
+{"id":"call-off","phrase":"call off","cloze_part":"off","category":"phrasal_verb","level":"700","theme":"meeting"}
+{"id":"sign-up-for","phrase":"sign up for","cloze_part":"up for","category":"phrasal_verb","level":"600","theme":"events"}
+{"id":"figure-out","phrase":"figure out","cloze_part":"out","category":"phrasal_verb","level":"700","theme":"general"}
+{"id":"point-out","phrase":"point out","cloze_part":"out","category":"phrasal_verb","level":"700","theme":"meeting"}
+{"id":"phase-out","phrase":"phase out","cloze_part":"out","category":"phrasal_verb","level":"800","theme":"product"}
+{"id":"step-down","phrase":"step down","cloze_part":"down","category":"phrasal_verb","level":"800","theme":"executive"}
+{"id":"meet-demand","phrase":"meet demand","cloze_part":"meet","category":"collocation","level":"700","theme":"manufacturing"}
+{"id":"reach-an-agreement","phrase":"reach an agreement","cloze_part":"reach","category":"collocation","level":"700","theme":"negotiation"}
+{"id":"give-a-presentation","phrase":"give a presentation","cloze_part":"give","category":"collocation","level":"600","theme":"meeting"}
+{"id":"do-business","phrase":"do business","cloze_part":"do","category":"collocation","level":"600","theme":"business"}
+{"id":"take-a-look","phrase":"take a look","cloze_part":"take","category":"collocation","level":"600","theme":"general"}
+{"id":"meet-the-criteria","phrase":"meet the criteria","cloze_part":"meet","category":"collocation","level":"700","theme":"hiring"}
+{"id":"raise-concerns","phrase":"raise concerns","cloze_part":"raise","category":"collocation","level":"700","theme":"meeting"}
+{"id":"address-an-issue","phrase":"address an issue","cloze_part":"address","category":"collocation","level":"700","theme":"meeting"}
+{"id":"draw-a-conclusion","phrase":"draw a conclusion","cloze_part":"draw","category":"collocation","level":"800","theme":"research"}
+{"id":"implement-a-policy","phrase":"implement a policy","cloze_part":"implement","category":"collocation","level":"800","theme":"hr"}
+{"id":"even-though","phrase":"even though","cloze_part":"though","category":"conjunction","level":"600","theme":"general"}
+{"id":"as-long-as","phrase":"as long as","cloze_part":"long","category":"conjunction","level":"600","theme":"general"}
+{"id":"in-order-to","phrase":"in order to","cloze_part":"order","category":"conjunction","level":"600","theme":"general"}
+{"id":"so-that","phrase":"so that","cloze_part":"that","category":"conjunction","level":"600","theme":"general"}
+{"id":"provided-that","phrase":"provided that","cloze_part":"provided","category":"conjunction","level":"700","theme":"contract"}
+{"id":"in-case","phrase":"in case","cloze_part":"case","category":"conjunction","level":"700","theme":"logistics"}
+{"id":"as-soon-as","phrase":"as soon as","cloze_part":"soon","category":"conjunction","level":"600","theme":"meeting"}
+{"id":"however","phrase":"however","cloze_part":"however","category":"conjunction","level":"600","theme":"general"}
+{"id":"therefore","phrase":"therefore","cloze_part":"therefore","category":"conjunction","level":"700","theme":"business"}
+{"id":"in-the-event-that","phrase":"in the event that","cloze_part":"event","category":"conjunction","level":"800","theme":"contract"}
+{"id":"will-be-attending","phrase":"will be attending","cloze_part":"will be attending","category":"tense","level":"700","theme":"meeting"}
+{"id":"had-already-left","phrase":"had already left","cloze_part":"had already left","category":"tense","level":"700","theme":"office"}
+{"id":"is-being-renovated","phrase":"is being renovated","cloze_part":"is being renovated","category":"tense","level":"700","theme":"office"}
+{"id":"have-been-notified","phrase":"have been notified","cloze_part":"have been notified","category":"tense","level":"700","theme":"hr"}
+{"id":"will-have-completed","phrase":"will have completed","cloze_part":"will have completed","category":"tense","level":"800","theme":"project"}
+{"id":"should-have-submitted","phrase":"should have submitted","cloze_part":"should have submitted","category":"tense","level":"800","theme":"forms"}
+{"id":"has-been-postponed","phrase":"has been postponed","cloze_part":"has been postponed","category":"tense","level":"700","theme":"meeting"}
+{"id":"were-asked-to","phrase":"were asked to","cloze_part":"were asked to","category":"tense","level":"600","theme":"hr"}
+{"id":"is-expected-to","phrase":"is expected to","cloze_part":"is expected to","category":"tense","level":"700","theme":"product"}
+{"id":"would-rather","phrase":"would rather","cloze_part":"would rather","category":"tense","level":"800","theme":"general"}
