@@ -19,6 +19,20 @@ use anki::notetype::{CardTemplate, NoteField, Notetype, NotetypeKind};
 pub const CONCEPT_DEEP_NAME: &str = "Concept-Deep";
 pub const CLOZE_DEEP_NAME: &str = "Cloze-Deep";
 
+/// Anki built-in notetypes auto-seeded by the upstream collection bootstrap.
+/// We have richer replacements (Concept-Deep / Cloze-Deep) that supersede
+/// these for vocab and cloze workflows, so on a personal-fork collection
+/// they're noise in the picker. Removed only if they have zero notes —
+/// guard avoids destroying user-imported decks that happen to use Basic.
+const LEGACY_NOTETYPE_NAMES: &[&str] = &[
+    "Basic",
+    "Basic (and reversed card)",
+    "Basic (optional reversed card)",
+    "Basic (type in the answer)",
+    "Cloze",
+    "Image Occlusion",
+];
+
 pub const CONCEPT_DEEP_FIELDS: &[&str] = &[
     "Front",
     "Back",
@@ -41,6 +55,41 @@ pub fn seed_if_missing(col: &mut Collection) -> anyhow::Result<()> {
     }
     seed_one(col, CONCEPT_DEEP_NAME, build_concept_deep)?;
     seed_one(col, CLOZE_DEEP_NAME, build_cloze_deep)?;
+    cleanup_legacy_if_empty(col)?;
+    Ok(())
+}
+
+/// Remove Anki built-in notetypes (Basic, Cloze, etc.) that carry zero
+/// notes. Idempotent: once removed, subsequent calls find nothing. Opt
+/// out via `FERDINAND_KEEP_LEGACY_NOTETYPES=1` for users who want to
+/// preserve upstream parity (e.g. importing community .apkg decks that
+/// expect Basic to exist).
+fn cleanup_legacy_if_empty(col: &mut Collection) -> anyhow::Result<()> {
+    if std::env::var("FERDINAND_KEEP_LEGACY_NOTETYPES").ok().as_deref() == Some("1") {
+        tracing::debug!(
+            "legacy notetype cleanup skipped: FERDINAND_KEEP_LEGACY_NOTETYPES=1"
+        );
+        return Ok(());
+    }
+    for name in LEGACY_NOTETYPE_NAMES {
+        let arc = col.get_notetype_by_name(name)?;
+        let Some(arc) = arc else {
+            continue;
+        };
+        let ntid = arc.id;
+        let query = format!("note:\"{name}\"");
+        let nids = col.search_notes_unordered(query.as_str())?;
+        if !nids.is_empty() {
+            tracing::warn!(
+                notetype = name,
+                notes = nids.len(),
+                "legacy notetype retained: has notes"
+            );
+            continue;
+        }
+        col.remove_notetype(ntid)?;
+        tracing::info!(notetype = name, "legacy notetype removed (0 notes)");
+    }
     Ok(())
 }
 
