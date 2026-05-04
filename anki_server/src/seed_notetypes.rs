@@ -42,6 +42,7 @@ pub const CONCEPT_DEEP_FIELDS: &[&str] = &[
     "Mnemonic",
     "Source",
     "ReverseEnabled",
+    "Image",
 ];
 
 pub const CLOZE_DEEP_FIELDS: &[&str] = &["Text", "Why", "Example", "Source"];
@@ -55,7 +56,53 @@ pub fn seed_if_missing(col: &mut Collection) -> anyhow::Result<()> {
     }
     seed_one(col, CONCEPT_DEEP_NAME, build_concept_deep)?;
     seed_one(col, CLOZE_DEEP_NAME, build_cloze_deep)?;
+    migrate_concept_deep_add_image(col)?;
     cleanup_legacy_if_empty(col)?;
+    Ok(())
+}
+
+/// Idempotent migration: if Concept-Deep exists but predates the Image
+/// field (8 fields instead of 9), append the new field, refresh the two
+/// templates, and refresh the CSS so existing 402+ notes pick up the new
+/// rendering surface. Anki backfills empty content for the new field on
+/// existing notes, so this is non-destructive.
+fn migrate_concept_deep_add_image(col: &mut Collection) -> anyhow::Result<()> {
+    let arc = col.get_notetype_by_name(CONCEPT_DEEP_NAME)?;
+    let Some(arc) = arc else {
+        return Ok(());
+    };
+    let already_has_image = arc.fields.iter().any(|f| f.name == "Image");
+    if already_has_image {
+        tracing::debug!("Concept-Deep already has Image field, migration skipped");
+        return Ok(());
+    }
+    let mut nt: Notetype = (*arc).clone();
+    nt.fields.push(NoteField::new("Image"));
+    // CRITICAL: mutate existing templates in-place to preserve their `ord`
+    // values. Replacing templates via `clear()` + push() of fresh
+    // CardTemplates (with ord=None) makes Anki's TemplateOrdChanges treat
+    // the old ords as `removed`, which sends every existing card to the
+    // graveyard. Keep the same template instances; only swap the qfmt/afmt
+    // and refresh CSS.
+    for tmpl in nt.templates.iter_mut() {
+        match tmpl.name.as_str() {
+            "Forward" => {
+                tmpl.config.q_format = forward_qfmt();
+                tmpl.config.a_format = forward_afmt();
+            }
+            "Reverse (optional)" => {
+                tmpl.config.q_format = reverse_qfmt();
+                tmpl.config.a_format = reverse_afmt();
+            }
+            _ => {}
+        }
+    }
+    nt.config.css = CONCEPT_DEEP_CSS.into();
+    col.update_notetype(&mut nt, false)?;
+    tracing::info!(
+        notetype = CONCEPT_DEEP_NAME,
+        "migrated: added Image field + refreshed templates"
+    );
     Ok(())
 }
 
@@ -137,6 +184,7 @@ fn forward_afmt() -> String {
         r#"{{FrontSide}}"#,
         r#"<hr id=answer>"#,
         r#"<div class="back">{{Back}}</div>"#,
+        r#"{{#Image}}<div class="card-image">{{Image}}</div>{{/Image}}"#,
         r#"{{#Why}}<div class="section why"><div class="section-label">Why</div>{{Why}}</div>{{/Why}}"#,
         r#"{{#Example}}<div class="section example"><div class="section-label">Example</div>{{Example}}</div>{{/Example}}"#,
         r#"{{#Contrast}}<div class="section contrast"><div class="section-label">Contrast</div>{{Contrast}}</div>{{/Contrast}}"#,
@@ -159,6 +207,7 @@ fn reverse_afmt() -> String {
         r#"{{FrontSide}}"#,
         r#"<hr id=answer>"#,
         r#"<div class="back">{{Front}}</div>"#,
+        r#"{{#Image}}<div class="card-image">{{Image}}</div>{{/Image}}"#,
         r#"{{#Why}}<div class="section why"><div class="section-label">Why</div>{{Why}}</div>{{/Why}}"#,
         r#"{{#Source}}<div class="section source">— {{Source}}</div>{{/Source}}"#,
     ]
@@ -217,6 +266,18 @@ const CONCEPT_DEEP_CSS: &str = r#"
     border-top: 1px solid var(--border, oklch(88% 0.015 80));
     font-size: var(--text-xs, 0.75rem);
     color: var(--text-subtle, oklch(65% 0.006 60));
+}
+.card-image {
+    margin-top: var(--space-5, 1.25rem);
+    display: flex;
+    justify-content: center;
+}
+.card-image img {
+    max-width: 100%;
+    max-height: 320px;
+    height: auto;
+    border-radius: var(--radius-md, 8px);
+    box-shadow: 0 1px 2px oklch(0% 0 0 / 0.06), 0 4px 12px oklch(0% 0 0 / 0.08);
 }
 hr#answer {
     border: 0;
@@ -302,14 +363,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn concept_deep_has_eight_fields_and_two_templates() {
+    fn concept_deep_has_nine_fields_and_two_templates() {
         let nt = build_concept_deep();
         assert_eq!(nt.name, CONCEPT_DEEP_NAME);
-        assert_eq!(nt.fields.len(), 8);
+        assert_eq!(nt.fields.len(), 9);
         assert_eq!(nt.templates.len(), 2);
         assert_eq!(nt.config.kind, NotetypeKind::Normal as i32);
         let names: Vec<&str> = nt.fields.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(names, CONCEPT_DEEP_FIELDS);
+        assert!(names.contains(&"Image"));
     }
 
     #[test]

@@ -26,6 +26,7 @@ CONCEPT_DEEP = "Concept-Deep"
 FIELD_ORDER = (
     "Front", "Back", "Why", "Example",
     "Contrast", "Mnemonic", "Source", "ReverseEnabled",
+    "Image",
 )
 DEFAULT_BASE = "http://127.0.0.1:40001"
 DEFAULT_DECK = "Ferdinand demo"
