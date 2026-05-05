@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import subprocess
 import sys
 import urllib.request
@@ -32,6 +33,22 @@ TOEIC_DIR = REPO_ROOT / "data" / "toeic"
 DONE_TXT = TOEIC_DIR / "image_done.txt"
 VERIFIED_JSONL = TOEIC_DIR / "image_verified.jsonl"
 MEDIA_DIR = REPO_ROOT / "data" / "collection.media"
+# gemini CLI v0.40 enforces TWO layered file-access guards on `@/path`:
+#   (1) Workspace boundary — paths must resolve under either the cwd's
+#       project root or `~/.gemini/tmp/<project>/`. /tmp/* is rejected
+#       with "Path not in workspace".
+#   (2) Ignore patterns — within the workspace, .gitignore'd paths are
+#       blocked with "ignored by configured ignore patterns" because
+#       gemini reuses gitignore as its tool ignore list. Our
+#       `data/collection.media/` is gitignored (Anki convention), so
+#       direct @ references to the canonical image path silently bail
+#       out with "I cannot directly access" model apologies — the
+#       fall-through path inside gemini is non-deterministic, hence
+#       the ~40% failure rate observed earlier.
+# Workaround: stage each image under the project temp dir, which
+# satisfies both guards. Pre-create on script start so the directory
+# always exists before the first gemini call.
+GEMINI_PROJECT_TMP = Path.home() / ".gemini" / "tmp" / "ferdinand"
 
 DEFAULT_BASE = "http://127.0.0.1:40001"
 GEMINI_TIMEOUT_S = 150
@@ -92,8 +109,21 @@ def fetch_note(base: str, nid: int) -> dict:
 
 def gemini_verify(image_path: Path, front: str, back: str) -> dict:
     """Run gemini @file vision check. Returns verdict dict or
-    {'verdict_status': 'unknown', ...} on timeout/parse failure."""
-    prompt = VERIFY_PROMPT.format(path=str(image_path), front=front, back=back)
+    {'verdict_status': 'unknown', ...} on timeout/parse failure.
+
+    Image is copied to GEMINI_PROJECT_TMP first because gemini CLI
+    blocks both /tmp/* (out-of-workspace) and gitignored paths like
+    data/collection.media/* — see GEMINI_PROJECT_TMP comment.
+    """
+    GEMINI_PROJECT_TMP.mkdir(parents=True, exist_ok=True)
+    staged = GEMINI_PROJECT_TMP / image_path.name
+    try:
+        shutil.copy2(image_path, staged)
+    except OSError as e:
+        return {"verdict_status": "stage_failed", "fits": None,
+                "has_english_text": None, "score": None,
+                "notes": f"copy to {staged}: {e}"[:120]}
+    prompt = VERIFY_PROMPT.format(path=str(staged), front=front, back=back)
     try:
         proc = subprocess.run(
             ["gemini", "-m", GEMINI_MODEL, "-p", prompt],
@@ -102,6 +132,11 @@ def gemini_verify(image_path: Path, front: str, back: str) -> dict:
     except subprocess.TimeoutExpired:
         return {"verdict_status": "timeout", "fits": None, "has_english_text": None,
                 "score": None, "notes": f"gemini timeout after {GEMINI_TIMEOUT_S}s"}
+    finally:
+        try:
+            staged.unlink()
+        except OSError:
+            pass
     if proc.returncode != 0:
         return {"verdict_status": "exit_nonzero",
                 "fits": None, "has_english_text": None, "score": None,
