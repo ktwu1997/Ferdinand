@@ -55,7 +55,7 @@
 {"word":"yield","pos":"v","level":"800","theme":"finance"}
 {"word":"agenda","pos":"n","level":"600","theme":"scheduling"}
 {"word":"budget","pos":"n","level":"600","theme":"finance"}
-{"word":"candidate","pos":"n","level":"600","theme":"HR"}
+{"word":"candidate","pos":"n","level":"600","theme":"hr"}
 {"word":"deadline","pos":"n","level":"600","theme":"scheduling"}
 {"word":"expense","pos":"n","level":"600","theme":"finance"}
 {"word":"facility","pos":"n","level":"600","theme":"business"}
@@ -70,7 +70,7 @@
 {"word":"inventory","pos":"n","level":"700","theme":"logistics"}
 {"word":"merger","pos":"n","level":"700","theme":"business"}
 {"word":"quota","pos":"n","level":"700","theme":"sales"}
-{"word":"referral","pos":"n","level":"700","theme":"HR"}
+{"word":"referral","pos":"n","level":"700","theme":"hr"}
 {"word":"shareholder","pos":"n","level":"700","theme":"finance"}
 {"word":"stakeholder","pos":"n","level":"700","theme":"business"}
 {"word":"vendor","pos":"n","level":"700","theme":"business"}
@@ -78,17 +78,17 @@
 {"word":"discrepancy","pos":"n","level":"800","theme":"finance"}
 {"word":"dividend","pos":"n","level":"800","theme":"finance"}
 {"word":"equity","pos":"n","level":"800","theme":"finance"}
-{"word":"prerequisite","pos":"n","level":"800","theme":"HR"}
+{"word":"prerequisite","pos":"n","level":"800","theme":"hr"}
 {"word":"available","pos":"adj","level":"600","theme":"business"}
 {"word":"competitive","pos":"adj","level":"600","theme":"business"}
 {"word":"essential","pos":"adj","level":"600","theme":"business"}
 {"word":"significant","pos":"adj","level":"600","theme":"business"}
 {"word":"sufficient","pos":"adj","level":"600","theme":"business"}
 {"word":"applicable","pos":"adj","level":"700","theme":"legal"}
-{"word":"competent","pos":"adj","level":"700","theme":"HR"}
+{"word":"competent","pos":"adj","level":"700","theme":"hr"}
 {"word":"confidential","pos":"adj","level":"700","theme":"business"}
 {"word":"considerable","pos":"adj","level":"700","theme":"business"}
-{"word":"eligible","pos":"adj","level":"700","theme":"HR"}
+{"word":"eligible","pos":"adj","level":"700","theme":"hr"}
 {"word":"mandatory","pos":"adj","level":"700","theme":"legal"}
 {"word":"mutual","pos":"adj","level":"700","theme":"business"}
 {"word":"feasible","pos":"adj","level":"800","theme":"business"}
@@ -99,103 +99,207 @@
 {"word":"consequently","pos":"adv","level":"700","theme":"communication"}
 {"word":"promptly","pos":"adv","level":"700","theme":"scheduling"}
 {"word":"thoroughly","pos":"adv","level":"700","theme":"business"}
-{"word": "colleague", "pos": "n", "level": "600", "theme": "hr"}
-{"word": "client", "pos": "n", "level": "600", "theme": "customer-service"}
-{"word": "supplier", "pos": "n", "level": "600", "theme": "logistics"}
-{"word": "shipment", "pos": "n", "level": "600", "theme": "logistics"}
-{"word": "warehouse", "pos": "n", "level": "600", "theme": "logistics"}
-{"word": "schedule", "pos": "n", "level": "600", "theme": "meetings"}
-{"word": "appointment", "pos": "n", "level": "600", "theme": "meetings"}
-{"word": "brochure", "pos": "n", "level": "600", "theme": "marketing"}
-{"word": "discount", "pos": "n", "level": "600", "theme": "marketing"}
-{"word": "promotion", "pos": "n", "level": "600", "theme": "marketing"}
-{"word": "refund", "pos": "n", "level": "600", "theme": "customer-service"}
-{"word": "payment", "pos": "n", "level": "600", "theme": "finance"}
-{"word": "salary", "pos": "n", "level": "600", "theme": "hr"}
-{"word": "benefits", "pos": "n", "level": "600", "theme": "hr"}
-{"word": "résumé", "pos": "n", "level": "600", "theme": "hr"}
-{"word": "interview", "pos": "n", "level": "600", "theme": "hr"}
-{"word": "manager", "pos": "n", "level": "600", "theme": "hr"}
-{"word": "department", "pos": "n", "level": "600", "theme": "hr"}
-{"word": "headquarters", "pos": "n", "level": "600", "theme": "operations"}
-{"word": "branch", "pos": "n", "level": "600", "theme": "operations"}
-{"word": "manufacture", "pos": "v", "level": "600", "theme": "manufacturing"}
-{"word": "assembly", "pos": "n", "level": "600", "theme": "manufacturing"}
-{"word": "delivery", "pos": "n", "level": "600", "theme": "logistics"}
-{"word": "freight", "pos": "n", "level": "600", "theme": "logistics"}
-{"word": "postage", "pos": "n", "level": "600", "theme": "logistics"}
-{"word": "cancel", "pos": "v", "level": "600", "theme": "operations"}
-{"word": "reserve", "pos": "v", "level": "600", "theme": "travel"}
-{"word": "attendee", "pos": "n", "level": "600", "theme": "meetings"}
-{"word": "renovate", "pos": "v", "level": "600", "theme": "operations"}
-{"word": "inspect", "pos": "v", "level": "600", "theme": "manufacturing"}
-{"word": "submit", "pos": "v", "level": "600", "theme": "operations"}
-{"word": "apply", "pos": "v", "level": "600", "theme": "hr"}
-{"word": "hire", "pos": "v", "level": "600", "theme": "hr"}
-{"word": "retire", "pos": "v", "level": "600", "theme": "hr"}
-{"word": "promote", "pos": "v", "level": "600", "theme": "hr"}
-{"word": "acknowledge", "pos": "v", "level": "600", "theme": "customer-service"}
-{"word": "respond", "pos": "v", "level": "600", "theme": "customer-service"}
-{"word": "handle", "pos": "v", "level": "600", "theme": "customer-service"}
-{"word": "forward", "pos": "v", "level": "600", "theme": "operations"}
-{"word": "attach", "pos": "v", "level": "600", "theme": "operations"}
-{"word": "compromise", "pos": "v", "level": "700", "theme": "negotiation"}
-{"word": "concession", "pos": "n", "level": "700", "theme": "negotiation"}
-{"word": "counteroffer", "pos": "n", "level": "700", "theme": "negotiation"}
-{"word": "clause", "pos": "n", "level": "700", "theme": "legal"}
-{"word": "breach", "pos": "n", "level": "700", "theme": "legal"}
-{"word": "amend", "pos": "v", "level": "700", "theme": "legal"}
-{"word": "waiver", "pos": "n", "level": "700", "theme": "legal"}
-{"word": "indemnify", "pos": "v", "level": "700", "theme": "legal"}
-{"word": "audit", "pos": "n", "level": "700", "theme": "finance"}
-{"word": "forecast", "pos": "n", "level": "700", "theme": "finance"}
-{"word": "disburse", "pos": "v", "level": "700", "theme": "finance"}
-{"word": "reimburse", "pos": "v", "level": "700", "theme": "finance"}
-{"word": "solvent", "pos": "adj", "level": "700", "theme": "finance"}
-{"word": "amortize", "pos": "v", "level": "700", "theme": "finance"}
-{"word": "appraisal", "pos": "n", "level": "700", "theme": "finance"}
-{"word": "payable", "pos": "n", "level": "700", "theme": "finance"}
-{"word": "turnover", "pos": "n", "level": "700", "theme": "hr"}
-{"word": "incentive", "pos": "n", "level": "700", "theme": "hr"}
-{"word": "appraise", "pos": "v", "level": "700", "theme": "hr"}
-{"word": "severance", "pos": "n", "level": "700", "theme": "hr"}
-{"word": "onboarding", "pos": "n", "level": "700", "theme": "hr"}
-{"word": "logistics", "pos": "n", "level": "700", "theme": "logistics"}
-{"word": "procurement", "pos": "n", "level": "700", "theme": "logistics"}
-{"word": "dispatch", "pos": "v", "level": "700", "theme": "logistics"}
-{"word": "expediter", "pos": "n", "level": "700", "theme": "logistics"}
-{"word": "backorder", "pos": "n", "level": "700", "theme": "logistics"}
-{"word": "perishable", "pos": "adj", "level": "700", "theme": "logistics"}
-{"word": "demographic", "pos": "n", "level": "700", "theme": "marketing"}
-{"word": "retention", "pos": "n", "level": "700", "theme": "marketing"}
-{"word": "conversion", "pos": "n", "level": "700", "theme": "marketing"}
-{"word": "endorsement", "pos": "n", "level": "700", "theme": "marketing"}
-{"word": "downtime", "pos": "n", "level": "700", "theme": "operations"}
-{"word": "throughput", "pos": "n", "level": "700", "theme": "operations"}
-{"word": "utilization", "pos": "n", "level": "700", "theme": "operations"}
-{"word": "compliance", "pos": "n", "level": "700", "theme": "operations"}
-{"word": "escalate", "pos": "v", "level": "700", "theme": "operations"}
-{"word": "defect", "pos": "n", "level": "700", "theme": "manufacturing"}
-{"word": "calibrate", "pos": "v", "level": "700", "theme": "manufacturing"}
-{"word": "retrofit", "pos": "v", "level": "700", "theme": "manufacturing"}
-{"word": "grievance", "pos": "n", "level": "700", "theme": "customer-service"}
-{"word": "contingent", "pos": "adj", "level": "800", "theme": "legal"}
-{"word": "stipulate", "pos": "v", "level": "800", "theme": "legal"}
-{"word": "rescind", "pos": "v", "level": "800", "theme": "legal"}
-{"word": "arbitration", "pos": "n", "level": "800", "theme": "legal"}
-{"word": "preemptive", "pos": "adj", "level": "800", "theme": "negotiation"}
-{"word": "leverage", "pos": "v", "level": "800", "theme": "negotiation"}
-{"word": "divest", "pos": "v", "level": "800", "theme": "finance"}
-{"word": "liquidity", "pos": "n", "level": "800", "theme": "finance"}
-{"word": "accrue", "pos": "v", "level": "800", "theme": "finance"}
-{"word": "hedge", "pos": "v", "level": "800", "theme": "finance"}
-{"word": "fiduciary", "pos": "adj", "level": "800", "theme": "finance"}
-{"word": "encumbrance", "pos": "n", "level": "800", "theme": "finance"}
-{"word": "attrition", "pos": "n", "level": "800", "theme": "hr"}
-{"word": "redundancy", "pos": "n", "level": "800", "theme": "hr"}
-{"word": "synergy", "pos": "n", "level": "800", "theme": "operations"}
-{"word": "benchmark", "pos": "v", "level": "800", "theme": "operations"}
-{"word": "scalable", "pos": "adj", "level": "800", "theme": "operations"}
-{"word": "contingency", "pos": "n", "level": "800", "theme": "operations"}
-{"word": "provisional", "pos": "adj", "level": "800", "theme": "operations"}
-{"word": "ratify", "pos": "v", "level": "800", "theme": "governance"}
+{"word":"colleague","pos":"n","level":"600","theme":"hr"}
+{"word":"client","pos":"n","level":"600","theme":"customer-service"}
+{"word":"supplier","pos":"n","level":"600","theme":"logistics"}
+{"word":"shipment","pos":"n","level":"600","theme":"logistics"}
+{"word":"warehouse","pos":"n","level":"600","theme":"logistics"}
+{"word":"schedule","pos":"n","level":"600","theme":"meetings"}
+{"word":"appointment","pos":"n","level":"600","theme":"meetings"}
+{"word":"brochure","pos":"n","level":"600","theme":"marketing"}
+{"word":"discount","pos":"n","level":"600","theme":"marketing"}
+{"word":"promotion","pos":"n","level":"600","theme":"marketing"}
+{"word":"refund","pos":"n","level":"600","theme":"customer-service"}
+{"word":"payment","pos":"n","level":"600","theme":"finance"}
+{"word":"salary","pos":"n","level":"600","theme":"hr"}
+{"word":"benefits","pos":"n","level":"600","theme":"hr"}
+{"word":"résumé","pos":"n","level":"600","theme":"hr"}
+{"word":"interview","pos":"n","level":"600","theme":"hr"}
+{"word":"manager","pos":"n","level":"600","theme":"hr"}
+{"word":"department","pos":"n","level":"600","theme":"hr"}
+{"word":"headquarters","pos":"n","level":"600","theme":"operations"}
+{"word":"branch","pos":"n","level":"600","theme":"operations"}
+{"word":"manufacture","pos":"v","level":"600","theme":"manufacturing"}
+{"word":"assembly","pos":"n","level":"600","theme":"manufacturing"}
+{"word":"delivery","pos":"n","level":"600","theme":"logistics"}
+{"word":"freight","pos":"n","level":"600","theme":"logistics"}
+{"word":"postage","pos":"n","level":"600","theme":"logistics"}
+{"word":"cancel","pos":"v","level":"600","theme":"operations"}
+{"word":"reserve","pos":"v","level":"600","theme":"travel"}
+{"word":"attendee","pos":"n","level":"600","theme":"meetings"}
+{"word":"renovate","pos":"v","level":"600","theme":"operations"}
+{"word":"inspect","pos":"v","level":"600","theme":"manufacturing"}
+{"word":"submit","pos":"v","level":"600","theme":"operations"}
+{"word":"apply","pos":"v","level":"600","theme":"hr"}
+{"word":"hire","pos":"v","level":"600","theme":"hr"}
+{"word":"retire","pos":"v","level":"600","theme":"hr"}
+{"word":"promote","pos":"v","level":"600","theme":"hr"}
+{"word":"acknowledge","pos":"v","level":"600","theme":"customer-service"}
+{"word":"respond","pos":"v","level":"600","theme":"customer-service"}
+{"word":"handle","pos":"v","level":"600","theme":"customer-service"}
+{"word":"forward","pos":"v","level":"600","theme":"operations"}
+{"word":"attach","pos":"v","level":"600","theme":"operations"}
+{"word":"compromise","pos":"v","level":"700","theme":"negotiation"}
+{"word":"concession","pos":"n","level":"700","theme":"negotiation"}
+{"word":"counteroffer","pos":"n","level":"700","theme":"negotiation"}
+{"word":"clause","pos":"n","level":"700","theme":"legal"}
+{"word":"breach","pos":"n","level":"700","theme":"legal"}
+{"word":"amend","pos":"v","level":"700","theme":"legal"}
+{"word":"waiver","pos":"n","level":"700","theme":"legal"}
+{"word":"indemnify","pos":"v","level":"700","theme":"legal"}
+{"word":"audit","pos":"n","level":"700","theme":"finance"}
+{"word":"forecast","pos":"n","level":"700","theme":"finance"}
+{"word":"disburse","pos":"v","level":"700","theme":"finance"}
+{"word":"reimburse","pos":"v","level":"700","theme":"finance"}
+{"word":"solvent","pos":"adj","level":"700","theme":"finance"}
+{"word":"amortize","pos":"v","level":"700","theme":"finance"}
+{"word":"appraisal","pos":"n","level":"700","theme":"finance"}
+{"word":"payable","pos":"n","level":"700","theme":"finance"}
+{"word":"turnover","pos":"n","level":"700","theme":"hr"}
+{"word":"incentive","pos":"n","level":"700","theme":"hr"}
+{"word":"appraise","pos":"v","level":"700","theme":"hr"}
+{"word":"severance","pos":"n","level":"700","theme":"hr"}
+{"word":"onboarding","pos":"n","level":"700","theme":"hr"}
+{"word":"logistics","pos":"n","level":"700","theme":"logistics"}
+{"word":"procurement","pos":"n","level":"700","theme":"logistics"}
+{"word":"dispatch","pos":"v","level":"700","theme":"logistics"}
+{"word":"expediter","pos":"n","level":"700","theme":"logistics"}
+{"word":"backorder","pos":"n","level":"700","theme":"logistics"}
+{"word":"perishable","pos":"adj","level":"700","theme":"logistics"}
+{"word":"demographic","pos":"n","level":"700","theme":"marketing"}
+{"word":"retention","pos":"n","level":"700","theme":"marketing"}
+{"word":"conversion","pos":"n","level":"700","theme":"marketing"}
+{"word":"endorsement","pos":"n","level":"700","theme":"marketing"}
+{"word":"downtime","pos":"n","level":"700","theme":"operations"}
+{"word":"throughput","pos":"n","level":"700","theme":"operations"}
+{"word":"utilization","pos":"n","level":"700","theme":"operations"}
+{"word":"compliance","pos":"n","level":"700","theme":"operations"}
+{"word":"escalate","pos":"v","level":"700","theme":"operations"}
+{"word":"defect","pos":"n","level":"700","theme":"manufacturing"}
+{"word":"calibrate","pos":"v","level":"700","theme":"manufacturing"}
+{"word":"retrofit","pos":"v","level":"700","theme":"manufacturing"}
+{"word":"grievance","pos":"n","level":"700","theme":"customer-service"}
+{"word":"contingent","pos":"adj","level":"800","theme":"legal"}
+{"word":"stipulate","pos":"v","level":"800","theme":"legal"}
+{"word":"rescind","pos":"v","level":"800","theme":"legal"}
+{"word":"arbitration","pos":"n","level":"800","theme":"legal"}
+{"word":"preemptive","pos":"adj","level":"800","theme":"negotiation"}
+{"word":"leverage","pos":"v","level":"800","theme":"negotiation"}
+{"word":"divest","pos":"v","level":"800","theme":"finance"}
+{"word":"liquidity","pos":"n","level":"800","theme":"finance"}
+{"word":"accrue","pos":"v","level":"800","theme":"finance"}
+{"word":"hedge","pos":"v","level":"800","theme":"finance"}
+{"word":"fiduciary","pos":"adj","level":"800","theme":"finance"}
+{"word":"encumbrance","pos":"n","level":"800","theme":"finance"}
+{"word":"attrition","pos":"n","level":"800","theme":"hr"}
+{"word":"redundancy","pos":"n","level":"800","theme":"hr"}
+{"word":"synergy","pos":"n","level":"800","theme":"operations"}
+{"word":"benchmark","pos":"v","level":"800","theme":"operations"}
+{"word":"scalable","pos":"adj","level":"800","theme":"operations"}
+{"word":"contingency","pos":"n","level":"800","theme":"operations"}
+{"word":"provisional","pos":"adj","level":"800","theme":"operations"}
+{"word":"ratify","pos":"v","level":"800","theme":"governance"}
+{"word":"caveat","pos":"n","level":"800","theme":"legal"}
+{"word":"covenant","pos":"n","level":"800","theme":"legal"}
+{"word":"embargo","pos":"n","level":"800","theme":"legal"}
+{"word":"indemnification","pos":"n","level":"800","theme":"legal"}
+{"word":"injunction","pos":"n","level":"800","theme":"legal"}
+{"word":"moratorium","pos":"n","level":"800","theme":"legal"}
+{"word":"proviso","pos":"n","level":"800","theme":"legal"}
+{"word":"restitution","pos":"n","level":"800","theme":"legal"}
+{"word":"subpoena","pos":"n","level":"800","theme":"legal"}
+{"word":"attestation","pos":"n","level":"800","theme":"legal"}
+{"word":"binding","pos":"adj","level":"800","theme":"legal"}
+{"word":"enforceable","pos":"adj","level":"800","theme":"legal"}
+{"word":"lawful","pos":"adj","level":"800","theme":"legal"}
+{"word":"void","pos":"adj","level":"800","theme":"legal"}
+{"word":"antitrust","pos":"adj","level":"800","theme":"legal"}
+{"word":"notarize","pos":"v","level":"800","theme":"legal"}
+{"word":"adjudicate","pos":"v","level":"800","theme":"legal"}
+{"word":"arrears","pos":"n","level":"800","theme":"finance"}
+{"word":"depreciation","pos":"n","level":"800","theme":"finance"}
+{"word":"divestiture","pos":"n","level":"800","theme":"finance"}
+{"word":"escrow","pos":"n","level":"800","theme":"finance"}
+{"word":"forbearance","pos":"n","level":"800","theme":"finance"}
+{"word":"liquidation","pos":"n","level":"800","theme":"finance"}
+{"word":"redemption","pos":"n","level":"800","theme":"finance"}
+{"word":"remittance","pos":"n","level":"800","theme":"finance"}
+{"word":"surcharge","pos":"n","level":"800","theme":"finance"}
+{"word":"deferral","pos":"n","level":"800","theme":"finance"}
+{"word":"shortfall","pos":"n","level":"800","theme":"finance"}
+{"word":"insolvent","pos":"adj","level":"800","theme":"finance"}
+{"word":"fungible","pos":"adj","level":"800","theme":"finance"}
+{"word":"illiquid","pos":"adj","level":"800","theme":"finance"}
+{"word":"deflationary","pos":"adj","level":"800","theme":"finance"}
+{"word":"inflationary","pos":"adj","level":"800","theme":"finance"}
+{"word":"prudent","pos":"adj","level":"800","theme":"finance"}
+{"word":"capitalize","pos":"v","level":"800","theme":"finance"}
+{"word":"securitize","pos":"v","level":"800","theme":"finance"}
+{"word":"consortium","pos":"n","level":"800","theme":"business"}
+{"word":"downturn","pos":"n","level":"800","theme":"business"}
+{"word":"impasse","pos":"n","level":"800","theme":"negotiation"}
+{"word":"quorum","pos":"n","level":"800","theme":"meetings"}
+{"word":"reciprocity","pos":"n","level":"800","theme":"negotiation"}
+{"word":"consolidate","pos":"v","level":"800","theme":"business"}
+{"word":"restructure","pos":"v","level":"800","theme":"business"}
+{"word":"exemplify","pos":"v","level":"800","theme":"communication"}
+{"word":"articulate","pos":"v","level":"800","theme":"communication"}
+{"word":"cyclical","pos":"adj","level":"800","theme":"business"}
+{"word":"candid","pos":"adj","level":"800","theme":"communication"}
+{"word":"judicious","pos":"adj","level":"800","theme":"business"}
+{"word":"nuanced","pos":"adj","level":"800","theme":"communication"}
+{"word":"expedient","pos":"adj","level":"800","theme":"business"}
+{"word":"prevailing","pos":"adj","level":"700","theme":"business"}
+{"word":"ensuing","pos":"adj","level":"700","theme":"business"}
+{"word":"forthcoming","pos":"adj","level":"700","theme":"communication"}
+{"word":"customary","pos":"adj","level":"700","theme":"business"}
+{"word":"prevalent","pos":"adj","level":"700","theme":"business"}
+{"word":"fledgling","pos":"adj","level":"700","theme":"business"}
+{"word":"seasoned","pos":"adj","level":"700","theme":"hr"}
+{"word":"prospective","pos":"adj","level":"700","theme":"hr"}
+{"word":"stringent","pos":"adj","level":"700","theme":"legal"}
+{"word":"unanimous","pos":"adj","level":"700","theme":"meetings"}
+{"word":"exhaustive","pos":"adj","level":"700","theme":"operations"}
+{"word":"equitable","pos":"adj","level":"700","theme":"hr"}
+{"word":"apparent","pos":"adj","level":"700","theme":"communication"}
+{"word":"reluctant","pos":"adj","level":"700","theme":"negotiation"}
+{"word":"predominantly","pos":"adv","level":"700","theme":"business"}
+{"word":"periodically","pos":"adv","level":"700","theme":"scheduling"}
+{"word":"customarily","pos":"adv","level":"700","theme":"business"}
+{"word":"retrospectively","pos":"adv","level":"700","theme":"finance"}
+{"word":"overwhelmingly","pos":"adv","level":"700","theme":"communication"}
+{"word":"substantially","pos":"adv","level":"700","theme":"finance"}
+{"word":"presumably","pos":"adv","level":"700","theme":"communication"}
+{"word":"unanimously","pos":"adv","level":"700","theme":"meetings"}
+{"word":"proceeds","pos":"n","level":"700","theme":"finance"}
+{"word":"premises","pos":"n","level":"700","theme":"operations"}
+{"word":"loophole","pos":"n","level":"700","theme":"legal"}
+{"word":"workforce","pos":"n","level":"700","theme":"hr"}
+{"word":"undertake","pos":"v","level":"700","theme":"business"}
+{"word":"unveil","pos":"v","level":"700","theme":"marketing"}
+{"word":"mediate","pos":"v","level":"700","theme":"negotiation"}
+{"word":"endorse","pos":"v","level":"700","theme":"marketing"}
+{"word":"affordable","pos":"adj","level":"600","theme":"sales"}
+{"word":"reliable","pos":"adj","level":"600","theme":"operations"}
+{"word":"durable","pos":"adj","level":"600","theme":"manufacturing"}
+{"word":"suitable","pos":"adj","level":"600","theme":"hr"}
+{"word":"current","pos":"adj","level":"600","theme":"business"}
+{"word":"directly","pos":"adv","level":"600","theme":"communication"}
+{"word":"currently","pos":"adv","level":"600","theme":"business"}
+{"word":"effectively","pos":"adv","level":"600","theme":"operations"}
+{"word":"briefly","pos":"adv","level":"600","theme":"meetings"}
+{"word":"particularly","pos":"adv","level":"600","theme":"communication"}
+{"word":"frequently","pos":"adv","level":"600","theme":"scheduling"}
+{"word":"mainly","pos":"adv","level":"600","theme":"business"}
+{"word":"register","pos":"v","level":"600","theme":"office"}
+{"word":"replace","pos":"v","level":"600","theme":"operations"}
+{"word":"overtime","pos":"n","level":"600","theme":"hr"}
+{"word":"payroll","pos":"n","level":"600","theme":"hr"}
+{"word":"complaint","pos":"n","level":"600","theme":"customer-service"}
+{"word":"feedback","pos":"n","level":"600","theme":"communication"}
+{"word":"checkout","pos":"n","level":"600","theme":"hospitality"}
+{"word":"reservation","pos":"n","level":"600","theme":"travel"}
+{"word":"amenity","pos":"n","level":"700","theme":"hospitality"}
+{"word":"concierge","pos":"n","level":"700","theme":"hospitality"}
+{"word":"lessee","pos":"n","level":"800","theme":"legal"}
+{"word":"lessor","pos":"n","level":"800","theme":"legal"}
