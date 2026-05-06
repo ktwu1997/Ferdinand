@@ -162,6 +162,31 @@
         flex-direction: column;
         gap: var(--space-8);
     }
+    /* Bar charts have N fixed-fr columns set inline; their intrinsic content
+       still forces a min width. Children declare min-width: 0 so the columns
+       can shrink below content size, and on phones the chart cards clip
+       horizontally and scroll internally rather than pushing the page wide. */
+    .bars > * {
+        min-width: 0;
+    }
+    @media (max-width: 640px) {
+        .page {
+            padding: var(--space-5) var(--space-3) var(--space-8);
+            gap: var(--space-5);
+            min-width: 0;
+        }
+        .charts-grid {
+            grid-template-columns: 1fr;
+            min-width: 0;
+        }
+        .charts-grid > :global(*) {
+            min-width: 0;
+            overflow-x: auto;
+        }
+        .bars {
+            height: 140px;
+        }
+    }
 
     header {
         display: flex;

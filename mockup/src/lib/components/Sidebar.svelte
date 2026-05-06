@@ -107,8 +107,10 @@
 
 <style>
     aside {
+        grid-area: sidebar;
         width: var(--sidebar-w);
         min-height: 100vh;
+        min-height: 100dvh;
         padding: var(--space-5) var(--space-4) var(--space-4);
         border-right: 1px solid var(--border);
         background: var(--bg-subtle);
@@ -118,6 +120,13 @@
         position: sticky;
         top: 0;
         flex-shrink: 0;
+    }
+
+    /* Phone: hide sidebar entirely; BottomNav + MobileTopBar take over. */
+    @media (max-width: 640px) {
+        aside {
+            display: none;
+        }
     }
 
     .brand {

@@ -13,6 +13,16 @@ body {
     height: 100%;
 }
 
+/* Use the dynamic viewport unit on supporting browsers so that
+   iOS Safari's collapsing URL bar doesn't leave routes like /study
+   visually clipped. Falls back to 100vh on older engines. */
+@supports (height: 100dvh) {
+    html,
+    body {
+        height: 100dvh;
+    }
+}
+
 html {
     font-family: var(--font-sans);
     font-size: 16px;
@@ -28,7 +38,30 @@ html {
 
 body {
     min-height: 100vh;
+    min-height: 100dvh;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01";
+    /* Block iOS double-tap zoom on tap targets and keep tap highlight invisible
+       so designed :active states aren't masked by Safari's default flash. */
+    -webkit-tap-highlight-color: transparent;
+}
+
+button,
+a {
+    touch-action: manipulation;
+}
+
+/* Inputs at 16px on iOS prevents the page from auto-zooming on focus. */
+input,
+textarea,
+select {
+    font-size: 16px;
+}
+@media (min-width: 641px) {
+    input,
+    textarea,
+    select {
+        font-size: inherit;
+    }
 }
 
 a {

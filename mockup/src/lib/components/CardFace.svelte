@@ -37,6 +37,19 @@
             `<base href="${mediaBase()}">` +
             `<style>${css}</style>` +
             `<div class="card">${cleanHtml}</div>`;
+
+        // Append a safety stylesheet AFTER the user CSS so viewport defaults
+        // override author rules that would otherwise overflow on phones.
+        // Tests assert a single user-authored style block via
+        // querySelector("style"), so this is added via DOM API, not innerHTML.
+        const safety = document.createElement("style");
+        safety.dataset.role = "card-face-safety";
+        safety.textContent =
+            ":host{display:block;}" +
+            "img,video,audio,table{max-width:100%;height:auto;}" +
+            "pre{white-space:pre-wrap;word-break:break-word;}" +
+            ".card{box-sizing:border-box;max-width:100%;}";
+        shadow.appendChild(safety);
     });
 </script>
 

@@ -9,7 +9,7 @@ mod seed_notetypes;
 mod state;
 mod static_assets;
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use anyhow::Context;
 use axum::Router;
@@ -69,6 +69,15 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(40001);
+    // Default to loopback so a stock dev run is never reachable from LAN.
+    // Set `ANKI_BIND=0.0.0.0` (or a specific interface IP) to expose to LAN
+    // for iPhone testing on the same WiFi.
+    let bind: IpAddr = match std::env::var("ANKI_BIND").ok().as_deref() {
+        Some(s) if !s.is_empty() => s
+            .parse()
+            .with_context(|| format!("ANKI_BIND='{s}' is not a valid IP address"))?,
+        _ => IpAddr::V4(Ipv4Addr::LOCALHOST),
+    };
 
     let state = AppState::open(&collection_path)
         .with_context(|| format!("failed to open collection at {collection_path}"))?;
@@ -84,8 +93,13 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         .layer(CorsLayer::very_permissive())
         .with_state(state);
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let addr = SocketAddr::new(bind, port);
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .with_context(|| format!("failed to bind {addr}"))?;
+    if !bind.is_loopback() {
+        tracing::warn!(%addr, "anki_server bound to non-loopback — LAN-reachable, no auth");
+    }
     tracing::info!(%addr, "anki_server listening on {addr}");
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())

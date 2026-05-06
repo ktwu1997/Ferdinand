@@ -3222,4 +3222,53 @@
         background: rgba(192, 57, 43, 0.08);
         border-radius: var(--radius-sm);
     }
+
+    /* === Tablet (641-1024px): collapse the right-hand editor panel ===
+       The 3-col grid (tree 220px | list | editor 360px) is too cramped under
+       1024px once a sidebar (or rail) eats more horizontal space. Drop the
+       editor on tablet — selecting a row still works, the editor is reachable
+       via dedicated route patterns later. */
+    @media (max-width: 1024px) {
+        .browse {
+            grid-template-columns: 220px minmax(0, 1fr);
+        }
+        .editor {
+            display: none;
+        }
+    }
+
+    /* === Phone (≤640px): stack to a single scrollable list ===
+       Hide tree + editor side panels entirely. Toolbar wraps. Bulk actions
+       still work; filtering by deck/tag falls back to the Today page entry
+       points which already route into /study/<deckId>. The editor is too
+       dense to be useful on a 320-414px viewport, and the tree's 200+ items
+       crowd out the list — phone Browse focuses on the read scroll. */
+    @media (max-width: 640px) {
+        .browse {
+            grid-template-columns: 1fr;
+            height: auto;
+            min-height: calc(100dvh - var(--bottom-nav-h) - var(--topbar-h));
+            overflow: visible;
+        }
+        .tree,
+        .editor {
+            display: none;
+        }
+        .list {
+            padding: var(--space-3) var(--space-3);
+        }
+        .toolbar {
+            flex-wrap: wrap;
+            gap: var(--space-2);
+            padding: var(--space-3) var(--space-3);
+        }
+        .filters {
+            flex-wrap: wrap;
+            gap: var(--space-2);
+            row-gap: var(--space-2);
+        }
+        .bulk-toolbar {
+            flex-wrap: wrap;
+        }
+    }
 </style>

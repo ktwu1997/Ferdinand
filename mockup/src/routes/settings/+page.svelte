@@ -1634,6 +1634,29 @@
         margin: 0 auto;
         padding: var(--space-10) var(--space-8) var(--space-16);
     }
+    @media (max-width: 1024px) {
+        .wrap {
+            grid-template-columns: 1fr;
+            gap: var(--space-6);
+            min-width: 0;
+        }
+        .settings-nav {
+            position: static;
+            flex-direction: row;
+            flex-wrap: wrap;
+            gap: var(--space-2);
+            align-self: stretch;
+        }
+        .content {
+            min-width: 0;
+            overflow-x: hidden;
+        }
+    }
+    @media (max-width: 640px) {
+        .wrap {
+            padding: var(--space-5) var(--space-3) var(--space-8);
+        }
+    }
 
     .settings-nav {
         display: flex;

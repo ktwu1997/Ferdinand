@@ -427,9 +427,13 @@
 <style>
     .stage {
         min-height: 100vh;
+        min-height: 100dvh;
         display: flex;
         flex-direction: column;
         background: var(--bg);
+        padding-top: var(--safe-top);
+        padding-bottom: var(--safe-bottom);
+        overscroll-behavior-y: none;
     }
 
     header {
@@ -438,6 +442,12 @@
         align-items: center;
         padding: var(--space-5) var(--space-8);
         gap: var(--space-4);
+    }
+    @media (max-width: 640px) {
+        header {
+            padding: var(--space-3) var(--space-4);
+            gap: var(--space-2);
+        }
     }
     .back {
         display: inline-flex;
@@ -597,6 +607,11 @@
         display: flex;
         justify-content: center;
     }
+    @media (max-width: 640px) {
+        footer {
+            padding: var(--space-4) var(--space-3) max(var(--space-6), var(--safe-bottom));
+        }
+    }
 
     .reveal {
         display: flex;
@@ -608,6 +623,7 @@
         align-items: center;
         gap: var(--space-3);
         padding: 0.85rem 1.5rem;
+        min-height: var(--touch-min);
         font-size: var(--text-base);
         font-weight: 500;
         color: var(--text);
@@ -615,6 +631,13 @@
         border: 1px solid var(--border);
         border-radius: var(--radius-md);
         transition: border-color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease);
+    }
+    @media (max-width: 640px) {
+        .reveal-btn {
+            width: 100%;
+            justify-content: center;
+            padding: 1rem 1.25rem;
+        }
     }
     .reveal-btn:hover {
         border-color: var(--accent);
@@ -633,6 +656,7 @@
         grid-template-rows: auto auto;
         gap: 2px;
         padding: var(--space-4) var(--space-3);
+        min-height: var(--touch-min);
         border: 1px solid var(--border);
         border-radius: var(--radius-md);
         background: var(--bg-elevated);
@@ -641,6 +665,33 @@
         transition: border-color var(--duration-fast) var(--ease),
             background var(--duration-fast) var(--ease),
             transform var(--duration-fast) var(--ease);
+    }
+    @media (max-width: 640px) {
+        .answers {
+            gap: var(--space-2);
+        }
+        .ans {
+            min-height: 56px;
+            padding: var(--space-3) var(--space-2);
+        }
+        .ans-label {
+            font-size: 0.95rem;
+        }
+        .ans-hint {
+            font-size: 0.65rem;
+        }
+    }
+    /* Touch (no hover) — hide keyboard hints, swap hover states for :active. */
+    @media (hover: none) {
+        .ans-key {
+            display: none;
+        }
+        .ans:hover {
+            transform: none;
+        }
+        .ans:active {
+            background: var(--bg-hover);
+        }
     }
     .ans:hover {
         transform: translateY(-1px);

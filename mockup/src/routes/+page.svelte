@@ -519,6 +519,12 @@
         flex-direction: column;
         gap: var(--space-8);
     }
+    @media (max-width: 640px) {
+        .page {
+            padding: var(--space-6) var(--space-4) var(--space-8);
+            gap: var(--space-6);
+        }
+    }
 
     header {
         display: flex;
