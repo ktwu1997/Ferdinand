@@ -13,9 +13,8 @@ Pipeline per pending note:
   5. POST /media multipart upload → {filename, size_bytes}.
   6. PATCH /api/notes/{nid} with fields[8] swapped to that filename.
 
-Differences from gen_card_images.py:
-  • Codex CLI ($imagegen / gpt-image-2) replaces Pexels+gemini-2.5-flash queries.
-  • Costs subscription quota (ChatGPT Plus/Pro), NOT API dollars.
+Notes:
+  • Costs ChatGPT subscription quota (Plus/Pro), NOT API dollars.
   • Default --workers 1, --rate-sleep 20: image gen burns quota ~3-5x faster
     than text — pacing matters more than throughput.
   • Detects 'usage limit reached' in codex stderr/stdout → fail fast (no
