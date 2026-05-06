@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Backfill Studio-Ghibli-styled images on Concept-Deep TOEIC notes via codex CLI.
+"""Backfill Studio-Ghibli-styled images via codex CLI, profile-aware.
 
 Pipeline per pending note:
   1. gemini-3-pro-preview classifies the word and proposes a Ghibli-friendly
@@ -51,15 +51,9 @@ from pathlib import Path
 
 from PIL import Image
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-TOEIC_DIR = REPO_ROOT / "data" / "toeic"
-DONE_TXT = TOEIC_DIR / "image_done.txt"
-SKIP_TXT = TOEIC_DIR / "image_skip.txt"
-FAIL_JSONL = TOEIC_DIR / "image_fail.jsonl"
-MAP_JSON = TOEIC_DIR / "concept_image_map.json"
+from _profile import DeckProfile, default_toeic_profile, load_profile
 
-CONCEPT_DEEP_MID = 1777795790794
-IMAGE_FIELD_IDX = 8
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 DEFAULT_BASE = "http://127.0.0.1:40001"
 GEMINI_MODEL_DEFAULT = "gemini-3-pro-preview"
@@ -76,7 +70,7 @@ JSON_OBJECT_RE = re.compile(r"\{[^{}]*\}", re.DOTALL)
 
 
 CLASSIFY_PROMPT = """\
-You are designing illustrations for TOEIC vocabulary cards in the
+You are designing illustrations for vocabulary cards in the
 hand-painted Studio Ghibli style — soft cinematic lighting, warm
 painterly textures, characters with rounded Miyazaki-style faces, no
 text or signage of any kind.
@@ -96,9 +90,9 @@ the word's meaning. Return TWO short fields:
     boardroom mid-meeting" / "a logistics warehouse at golden hour" /
     "a quiet courthouse hallway with two clerks comparing documents")
   • anchor – the SINGLE specific visual element that distinguishes
-    THIS word from its closest TOEIC confusable (e.g. for `quorum`:
-    "exactly five empty chairs at the far end with leather portfolios
-    untouched" — the empty seats are the semantic core; for
+    THIS word from its closest semantically-near confusable (e.g. for
+    `quorum`: "exactly five empty chairs at the far end with leather
+    portfolios untouched" — the empty seats are the semantic core; for
     `indemnification`: "a hand sliding forward a sealed envelope while
     a damaged shipping crate sits at the table edge")
 
@@ -162,8 +156,16 @@ def load_tracker(path: Path) -> set[int]:
     return {int(ln) for ln in path.read_text().splitlines() if ln.strip().isdigit()}
 
 
+def resolve_notetype_id(base: str, name: str) -> int:
+    data = http_get_json(f"{base}/api/notetypes")
+    for nt in data.get("notetypes", []):
+        if nt["name"] == name:
+            return nt["id"]
+    raise RuntimeError(f"notetype {name!r} not found on server {base}")
+
+
 # ---------------------------------------------------------------------------
-# Note enumeration (mirrors gen_card_images.py — uses same cache)
+# Note enumeration — profile-aware (cache + image-field index from profile)
 # ---------------------------------------------------------------------------
 
 
@@ -176,10 +178,14 @@ class PendingCard:
     tags: tuple[str, ...]
 
 
-def enumerate_pending(base: str, refresh_cache: bool) -> list[PendingCard]:
+def enumerate_pending(
+    base: str, profile: DeckProfile, refresh_cache: bool
+) -> list[PendingCard]:
+    notetype_id = resolve_notetype_id(base, profile.notetype)
+
     cached: dict[str, dict] = {}
-    if MAP_JSON.exists() and not refresh_cache:
-        cached = json.loads(MAP_JSON.read_text())
+    if profile.image_map.exists() and not refresh_cache:
+        cached = json.loads(profile.image_map.read_text())
 
     # /api/cards caps limit at 500; paginate via offset until exhausted.
     nids: set[int] = set()
@@ -187,7 +193,7 @@ def enumerate_pending(base: str, refresh_cache: bool) -> list[PendingCard]:
     page_size = 500
     while True:
         resp = http_get_json(
-            f"{base}/api/cards?q=mid:{CONCEPT_DEEP_MID}"
+            f"{base}/api/cards?q=mid:{notetype_id}"
             f"&limit={page_size}&offset={offset}"
         )
         page = resp.get("cards", [])
@@ -212,11 +218,13 @@ def enumerate_pending(base: str, refresh_cache: bool) -> list[PendingCard]:
             }
         fresh[str(nid)] = meta
 
-    MAP_JSON.write_text(json.dumps(fresh, ensure_ascii=False, indent=2))
+    profile.image_map.parent.mkdir(parents=True, exist_ok=True)
+    profile.image_map.write_text(json.dumps(fresh, ensure_ascii=False, indent=2))
 
+    idx = profile.image_field_idx
     pending: list[PendingCard] = []
     for nid_str, meta in fresh.items():
-        if not (meta["fields"][IMAGE_FIELD_IDX] or "").strip():
+        if not (meta["fields"][idx] or "").strip():
             pending.append(
                 PendingCard(
                     nid=int(nid_str),
@@ -339,9 +347,9 @@ def png_to_jpeg(png_path: Path, max_width: int = 800) -> bytes:
     return buf.getvalue()
 
 
-def build_filename(front: str) -> str:
+def build_filename(front: str, prefix: str) -> str:
     slug = SAFE_NAME_RE.sub("_", front.lower()).strip("_") or "card"
-    return f"concept_{slug}.jpg"
+    return f"{prefix}_{slug}.jpg"
 
 
 def upload_media(base: str, filename: str, jpeg_bytes: bytes) -> dict:
@@ -365,10 +373,15 @@ def upload_media(base: str, filename: str, jpeg_bytes: bytes) -> dict:
 
 
 def patch_image_field(
-    base: str, nid: int, fields: tuple[str, ...], tags: tuple[str, ...], filename: str
+    base: str,
+    nid: int,
+    fields: tuple[str, ...],
+    tags: tuple[str, ...],
+    filename: str,
+    image_field_idx: int,
 ) -> dict:
     new_fields = list(fields)
-    new_fields[IMAGE_FIELD_IDX] = filename
+    new_fields[image_field_idx] = filename
     return http_patch_json(
         f"{base}/api/notes/{nid}",
         {"fields": new_fields, "tags": list(tags)},
@@ -385,6 +398,7 @@ def process_one(
     base: str,
     model: str,
     work_dir: Path,
+    profile: DeckProfile,
     write_lock: threading.Lock,
     file_handles: dict,
 ) -> tuple[str, int, str]:
@@ -404,14 +418,16 @@ def process_one(
             raise RuntimeError("concrete verdict missing scene/anchor")
 
         slug = SAFE_NAME_RE.sub("_", front.lower()).strip("_") or "card"
-        png_target = work_dir / f"concept_{slug}.png"
+        png_target = work_dir / f"{profile.image_filename_prefix}_{slug}.png"
         png_path = codex_image_gen(scene, anchor, png_target)
 
         jpeg = png_to_jpeg(png_path)
-        filename = build_filename(front)
+        filename = build_filename(front, profile.image_filename_prefix)
         upload = upload_media(base, filename, jpeg)
         stored = upload["filename"]
-        patch_image_field(base, nid, card.fields, card.tags, stored)
+        patch_image_field(
+            base, nid, card.fields, card.tags, stored, profile.image_field_idx
+        )
 
         with write_lock:
             file_handles["done"].write(f"{nid}\n")
@@ -445,6 +461,9 @@ def process_one(
 
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--profile", default=None,
+                    help="deck profile name or path (decks/<name>.json); "
+                         "default = legacy TOEIC profile (data/toeic, Concept-Deep)")
     ap.add_argument("--base", default=DEFAULT_BASE)
     ap.add_argument("--model", default=GEMINI_MODEL_DEFAULT)
     ap.add_argument("--limit", type=int, default=None,
@@ -454,7 +473,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--rate-sleep", type=float, default=20.0,
                     help="seconds to sleep between codex submissions (serial mode)")
     ap.add_argument("--refresh-cache", action="store_true",
-                    help="rescan collection instead of trusting concept_image_map.json")
+                    help="rescan collection instead of trusting <data_dir>/image_map.json")
     ap.add_argument("--work-dir", default="/tmp/codex_imagegen",
                     help="staging dir for codex PNG outputs before resize")
     ap.add_argument("--only", default=None,
@@ -464,19 +483,21 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    profile = load_profile(args.profile) if args.profile else default_toeic_profile()
     work_dir = Path(args.work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
-    TOEIC_DIR.mkdir(parents=True, exist_ok=True)
+    profile.data_dir.mkdir(parents=True, exist_ok=True)
 
     print(
-        f"[init] base={args.base} model={args.model} workers={args.workers} "
+        f"[init] profile={profile.name} notetype={profile.notetype} "
+        f"base={args.base} model={args.model} workers={args.workers} "
         f"rate-sleep={args.rate_sleep}s",
         flush=True,
     )
 
-    pending = enumerate_pending(args.base, refresh_cache=args.refresh_cache)
-    done = load_tracker(DONE_TXT)
-    skip = load_tracker(SKIP_TXT)
+    pending = enumerate_pending(args.base, profile, refresh_cache=args.refresh_cache)
+    done = load_tracker(profile.image_done)
+    skip = load_tracker(profile.image_skip)
     pending = [c for c in pending if c.nid not in done and c.nid not in skip]
     print(f"[init] {len(pending)} pending  (done={len(done)} skip={len(skip)})", flush=True)
 
@@ -496,9 +517,9 @@ def main() -> int:
     ok = sk = fl = 0
     quota_hit = False
 
-    with DONE_TXT.open("a", encoding="utf-8") as fdone, \
-         SKIP_TXT.open("a", encoding="utf-8") as fskip, \
-         FAIL_JSONL.open("a", encoding="utf-8") as ffail:
+    with profile.image_done.open("a", encoding="utf-8") as fdone, \
+         profile.image_skip.open("a", encoding="utf-8") as fskip, \
+         profile.image_fail.open("a", encoding="utf-8") as ffail:
         handles = {"done": fdone, "skip": fskip, "fail": ffail}
 
         if args.workers <= 1:
@@ -507,7 +528,7 @@ def main() -> int:
                     time.sleep(args.rate_sleep)
                 try:
                     status, nid, detail = process_one(
-                        card, args.base, args.model, work_dir, write_lock, handles
+                        card, args.base, args.model, work_dir, profile, write_lock, handles
                     )
                 except QuotaExhausted as exc:
                     print(f"\n[QUOTA] {exc} — bailing on remaining {len(pending) - i} cards", flush=True)
@@ -524,7 +545,7 @@ def main() -> int:
         else:
             with ThreadPoolExecutor(max_workers=args.workers) as pool:
                 futures = {
-                    pool.submit(process_one, c, args.base, args.model, work_dir, write_lock, handles): c
+                    pool.submit(process_one, c, args.base, args.model, work_dir, profile, write_lock, handles): c
                     for c in pending
                 }
                 for fut in as_completed(futures):
