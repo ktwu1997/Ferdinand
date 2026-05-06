@@ -1,21 +1,26 @@
 #!/usr/bin/env python3
-"""Validate generated TOEIC cards against schema + heuristic quality rules.
+"""Validate generated vocabulary cards against schema + heuristic quality rules.
 
-Phase D of the TOEIC card workflow. Reads data/toeic/cards.jsonl, runs
+Phase D of the per-deck card workflow. Reads <data_dir>/cards.jsonl, runs
 each card through a chain of checks, writes a report to stdout and a
-machine-readable rejected-cards file to data/toeic/cards.invalid.jsonl.
+machine-readable rejected-cards file to <data_dir>/cards.invalid.jsonl.
 
 Checks fall into two tiers:
 - HARD (must pass): schema completeness, field non-emptiness, Front match,
-  Example contains target word, Back lacks target word, Source format,
-  ReverseEnabled value.
+  Example contains target word, Back lacks target word, Source format
+  (regex from deck profile), ReverseEnabled value.
 - SOFT (warning, doesn't reject): Why length, Example word count,
   Mnemonic vividness heuristic, Contrast English-word presence.
 
+Profile-driven: pass `--profile decks/<name>.json` to validate against a
+different deck. Without the flag, defaults to the historical TOEIC vocab
+paths + Source regex.
+
 Usage:
-    ./scripts/validate_cards.py                    # validate cards.jsonl
-    ./scripts/validate_cards.py --verbose          # show every card result
-    ./scripts/validate_cards.py --strict           # treat soft warnings as failures
+    ./scripts/validate_cards.py                          # TOEIC default
+    ./scripts/validate_cards.py --profile sesame         # Sesame Street
+    ./scripts/validate_cards.py --verbose                # per-card output
+    ./scripts/validate_cards.py --strict                 # soft warns → fail
 """
 from __future__ import annotations
 
@@ -25,10 +30,8 @@ import re
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-CARDS_IN = REPO_ROOT / "data" / "toeic" / "cards.jsonl"
-WORDLIST = REPO_ROOT / "data" / "toeic" / "wordlist.jsonl"
-INVALID_OUT = REPO_ROOT / "data" / "toeic" / "cards.invalid.jsonl"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _profile import DeckProfile, default_toeic_profile, load_profile  # noqa: E402
 
 REQUIRED_FIELDS = (
     "Front", "Back", "Why", "Example",
@@ -41,7 +44,6 @@ MNEMONIC_MIN_CHARS = 25
 
 ENGLISH_WORD_RE = re.compile(r"\b[A-Za-z]{2,}\b")
 POS_TAG_RE = re.compile(r"\((v|n|adj|adv)\.\)")
-SOURCE_RE = re.compile(r"^TOEIC vocabulary level \d+ — \w[\w-]*$")
 # Mnemonic vividness — at least one cue indicating concrete imagery, scene,
 # wordplay, or morpheme breakdown. Not perfect but catches the worst offenders
 # (pure abstract restatement).
@@ -51,10 +53,10 @@ VIVIDNESS_CUES = (
 )
 
 
-def load_wordlist_index() -> dict[str, dict]:
-    if not WORDLIST.exists():
+def load_wordlist_index(path: Path) -> dict[str, dict]:
+    if not path.exists():
         return {}
-    with WORDLIST.open(encoding="utf-8") as fh:
+    with path.open(encoding="utf-8") as fh:
         return {json.loads(l)["word"]: json.loads(l) for l in fh if l.strip()}
 
 
@@ -66,7 +68,7 @@ def english_words_excluding(text: str, exclude: str) -> list[str]:
     return [w for w in ENGLISH_WORD_RE.findall(text) if w.lower() != exclude.lower()]
 
 
-def hard_checks(card: dict, expected_word: str | None) -> list[str]:
+def hard_checks(card: dict, expected_word: str | None, source_regex: re.Pattern[str]) -> list[str]:
     errors: list[str] = []
     for field in REQUIRED_FIELDS:
         if field not in card:
@@ -83,7 +85,7 @@ def hard_checks(card: dict, expected_word: str | None) -> list[str]:
         errors.append(f"Example missing target word {expected_word!r}")
     if front.lower() in card["Back"].lower():
         errors.append(f"Back contains the English word {front!r}")
-    if not SOURCE_RE.match(card["Source"]):
+    if not source_regex.match(card["Source"]):
         errors.append(f"Source format invalid: {card['Source']!r}")
     if card["ReverseEnabled"] != "1":
         errors.append(f"ReverseEnabled must be \"1\", got {card['ReverseEnabled']!r}")
@@ -116,6 +118,9 @@ def soft_checks(card: dict) -> list[str]:
 
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--profile", default=None,
+                    help="path or shorthand for deck profile (e.g. 'sesame' → decks/sesame.json). "
+                         "Default = legacy TOEIC vocab paths + Source regex.")
     ap.add_argument("--verbose", action="store_true", help="print result for every card")
     ap.add_argument("--strict", action="store_true", help="treat soft warnings as failures")
     return ap.parse_args()
@@ -123,17 +128,20 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    if not CARDS_IN.exists():
-        sys.exit(f"cards file missing: {CARDS_IN}")
+    profile = load_profile(args.profile) if args.profile else default_toeic_profile()
+    print(f"[validate] profile={profile.name} cards={profile.cards.relative_to(profile.cards.parents[1])}")
 
-    wordlist = load_wordlist_index()
+    if not profile.cards.exists():
+        sys.exit(f"cards file missing: {profile.cards}")
+
+    wordlist = load_wordlist_index(profile.wordlist)
     cards = []
-    with CARDS_IN.open(encoding="utf-8") as fh:
+    with profile.cards.open(encoding="utf-8") as fh:
         for line in fh:
             if line.strip():
                 cards.append(json.loads(line))
 
-    print(f"[validate] {len(cards)} cards from {CARDS_IN.name}")
+    print(f"[validate] {len(cards)} cards from {profile.cards.name}")
     print(f"[validate] {len(wordlist)} words in wordlist for cross-reference")
     print()
 
@@ -147,7 +155,7 @@ def main() -> int:
         wordlist_entry = wordlist.get(front)
         expected_word = wordlist_entry["word"] if wordlist_entry else None
 
-        hard_errs = hard_checks(card, expected_word)
+        hard_errs = hard_checks(card, expected_word, profile.source_regex)
         soft_warns = soft_checks(card)
 
         is_failure = bool(hard_errs) or (args.strict and soft_warns)
@@ -192,11 +200,11 @@ def main() -> int:
             print(f"  {v:4}  {k}")
 
     if rejected:
-        INVALID_OUT.parent.mkdir(parents=True, exist_ok=True)
-        with INVALID_OUT.open("w", encoding="utf-8") as fh:
+        profile.invalid.parent.mkdir(parents=True, exist_ok=True)
+        with profile.invalid.open("w", encoding="utf-8") as fh:
             for r in rejected:
                 fh.write(json.dumps(r, ensure_ascii=False) + "\n")
-        print(f"\n[validate] rejected cards written to {INVALID_OUT}")
+        print(f"\n[validate] rejected cards written to {profile.invalid}")
 
     return 0 if not rejected else 1
 

@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
-"""Ingest TOEIC cards.jsonl into the running anki_server collection.
+"""Ingest cards.jsonl into the running anki_server collection.
 
-Phase E of the TOEIC card workflow. Posts each card to POST /api/notes
-using the Concept-Deep notetype. Idempotent via ingested.txt.
+Phase E of the per-deck card workflow. Posts each card to POST /api/notes
+using the Concept-Deep notetype. Idempotent via <data_dir>/ingested.txt.
+
+Profile-driven: pass `--profile decks/<name>.json` to target a different
+deck. Without the flag, defaults to the historical TOEIC vocab paths +
+the TOEIC::Vocabulary::L{level} deck template.
 
 Usage:
-    ./scripts/ingest_toeic_cards.py                       # all pending
-    ./scripts/ingest_toeic_cards.py --only abandon        # one word
-    ./scripts/ingest_toeic_cards.py --base http://...     # custom host
-    ./scripts/ingest_toeic_cards.py --deck "My Deck"      # custom deck
+    ./scripts/ingest_toeic_cards.py                                 # TOEIC default
+    ./scripts/ingest_toeic_cards.py --profile sesame                # Sesame Street
+    ./scripts/ingest_toeic_cards.py --profile sesame --only immense # one word
+    ./scripts/ingest_toeic_cards.py --base http://...               # custom host
+    ./scripts/ingest_toeic_cards.py --deck "My Deck"                # CLI override
 """
 from __future__ import annotations
 
@@ -18,22 +23,15 @@ import sys
 import urllib.request
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-CARDS_IN = REPO_ROOT / "data" / "toeic" / "cards.jsonl"
-INGESTED_TXT = REPO_ROOT / "data" / "toeic" / "ingested.txt"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _profile import DeckProfile, default_toeic_profile, load_profile  # noqa: E402
 
-CONCEPT_DEEP = "Concept-Deep"
 FIELD_ORDER = (
     "Front", "Back", "Why", "Example",
     "Contrast", "Mnemonic", "Source", "ReverseEnabled",
     "Image",
 )
 DEFAULT_BASE = "http://127.0.0.1:40001"
-DEFAULT_DECK = "Ferdinand demo"
-# Deck-template supports {level}, {pos}, {theme} placeholders pulled from
-# the card's _meta block. Parent decks are auto-created via POST /api/decks
-# (Anki creates intermediate parents in the same call).
-DEFAULT_DECK_TEMPLATE = None
 
 
 def http_get_json(url: str) -> dict:
@@ -50,12 +48,12 @@ def http_post_json(url: str, payload: dict) -> dict:
         return json.loads(r.read())
 
 
-def resolve_notetype_id(base: str) -> int:
+def resolve_notetype_id(base: str, notetype_name: str) -> int:
     data = http_get_json(f"{base}/api/notetypes")
     for nt in data.get("notetypes", []):
-        if nt["name"] == CONCEPT_DEEP:
+        if nt["name"] == notetype_name:
             return nt["id"]
-    sys.exit(f"notetype {CONCEPT_DEEP!r} not found — start the server with seeding enabled")
+    sys.exit(f"notetype {notetype_name!r} not found — start the server with seeding enabled")
 
 
 def resolve_deck_id(base: str, deck_name: str, auto_create: bool = False) -> int:
@@ -91,19 +89,19 @@ def resolve_deck_id(base: str, deck_name: str, auto_create: bool = False) -> int
     return resp["id"]
 
 
-def load_cards() -> list[dict]:
-    with CARDS_IN.open() as fh:
+def load_cards(path: Path) -> list[dict]:
+    with path.open() as fh:
         return [json.loads(line) for line in fh if line.strip()]
 
 
-def load_ingested() -> set[str]:
-    if not INGESTED_TXT.exists():
+def load_ingested(path: Path) -> set[str]:
+    if not path.exists():
         return set()
-    return {ln.strip() for ln in INGESTED_TXT.read_text().splitlines() if ln.strip()}
+    return {ln.strip() for ln in path.read_text().splitlines() if ln.strip()}
 
 
-def build_tags(card: dict) -> list[str]:
-    tags = ["toeic"]
+def build_tags(profile: DeckProfile, card: dict) -> list[str]:
+    tags = [profile.name]
     meta = card.get("_meta", {})
     if level := meta.get("level"):
         tags.append(f"level-{level}")
@@ -116,33 +114,45 @@ def build_tags(card: dict) -> list[str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--profile", default=None,
+                    help="path or shorthand for deck profile (e.g. 'sesame' → decks/sesame.json). "
+                         "Default = legacy TOEIC vocab paths + TOEIC::Vocabulary::L{level}.")
     ap.add_argument("--base", default=DEFAULT_BASE)
-    ap.add_argument("--deck", default=DEFAULT_DECK,
-                    help="single-deck mode (default). Ignored if --deck-template set.")
-    ap.add_argument("--deck-template", default=DEFAULT_DECK_TEMPLATE,
-                    help="route each card to a deck via Python format-string of _meta keys, "
-                         "e.g. 'TOEIC::Vocabulary::L{level}'. Implies --auto-create.")
+    ap.add_argument("--deck", default=None,
+                    help="override single-deck name (otherwise from profile). Ignored if profile uses deck_template.")
+    ap.add_argument("--deck-template", default=None,
+                    help="override deck-template (otherwise from profile). Implies --auto-create.")
     ap.add_argument("--auto-create", action="store_true",
                     help="POST /api/decks for any deck not already present")
     ap.add_argument("--only", default=None, help="ingest one specific word")
     args = ap.parse_args()
 
-    if not CARDS_IN.exists():
-        sys.exit(f"cards file missing: {CARDS_IN}")
+    profile = load_profile(args.profile) if args.profile else default_toeic_profile()
+    deck_name = args.deck or profile.deck
+    deck_template = args.deck_template or profile.deck_template
+    if deck_name and deck_template:
+        sys.exit("conflicting deck routing: profile/CLI specifies both --deck and --deck-template")
+    if not deck_name and not deck_template:
+        sys.exit("no deck routing: profile/CLI must specify --deck or --deck-template")
 
-    notetype_id = resolve_notetype_id(args.base)
+    if not profile.cards.exists():
+        sys.exit(f"cards file missing: {profile.cards}")
 
-    use_template = bool(args.deck_template)
+    notetype_id = resolve_notetype_id(args.base, profile.notetype)
+
+    use_template = bool(deck_template)
     auto_create = args.auto_create or use_template
     if use_template:
-        print(f"[ingest] notetype={CONCEPT_DEEP} ({notetype_id})  deck_template={args.deck_template!r}")
+        print(f"[ingest] profile={profile.name} notetype={profile.notetype} ({notetype_id})  "
+              f"deck_template={deck_template!r}")
     else:
-        deck_id = resolve_deck_id(args.base, args.deck, auto_create=auto_create)
-        print(f"[ingest] notetype={CONCEPT_DEEP} ({notetype_id})  deck={args.deck} ({deck_id})")
+        deck_id = resolve_deck_id(args.base, deck_name, auto_create=auto_create)
+        print(f"[ingest] profile={profile.name} notetype={profile.notetype} ({notetype_id})  "
+              f"deck={deck_name} ({deck_id})")
     deck_id_cache: dict[str, int] = {}
 
-    cards = load_cards()
-    ingested = load_ingested()
+    cards = load_cards(profile.cards)
+    ingested = load_ingested(profile.ingested)
 
     if args.only:
         cards = [c for c in cards if c.get("Front", "").lower() == args.only.lower()]
@@ -152,32 +162,33 @@ def main() -> int:
     pending = [c for c in cards if c["Front"] not in ingested]
     print(f"[ingest] {len(pending)} pending of {len(cards)} ({len(ingested)} already ingested)")
 
-    INGESTED_TXT.parent.mkdir(parents=True, exist_ok=True)
+    profile.ingested.parent.mkdir(parents=True, exist_ok=True)
     ok = fail = 0
-    with INGESTED_TXT.open("a", encoding="utf-8") as ingested_fh:
+    with profile.ingested.open("a", encoding="utf-8") as ingested_fh:
         for card in pending:
             front = card["Front"]
             try:
                 if use_template:
-                    deck_name = args.deck_template.format(**card.get("_meta", {}))
-                    if deck_name not in deck_id_cache:
-                        deck_id_cache[deck_name] = resolve_deck_id(
-                            args.base, deck_name, auto_create=True
+                    routed_deck = deck_template.format(**card.get("_meta", {}))
+                    if routed_deck not in deck_id_cache:
+                        deck_id_cache[routed_deck] = resolve_deck_id(
+                            args.base, routed_deck, auto_create=True
                         )
-                    target_deck_id = deck_id_cache[deck_name]
+                    target_deck_id = deck_id_cache[routed_deck]
                 else:
                     target_deck_id = deck_id
+                    routed_deck = deck_name
                 payload = {
                     "deck_id": target_deck_id,
                     "notetype_id": notetype_id,
                     "fields": [card.get(f, "") for f in FIELD_ORDER],
-                    "tags": build_tags(card),
+                    "tags": build_tags(profile, card),
                 }
                 resp = http_post_json(f"{args.base}/api/notes", payload)
                 ingested_fh.write(front + "\n")
                 ingested_fh.flush()
                 ok += 1
-                deck_label = f" → {deck_name}" if use_template else ""
+                deck_label = f" → {routed_deck}" if use_template else ""
                 print(f"  ok    {front:14}  note_id={resp['note_id']}  cards={resp['card_count']}{deck_label}")
             except Exception as exc:  # noqa: BLE001 — keep going on per-card failure
                 fail += 1

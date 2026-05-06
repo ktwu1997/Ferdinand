@@ -1,0 +1,10 @@
+{
+  "name": "sesame",
+  "notetype": "Concept-Deep",
+  "deck": "Sesame Street English",
+  "data_dir": "data/sesame",
+  "prompt": "prompts/sesame_card.md",
+  "source_regex": "^Sesame Street English — \\w[\\w-]*$",
+  "image_field_idx": 8,
+  "image_filename_prefix": "sesame"
+}

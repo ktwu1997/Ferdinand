@@ -1,0 +1,10 @@
+{
+  "name": "toeic_vocab",
+  "notetype": "Concept-Deep",
+  "deck_template": "TOEIC::Vocabulary::L{level}",
+  "data_dir": "data/toeic",
+  "prompt": "prompts/toeic_card.md",
+  "source_regex": "^TOEIC vocabulary level \\d+ — \\w[\\w-]*$",
+  "image_field_idx": 8,
+  "image_filename_prefix": "concept"
+}
