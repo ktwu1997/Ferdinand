@@ -31,12 +31,13 @@ data/collection.anki2-wal
 data/collection.anki2-shm
 data/collection.media/
 
-# TOEIC pipeline runtime state (committed: wordlist.jsonl + cards.jsonl)
-data/toeic/done.txt
-data/toeic/ingested.txt
-data/toeic/failed.jsonl
-data/toeic/cards.invalid.jsonl
-data/toeic/cards.v1.jsonl
+# Per-deck pipeline runtime state (committed: wordlist.jsonl + cards.jsonl)
+data/*/done.txt
+data/*/ingested.txt
+data/*/failed.jsonl
+data/*/cards.invalid.jsonl
+data/*/cards.v1.jsonl
+# TOEIC subtype variants (cloze / reading have their own prefixed trackers)
 data/toeic/cloze_done.txt
 data/toeic/cloze_ingested.txt
 data/toeic/cloze_failed.jsonl
