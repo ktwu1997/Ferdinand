@@ -42,7 +42,8 @@ REQUIRED_FIELDS = (
     "Front", "Back", "Why", "Example",
     "Contrast", "Mnemonic", "Source", "ReverseEnabled",
 )
-GEMINI_TIMEOUT_S = 180
+GEMINI_MODEL_DEFAULT = "gemini-3-pro-preview"
+GEMINI_TIMEOUT_S = 240  # 3-pro-preview is slower than 2.5-flash
 MAX_RETRIES = 2
 RETRY_BACKOFF_S = (2, 5)  # sleep before retry attempts 1, 2
 
@@ -175,7 +176,8 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--limit", type=int, default=None, help="cap pending words this run")
     ap.add_argument("--rate-sleep", type=float, default=0.5,
                     help="sleep seconds between submissions (serial mode only)")
-    ap.add_argument("--model", default=None, help="override gemini -m")
+    ap.add_argument("--model", default=GEMINI_MODEL_DEFAULT,
+                    help=f"override gemini -m (default: {GEMINI_MODEL_DEFAULT})")
     return ap.parse_args()
 
 
