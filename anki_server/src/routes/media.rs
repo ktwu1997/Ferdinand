@@ -18,7 +18,7 @@
 use std::path::{Path as StdPath, PathBuf};
 
 use axum::body::Body;
-use axum::extract::{Multipart, Path, State};
+use axum::extract::{Multipart, Path};
 use axum::http::{header, HeaderValue, Response, StatusCode};
 use axum::Json;
 use serde::Serialize;
@@ -49,7 +49,7 @@ fn validate_filename(name: &str) -> Result<(), &'static str> {
 }
 
 pub async fn get_media(
-    State(state): State<AppState>,
+    state: AppState,
     Path(filename): Path<String>,
 ) -> Response<Body> {
     if let Err(reason) = validate_filename(&filename) {
@@ -252,7 +252,7 @@ fn unique_target_path(media_dir: &StdPath, name: &str) -> PathBuf {
     )
 )]
 pub async fn post_upload(
-    State(state): State<AppState>,
+    state: AppState,
     mut multipart: Multipart,
 ) -> ApiResult<Json<MediaUploadResponse>> {
     while let Some(field) = multipart

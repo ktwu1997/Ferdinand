@@ -18,11 +18,16 @@
 //
 // Usage:
 //     # default — point at the running dev server on 127.0.0.1:40001
-//     node mockup/tests/e2e/a1_browse_validation.mjs
+//     # Phase A2: pass FERDINAND_TEST_USER + FERDINAND_TEST_PASSWORD so the
+//     # script can log in before exercising the protected /api/* surface.
+//     # Defaults below match the dev "ktwu" seed user; override for CI.
+//     FERDINAND_TEST_PASSWORD="hunter2" \
+//         node mockup/tests/e2e/a1_browse_validation.mjs
 //
 //     # override base / chromium binary / decks
 //     E2E_BASE=http://192.168.97.2:40011 \
 //         CHROME_EXECUTABLE=/path/to/chrome \
+//         FERDINAND_TEST_PASSWORD=... \
 //         node mockup/tests/e2e/a1_browse_validation.mjs
 //
 // Exit 0 = all green; non-zero = at least one check failed (see
@@ -44,6 +49,12 @@ const STUDIABLE_DECK_ID = "1777798962518"; // TOEIC::Vocabulary::L600 (new=20)
 const CHROME =
     process.env.CHROME_EXECUTABLE ||
     "/home/ktwu/.cache/ms-playwright/chromium-1217/chrome-linux/chrome";
+// Phase A2: every /api/* path except /api/health and /api/auth/{register,login}
+// is auth-gated. We log in once at the top of the run; the cookie is stored
+// on the Playwright context so all subsequent page.goto + page.request +
+// in-page fetch() calls inherit it.
+const TEST_USER = process.env.FERDINAND_TEST_USER || "ktwu";
+const TEST_PASSWORD = process.env.FERDINAND_TEST_PASSWORD || "";
 
 const result = {
     base: BASE,
@@ -76,6 +87,29 @@ page.on("requestfailed", (req) => {
 });
 
 try {
+    // ===== 0. Phase-A2 pre-login (no rec slot — must succeed for the
+    //          rest to mean anything). The seed user's password comes
+    //          from FERDINAND_TEST_PASSWORD; an empty value is treated
+    //          as a hard fail rather than letting the suite mysteriously
+    //          401 on every protected check downstream.
+    if (!TEST_PASSWORD) {
+        throw new Error(
+            "FERDINAND_TEST_PASSWORD must be set so the e2e suite can log in" +
+                ` as '${TEST_USER}' before exercising /api/*. See header comment.`,
+        );
+    }
+    {
+        const res = await context.request.post(`${BASE}/api/auth/login`, {
+            data: { username: TEST_USER, password: TEST_PASSWORD },
+        });
+        if (res.status() !== 200) {
+            const body = await res.text().catch(() => "<unavailable>");
+            throw new Error(
+                `pre-login failed: status=${res.status()} body=${body}`,
+            );
+        }
+    }
+
     // ===== 1. Server health =====
     {
         const res = await page.request.get(`${BASE}/api/health`);

@@ -26,7 +26,7 @@
 use anki::notetype::NoteField;
 use anki::notetype::NotetypeId;
 use anki::prelude::*;
-use axum::extract::{Path, State};
+use axum::extract::{Path};
 use axum::Json;
 use serde::Deserialize;
 
@@ -97,7 +97,7 @@ fn validate_field_name(name: &str) -> Result<&str, &'static str> {
     params(("id" = i64, Path, description = "Notetype id"))
 )]
 pub async fn post_add_field(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Json(req): Json<FieldAddRequest>,
 ) -> ApiResult<Json<NotetypeDetailResponse>> {
@@ -161,7 +161,7 @@ pub async fn post_add_field(
     )
 )]
 pub async fn delete_field(
-    State(state): State<AppState>,
+    state: AppState,
     Path((id, ord)): Path<(i64, u32)>,
 ) -> ApiResult<Json<NotetypeDetailResponse>> {
     if id <= 0 {

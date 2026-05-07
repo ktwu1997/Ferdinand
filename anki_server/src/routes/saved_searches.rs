@@ -11,7 +11,7 @@ use anki::services::ConfigService;
 use anki::timestamp::TimestampSecs;
 use anki_proto::generic;
 use anyhow::anyhow;
-use axum::extract::{Path, State};
+use axum::extract::{Path};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
@@ -126,7 +126,7 @@ fn read_saved_searches(col: &mut Collection) -> ApiResult<Vec<SavedSearch>> {
     path = "/api/saved_searches",
     responses((status = 200, body = SavedSearchListResponse))
 )]
-pub async fn list_saved(State(state): State<AppState>) -> ApiResult<Json<SavedSearchListResponse>> {
+pub async fn list_saved(state: AppState) -> ApiResult<Json<SavedSearchListResponse>> {
     let mut col = state.col.lock().await;
     let searches = read_saved_searches(&mut col)?;
     Ok(Json(SavedSearchListResponse { searches }))
@@ -154,7 +154,7 @@ pub async fn list_saved(State(state): State<AppState>) -> ApiResult<Json<SavedSe
     )
 )]
 pub async fn post_saved(
-    State(state): State<AppState>,
+    state: AppState,
     Json(req): Json<SavedSearchCreateRequest>,
 ) -> ApiResult<Json<SavedSearch>> {
     let trimmed_name = validate_name(&req.name).map_err(ServerError::bad_request)?;
@@ -198,7 +198,7 @@ pub async fn post_saved(
     params(("name" = String, Path, description = "Saved-search name (URL-encoded)"))
 )]
 pub async fn delete_saved(
-    State(state): State<AppState>,
+    state: AppState,
     Path(name): Path<String>,
 ) -> ApiResult<Json<SavedSearchDeleteResponse>> {
     // Even though axum URL-decodes for us, we re-validate the shape

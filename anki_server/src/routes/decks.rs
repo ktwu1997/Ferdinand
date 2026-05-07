@@ -4,7 +4,7 @@ use anki::decks::FilteredSearchTerm;
 use anki::prelude::*;
 use anki::timestamp::TimestampSecs;
 use anyhow::anyhow;
-use axum::extract::{Path, State};
+use axum::extract::{Path};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
@@ -40,7 +40,7 @@ pub struct DeckListResponse {
     path = "/api/decks",
     responses((status = 200, body = DeckListResponse))
 )]
-pub async fn list_decks(State(state): State<AppState>) -> ApiResult<Json<DeckListResponse>> {
+pub async fn list_decks(state: AppState) -> ApiResult<Json<DeckListResponse>> {
     let mut col = state.col.lock().await;
     // deck_tree(None) returns the tree structure only; due and total counts
     // are populated only when a timestamp is supplied (see rslib tree.rs).
@@ -110,7 +110,7 @@ pub struct DeckRenameResponse {
     params(("id" = i64, Path, description = "Deck id"))
 )]
 pub async fn patch_deck(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Json(req): Json<DeckRenameRequest>,
 ) -> ApiResult<Json<DeckRenameResponse>> {
@@ -182,7 +182,7 @@ fn validate_preset_id(id: i64) -> Result<i64, &'static str> {
     params(("id" = i64, Path, description = "Deck id"))
 )]
 pub async fn patch_deck_preset(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Json(req): Json<DeckPresetRequest>,
 ) -> ApiResult<Json<DeckPresetResponse>> {
@@ -292,7 +292,7 @@ fn validate_create_name(name: &str) -> Result<&str, &'static str> {
     )
 )]
 pub async fn post_create(
-    State(state): State<AppState>,
+    state: AppState,
     Json(req): Json<DeckCreateRequest>,
 ) -> ApiResult<Json<DeckCreateResponse>> {
     let trimmed = validate_create_name(&req.name).map_err(ServerError::bad_request)?;
@@ -433,7 +433,7 @@ fn parse_filtered_order(s: &str) -> Result<FilteredSearchOrder, &'static str> {
     )
 )]
 pub async fn post_filtered(
-    State(state): State<AppState>,
+    state: AppState,
     Json(req): Json<FilteredDeckCreateRequest>,
 ) -> ApiResult<Json<FilteredDeckCreateResponse>> {
     let trimmed_name = validate_create_name(&req.name).map_err(ServerError::bad_request)?;
@@ -562,7 +562,7 @@ fn validate_delete_id(id: i64) -> Result<i64, &'static str> {
     params(("id" = i64, Path, description = "Deck id"))
 )]
 pub async fn delete_by_id(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
 ) -> ApiResult<Json<DeckDeleteResponse>> {
     validate_delete_id(id).map_err(ServerError::bad_request)?;

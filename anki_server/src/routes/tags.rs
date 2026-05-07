@@ -1,4 +1,3 @@
-use axum::extract::State;
 use axum::Json;
 use serde::Serialize;
 
@@ -16,7 +15,7 @@ pub struct TagListResponse {
     path = "/api/tags",
     responses((status = 200, body = TagListResponse))
 )]
-pub async fn list_tags(State(state): State<AppState>) -> ApiResult<Json<TagListResponse>> {
+pub async fn list_tags(state: AppState) -> ApiResult<Json<TagListResponse>> {
     let col = state.col.lock().await;
     let tags = col
         .storage

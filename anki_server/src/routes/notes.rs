@@ -16,7 +16,7 @@ use anki::decks::DeckKind;
 use anki::notes::Note;
 use anki::notetype::NotetypeId;
 use anki::prelude::*;
-use axum::extract::{Path, State};
+use axum::extract::{Path};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
@@ -97,7 +97,7 @@ fn validate_request(req: &NoteCreateRequest) -> Result<(), &'static str> {
     )
 )]
 pub async fn post_create(
-    State(state): State<AppState>,
+    state: AppState,
     Json(req): Json<NoteCreateRequest>,
 ) -> ApiResult<Json<NoteCreateResponse>> {
     validate_request(&req).map_err(ServerError::bad_request)?;
@@ -202,7 +202,7 @@ pub struct NoteDeleteResponse {
     params(("id" = i64, Path, description = "Note id"))
 )]
 pub async fn delete_by_id(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
 ) -> ApiResult<Json<NoteDeleteResponse>> {
     validate_delete_id(id).map_err(ServerError::bad_request)?;
@@ -289,7 +289,7 @@ pub struct NoteSummary {
     params(("id" = i64, Path, description = "Note id"))
 )]
 pub async fn get_by_id(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
 ) -> ApiResult<Json<NoteSummary>> {
     if id <= 0 {
@@ -400,7 +400,7 @@ fn validate_patch(req: &NotePatchRequest) -> Result<(), &'static str> {
     params(("id" = i64, Path, description = "Note id"))
 )]
 pub async fn patch_by_id(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Json(req): Json<NotePatchRequest>,
 ) -> ApiResult<Json<NotePatchResponse>> {

@@ -16,11 +16,20 @@ use axum::routing::{delete, get, patch, post};
 use axum::Router;
 use serde::Serialize;
 
-use crate::state::AppState;
+use crate::state::ServerState;
 
-pub fn router() -> Router<AppState> {
+/// Routes that do not require authentication. Only `/api/health` for now —
+/// keeping it public means liveness probes and uptime checks (Caddy /
+/// monitoring, etc.) don't have to know the session cookie.
+pub fn public_router() -> Router<ServerState> {
+    Router::new().route("/api/health", get(health))
+}
+
+/// Authenticated API routes. Mounted behind `auth::middleware::require_auth`
+/// in `main.rs`. Every handler here ends up extracting an `AppState` for
+/// the session-resolved user — never a hardcoded one.
+pub fn router() -> Router<ServerState> {
     Router::new()
-        .route("/api/health", get(health))
         .route(
             "/api/decks",
             get(decks::list_decks).post(decks::post_create),

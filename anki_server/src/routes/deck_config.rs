@@ -4,7 +4,7 @@ use anki::prelude::*;
 use anki_proto::deck_config::deck_configs_for_update::current_deck::Limits;
 use anki_proto::deck_config::UpdateDeckConfigsMode;
 use anyhow::anyhow;
-use axum::extract::{Path, State};
+use axum::extract::{Path};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
@@ -87,7 +87,7 @@ const DEFAULT_PRESET_ID: DeckConfigId = DeckConfigId(1);
     responses((status = 200, body = DeckConfigListResponse))
 )]
 pub async fn list_deck_configs(
-    State(state): State<AppState>,
+    state: AppState,
 ) -> ApiResult<Json<DeckConfigListResponse>> {
     let mut col = state.col.lock().await;
     // Reuse the desktop deck-options helper which returns all configs
@@ -116,7 +116,7 @@ pub async fn list_deck_configs(
     path = "/api/deck_config/default",
     responses((status = 200, body = DeckConfigDefault))
 )]
-pub async fn get_default(state: State<AppState>) -> ApiResult<Json<DeckConfigDefault>> {
+pub async fn get_default(state: AppState) -> ApiResult<Json<DeckConfigDefault>> {
     get_by_id(state, Path(DEFAULT_PRESET_ID.0)).await
 }
 
@@ -131,7 +131,7 @@ pub async fn get_default(state: State<AppState>) -> ApiResult<Json<DeckConfigDef
     )
 )]
 pub async fn patch_default(
-    state: State<AppState>,
+    state: AppState,
     patch: Json<DeckConfigPatch>,
 ) -> ApiResult<Json<DeckConfigDefault>> {
     patch_by_id(state, Path(DEFAULT_PRESET_ID.0), patch).await
@@ -148,7 +148,7 @@ pub async fn patch_default(
     params(("id" = i64, Path, description = "Deck config id"))
 )]
 pub async fn get_by_id(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
 ) -> ApiResult<Json<DeckConfigDefault>> {
     let col = state.col.lock().await;
@@ -182,7 +182,7 @@ pub async fn get_by_id(
     params(("id" = i64, Path, description = "Deck config id"))
 )]
 pub async fn patch_by_id(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Json(patch): Json<DeckConfigPatch>,
 ) -> ApiResult<Json<DeckConfigDefault>> {
@@ -273,7 +273,7 @@ pub async fn patch_by_id(
     )
 )]
 pub async fn post_create(
-    State(state): State<AppState>,
+    state: AppState,
     Json(req): Json<DeckConfigCreateRequest>,
 ) -> ApiResult<Json<DeckConfigListItem>> {
     let name = validate_create_name(&req.name)
@@ -385,7 +385,7 @@ pub struct DeckConfigDeleteResponse {
     params(("id" = i64, Path, description = "Deck config id"))
 )]
 pub async fn delete_by_id(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
 ) -> ApiResult<Json<DeckConfigDeleteResponse>> {
     validate_delete_id(id).map_err(ServerError::bad_request)?;

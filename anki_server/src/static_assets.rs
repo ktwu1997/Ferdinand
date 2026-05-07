@@ -16,13 +16,13 @@
 
 use axum::Router;
 
-use crate::state::AppState;
+use crate::state::ServerState;
 
 /// Wire the static-asset fallback onto an existing API router.
 ///
-/// The caller passes in the API `Router<AppState>`; we attach a fallback
+/// The caller passes in the API `Router<ServerState>`; we attach a fallback
 /// service for non-API paths and return the resulting router.
-pub(crate) fn attach(api: Router<AppState>) -> Router<AppState> {
+pub(crate) fn attach(api: Router<ServerState>) -> Router<ServerState> {
     #[cfg(feature = "embed-mockup")]
     {
         embedded::attach(api)
@@ -46,7 +46,7 @@ mod embedded {
     use include_dir::include_dir;
     use include_dir::Dir;
 
-    use crate::state::AppState;
+    use crate::state::ServerState;
 
     /// Mockup build output, embedded at compile time.
     ///
@@ -54,7 +54,7 @@ mod embedded {
     /// so `$CARGO_MANIFEST_DIR/../mockup/build` ⇒ `<repo>/mockup/build`.
     static MOCKUP: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/../mockup/build");
 
-    pub(crate) fn attach(api: Router<AppState>) -> Router<AppState> {
+    pub(crate) fn attach(api: Router<ServerState>) -> Router<ServerState> {
         api.fallback(serve_embedded)
     }
 
@@ -97,9 +97,9 @@ mod disk {
     use axum::Router;
     use tower_http::services::{ServeDir, ServeFile};
 
-    use crate::state::AppState;
+    use crate::state::ServerState;
 
-    pub(crate) fn attach(api: Router<AppState>) -> Router<AppState> {
+    pub(crate) fn attach(api: Router<ServerState>) -> Router<ServerState> {
         let candidate = PathBuf::from("mockup/build");
         let alt = PathBuf::from("../mockup/build");
         let dir = if candidate.join("index.html").is_file() {

@@ -36,6 +36,12 @@ data/collection.media
 data/collection.media/
 data/users/
 
+# Phase A2 auth db — runtime state (users + sessions), never commit.
+# Sibling of data/users/ on disk; sqlite WAL produces -shm and -wal files.
+data/auth.db
+data/auth.db-shm
+data/auth.db-wal
+
 # Per-deck pipeline runtime state (committed: wordlist.jsonl + cards.jsonl)
 data/*/done.txt
 data/*/ingested.txt

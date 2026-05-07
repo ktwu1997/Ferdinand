@@ -1,7 +1,7 @@
 use anki::prelude::*;
 use anki::scheduler::answering::{CardAnswer, Rating};
 use anki::scheduler::states::{CardState, SchedulingStates};
-use axum::extract::{Query, State};
+use axum::extract::{Query};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
@@ -41,7 +41,7 @@ pub struct QueueResponse {
     )
 )]
 pub async fn get_queue(
-    State(state): State<AppState>,
+    state: AppState,
     Query(q): Query<QueueQuery>,
 ) -> ApiResult<Json<QueueResponse>> {
     let mut col = state.col.lock().await;
@@ -140,7 +140,7 @@ ORDER BY day_offset";
     )
 )]
 pub async fn get_forecast(
-    State(state): State<AppState>,
+    state: AppState,
     Query(q): Query<ForecastQuery>,
 ) -> ApiResult<Json<ForecastResponse>> {
     let days = validate_forecast_days(q.days).map_err(ServerError::bad_request)?;
@@ -223,7 +223,7 @@ fn pick_new_state(states: &SchedulingStates, rating: &AnswerRating) -> CardState
     responses((status = 200, body = QueueResponse))
 )]
 pub async fn post_answer(
-    State(state): State<AppState>,
+    state: AppState,
     Json(req): Json<AnswerRequest>,
 ) -> ApiResult<Json<QueueResponse>> {
     let mut col = state.col.lock().await;

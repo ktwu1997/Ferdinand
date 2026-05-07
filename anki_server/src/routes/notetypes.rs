@@ -29,7 +29,7 @@
 
 use anki::notetype::NotetypeId;
 use anki::prelude::*;
-use axum::extract::{Path, State};
+use axum::extract::{Path};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
@@ -191,7 +191,7 @@ fn validate_template_patches(templates: &[NotetypeTemplatePatch]) -> Result<(), 
     params(("id" = i64, Path, description = "Notetype id"))
 )]
 pub async fn patch_by_id(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Json(req): Json<NotetypePatchRequest>,
 ) -> ApiResult<Json<NotetypeDetailResponse>> {
@@ -285,7 +285,7 @@ pub async fn patch_by_id(
     params(("id" = i64, Path, description = "Notetype id"))
 )]
 pub async fn get_by_id(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
 ) -> ApiResult<Json<NotetypeDetailResponse>> {
     if id <= 0 {
@@ -328,7 +328,7 @@ pub(super) fn notetype_detail_response(nt: &anki::notetype::Notetype) -> Notetyp
     responses((status = 200, body = NotetypeListResponse))
 )]
 pub async fn list_notetypes(
-    State(state): State<AppState>,
+    state: AppState,
 ) -> ApiResult<Json<NotetypeListResponse>> {
     let mut col = state.col.lock().await;
     // get_all_notetypes returns Vec<Arc<Notetype>>; we clone field names

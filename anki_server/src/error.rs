@@ -35,6 +35,26 @@ impl ServerError {
             status: StatusCode::NOT_FOUND,
         }
     }
+
+    /// Mark this error as 409 (conflict — e.g. duplicate username on
+    /// registration). Without this, a UNIQUE constraint violation would
+    /// surface as 500.
+    pub fn conflict(message: impl Into<String>) -> Self {
+        Self {
+            source: anyhow::anyhow!(message.into()),
+            status: StatusCode::CONFLICT,
+        }
+    }
+
+    /// Mark this error as 401 (auth failure). Used by login when password
+    /// verification fails; surfaces as a uniform "invalid credentials"
+    /// message without leaking whether the user exists.
+    pub fn unauthorized(message: impl Into<String>) -> Self {
+        Self {
+            source: anyhow::anyhow!(message.into()),
+            status: StatusCode::UNAUTHORIZED,
+        }
+    }
 }
 
 impl<E: Into<anyhow::Error>> From<E> for ServerError {

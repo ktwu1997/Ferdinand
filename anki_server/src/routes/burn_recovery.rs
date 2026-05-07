@@ -26,7 +26,7 @@
 use anki::card::CardQueueNumber;
 use anki::prelude::*;
 use anyhow::anyhow;
-use axum::extract::{Path, State};
+use axum::extract::{Path};
 use axum::Json;
 use serde::Serialize;
 
@@ -64,7 +64,7 @@ pub struct ResetResponse {
     params(("id" = i64, Path, description = "Card id"))
 )]
 pub async fn post_reset_to_new(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
 ) -> ApiResult<Json<ResetResponse>> {
     if id <= 0 {

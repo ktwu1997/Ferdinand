@@ -4,7 +4,7 @@ use anki::scheduler::fsrs::params::ComputeParamsRequest;
 use anki_proto::deck_config::deck_configs_for_update::current_deck::Limits;
 use anki_proto::deck_config::UpdateDeckConfigsMode;
 use anyhow::anyhow;
-use axum::extract::{Query, State};
+use axum::extract::{Query};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
@@ -50,7 +50,7 @@ fn params_unchanged(trained: &[f32], current: &[f32]) -> bool {
     path = "/api/fsrs/enabled",
     responses((status = 200, body = FsrsEnabled))
 )]
-pub async fn get_enabled(State(state): State<AppState>) -> ApiResult<Json<FsrsEnabled>> {
+pub async fn get_enabled(state: AppState) -> ApiResult<Json<FsrsEnabled>> {
     let col = state.col.lock().await;
     Ok(Json(FsrsEnabled {
         enabled: col.get_config_bool(BoolKey::Fsrs),
@@ -73,7 +73,7 @@ pub async fn get_enabled(State(state): State<AppState>) -> ApiResult<Json<FsrsEn
     responses((status = 200, body = FsrsEnabled))
 )]
 pub async fn put_enabled(
-    State(state): State<AppState>,
+    state: AppState,
     Json(req): Json<FsrsToggle>,
 ) -> ApiResult<Json<FsrsEnabled>> {
     let mut col = state.col.lock().await;
@@ -144,7 +144,7 @@ pub struct FsrsHealthCheckToggle {
     path = "/api/fsrs/health_check",
     responses((status = 200, body = FsrsHealthCheck))
 )]
-pub async fn get_health_check(State(state): State<AppState>) -> ApiResult<Json<FsrsHealthCheck>> {
+pub async fn get_health_check(state: AppState) -> ApiResult<Json<FsrsHealthCheck>> {
     let col = state.col.lock().await;
     Ok(Json(FsrsHealthCheck {
         enabled: col.get_config_bool(BoolKey::FsrsHealthCheck),
@@ -168,7 +168,7 @@ pub async fn get_health_check(State(state): State<AppState>) -> ApiResult<Json<F
     responses((status = 200, body = FsrsHealthCheck))
 )]
 pub async fn put_health_check(
-    State(state): State<AppState>,
+    state: AppState,
     Json(req): Json<FsrsHealthCheckToggle>,
 ) -> ApiResult<Json<FsrsHealthCheck>> {
     let mut col = state.col.lock().await;
@@ -264,7 +264,7 @@ fn deck_uses_preset(col: &mut Collection, preset_id: DeckConfigId) -> anyhow::Re
     )
 )]
 pub async fn post_optimize(
-    State(state): State<AppState>,
+    state: AppState,
     Query(query): Query<FsrsOptimizeQuery>,
 ) -> ApiResult<Json<FsrsOptimizeResponse>> {
     validate_optimize_query(&query).map_err(ServerError::bad_request)?;

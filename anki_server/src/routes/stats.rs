@@ -1,5 +1,5 @@
 use anki::prelude::TimestampSecs;
-use axum::extract::{Query, State};
+use axum::extract::{Query};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
@@ -78,7 +78,7 @@ ORDER BY win.d";
     )
 )]
 pub async fn get_recent(
-    State(state): State<AppState>,
+    state: AppState,
     Query(q): Query<RecentQuery>,
 ) -> ApiResult<Json<StatsRecentResponse>> {
     let days = validate_days(q.days).map_err(ServerError::bad_request)?;
@@ -135,7 +135,7 @@ const ANSWER_BUTTONS_SQL: &str =
     )
 )]
 pub async fn get_answer_buttons(
-    State(state): State<AppState>,
+    state: AppState,
     Query(q): Query<RecentQuery>,
 ) -> ApiResult<Json<AnswerButtonsResponse>> {
     let days = validate_days(q.days).map_err(ServerError::bad_request)?;

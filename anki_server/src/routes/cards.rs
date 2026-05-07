@@ -7,7 +7,7 @@ use anki::search::SortMode;
 use anki::template::RenderedNode;
 use anki_proto::scheduler::bury_or_suspend_cards_request::Mode as BuryOrSuspendMode;
 use anyhow::anyhow;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, Query};
 use axum::Json;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -113,7 +113,7 @@ fn validate_pagination(offset: usize, limit: usize) -> Result<(usize, usize), &'
     )
 )]
 pub async fn list_cards(
-    State(state): State<AppState>,
+    state: AppState,
     Query(q): Query<ListQuery>,
 ) -> ApiResult<Json<CardListResponse>> {
     let (offset, limit) =
@@ -152,7 +152,7 @@ pub async fn list_cards(
     params(("id" = i64, Path, description = "Card id"))
 )]
 pub async fn get_card(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
 ) -> ApiResult<Json<CardSummary>> {
     let mut col = state.col.lock().await;
@@ -274,7 +274,7 @@ pub struct SuspendResponse {
     params(("id" = i64, Path, description = "Card id"))
 )]
 pub async fn post_suspend(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     body: Option<Json<SuspendRequest>>,
 ) -> ApiResult<Json<SuspendResponse>> {
@@ -334,7 +334,7 @@ pub struct FlagResponse {
     params(("id" = i64, Path, description = "Card id"))
 )]
 pub async fn post_flag(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Json(req): Json<FlagRequest>,
 ) -> ApiResult<Json<FlagResponse>> {
@@ -465,7 +465,7 @@ fn validate_card_id_list(card_ids: &[i64]) -> Result<Vec<i64>, &'static str> {
     )
 )]
 pub async fn post_move_cards(
-    State(state): State<AppState>,
+    state: AppState,
     Json(req): Json<MoveRequest>,
 ) -> ApiResult<Json<MoveResponse>> {
     let (deduped_ids, deck_id) =
@@ -531,7 +531,7 @@ pub struct BulkSuspendResponse {
     )
 )]
 pub async fn post_bulk_suspend(
-    State(state): State<AppState>,
+    state: AppState,
     Json(req): Json<BulkSuspendRequest>,
 ) -> ApiResult<Json<BulkSuspendResponse>> {
     let deduped_ids = validate_card_id_list(&req.card_ids).map_err(ServerError::bad_request)?;
@@ -585,7 +585,7 @@ pub struct BulkFlagResponse {
     )
 )]
 pub async fn post_bulk_flag(
-    State(state): State<AppState>,
+    state: AppState,
     Json(req): Json<BulkFlagRequest>,
 ) -> ApiResult<Json<BulkFlagResponse>> {
     let deduped_ids = validate_card_id_list(&req.card_ids).map_err(ServerError::bad_request)?;
@@ -672,7 +672,7 @@ fn review_kind_label(rk: RevlogReviewKind) -> &'static str {
     params(("id" = i64, Path, description = "Card id"))
 )]
 pub async fn get_card_history(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
 ) -> ApiResult<Json<CardHistoryResponse>> {
     if id <= 0 {
