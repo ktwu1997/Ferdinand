@@ -1512,6 +1512,7 @@
                             <div class="item-wrap">
                                 <button
                                     class="item"
+                                    onclick={() => (query = `deck:"${d.name}"`)}
                                     ondblclick={() => startEditTreeDeck(d.id, d.name)}
                                 >
                                     <span class="emoji">{d.emoji}</span>

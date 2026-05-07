@@ -693,6 +693,43 @@ describe("BrowsePage contract", () => {
             }
         });
 
+        test("tree single-click on deck row writes deck:\"<name>\" into the search input", async () => {
+            // RED-first contract: clicking a deck row in the left tree must
+            // push `deck:"<name>"` into the search query so the user can
+            // narrow the card list with one click. Before this wiring,
+            // single-click on the deck row was dead UI (only ondblclick was
+            // handled). Mirrors the existing saved-searches pattern at
+            // +page.svelte:1573 onclick={() => (query = s.query)}.
+            vi.mocked(fetchCards).mockResolvedValueOnce({
+                total: 0,
+                cards: [],
+            });
+            vi.mocked(fetchDecks).mockResolvedValueOnce({
+                decks: [deck(101, "Sesame Street English", { total_in_deck: 14 })],
+            });
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const items = treeDeckButtons(container);
+                expect(items.length).toBe(1);
+
+                items[0]!.dispatchEvent(
+                    new MouseEvent("click", { bubbles: true }),
+                );
+                await settle();
+
+                const search = container.querySelector<HTMLInputElement>(
+                    '.toolbar input[type="search"]',
+                );
+                if (!search) throw new Error("search input not found");
+                expect(search.value).toBe('deck:"Sesame Street English"');
+            } finally {
+                unmount(instance);
+            }
+        });
+
         test("tree rename success: dblclick → input → Enter → PATCH called, row reflects new name", async () => {
             vi.mocked(fetchCards).mockResolvedValueOnce({
                 total: 0,
