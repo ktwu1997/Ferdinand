@@ -90,6 +90,29 @@ class DeckProfile:
     def image_map(self) -> Path:
         return self.data_dir / "image_map.json"
 
+    @property
+    def deck_query_clause(self) -> str:
+        """Anki search clause that scopes cards to this profile's deck.
+
+        Used by image-gen / verifier enumerations so a multi-deck shared
+        notetype (e.g. Concept-Deep used by both TOEIC vocab + Sesame)
+        doesn't bleed across decks.
+
+          deck="Sesame Street English"          → '"deck:Sesame Street English"'
+          deck_template="TOEIC::Vocabulary::L{level}" → '"deck:TOEIC::Vocabulary"'
+            (parent prefix — Anki search includes children transitively)
+        """
+        if self.deck:
+            return f'"deck:{self.deck}"'
+        if self.deck_template:
+            parts = self.deck_template.split("::")
+            for i, p in enumerate(parts):
+                if "{" in p:
+                    parent = "::".join(parts[:i])
+                    return f'"deck:{parent}"' if parent else ""
+            return f'"deck:{self.deck_template}"'
+        return ""
+
 
 def _resolve(p: str) -> Path:
     """Profile paths are stored relative to repo root; absolute paths pass through."""

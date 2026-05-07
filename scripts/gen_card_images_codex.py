@@ -187,14 +187,19 @@ def enumerate_pending(
     if profile.image_map.exists() and not refresh_cache:
         cached = json.loads(profile.image_map.read_text())
 
+    # Build Anki search query: notetype + (optional) deck filter so a
+    # shared notetype like Concept-Deep doesn't bleed across decks
+    # (e.g. TOEIC vocab + Sesame Street English both use Concept-Deep).
+    deck_clause = profile.deck_query_clause
+    q = f"mid:{notetype_id} {deck_clause}".strip()
+
     # /api/cards caps limit at 500; paginate via offset until exhausted.
     nids: set[int] = set()
     offset = 0
     page_size = 500
     while True:
         resp = http_get_json(
-            f"{base}/api/cards?q=mid:{notetype_id}"
-            f"&limit={page_size}&offset={offset}"
+            f"{base}/api/cards?{urllib.parse.urlencode({'q': q, 'limit': page_size, 'offset': offset})}"
         )
         page = resp.get("cards", [])
         if not page:
