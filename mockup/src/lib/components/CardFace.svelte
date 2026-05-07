@@ -30,13 +30,24 @@
             ADD_TAGS: ["audio", "source"],
             ADD_ATTR: ["controls", "preload", "src"],
         });
-        // <base> lets Anki's relative <img src="foo.jpg"> and our rewritten
-        // <audio src="bar.mp3"> resolve against the server's /media/ endpoint
-        // without the caller knowing the absolute URL at authoring time.
+        // Per HTML spec, <base> only affects the host Document's URL — it has
+        // no effect inside a shadow root, so relative <img src="foo.jpg"> would
+        // resolve against the page's URL (e.g. /study/123/foo.jpg) and 404.
+        // Resolve media-relative src/href on each affected element instead.
         shadow.innerHTML =
-            `<base href="${mediaBase()}">` +
             `<style>${css}</style>` +
             `<div class="card">${cleanHtml}</div>`;
+        const base = mediaBase();
+        for (const el of shadow.querySelectorAll<HTMLElement>(
+            "img[src], audio[src], video[src], source[src], a[href]"
+        )) {
+            const attr = el.tagName === "A" ? "href" : "src";
+            const raw = el.getAttribute(attr);
+            if (!raw) continue;
+            // Skip already-absolute URLs and data/blob refs.
+            if (/^(https?:|data:|blob:|\/\/|\/)/i.test(raw)) continue;
+            el.setAttribute(attr, base + raw);
+        }
 
         // Append a safety stylesheet AFTER the user CSS so viewport defaults
         // override author rules that would otherwise overflow on phones.
