@@ -133,7 +133,7 @@ case "${INSTALL_METHOD}" in
     ;;
   dev)
     log "build done. Run the server manually:"
-    log "  cargo run --bin anki_server -- --collection /path/to/collection.anki2"
+    log "  cargo run --bin anki_server -- --users-dir /path/to/users-dir"
     log "And in another terminal:"
     log "  cd mockup && npm install && npm run dev"
     ;;

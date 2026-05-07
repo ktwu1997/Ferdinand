@@ -83,6 +83,10 @@ bash build/release.sh
 ## 3. Provide a collection
 
 Ferdinand reads the standard Anki SQLite file (`collection.anki2`).
+Phase A1 stores it under a per-user directory:
+`<users_dir>/<username>/collection.anki2` (with the matching
+`collection.media/` sibling). Phase A1 hardcodes the active username to
+`ktwu`; auth + per-request user resolution arrive in Phase A2.
 
 You have two options:
 
@@ -96,11 +100,11 @@ Copy your existing `collection.anki2` from upstream Anki:
 
 Place it where Ferdinand expects it:
 
-| Install path | Expected location                                                |
-| ------------ | ---------------------------------------------------------------- |
-| launchd      | `~/Library/Application Support/Ferdinand/collection.anki2`       |
-| docker       | `./data/collection.anki2` (relative to the repo root)            |
-| dev          | wherever you point `--collection` at                             |
+| Install path | Expected location                                                       |
+| ------------ | ----------------------------------------------------------------------- |
+| launchd      | `~/Library/Application Support/Ferdinand/users/ktwu/collection.anki2`   |
+| docker       | `./data/users/ktwu/collection.anki2` (relative to the repo root)        |
+| dev          | `<users_dir>/ktwu/collection.anki2` (point `--users-dir` at the parent) |
 
 ### Option B — Start fresh
 
@@ -131,7 +135,7 @@ After install:
 
 - Server URL: <http://127.0.0.1:40001/>
 - Logs: `~/Library/Logs/Ferdinand/server.{out,err}.log`
-- Collection: `~/Library/Application Support/Ferdinand/collection.anki2`
+- Users dir: `~/Library/Application Support/Ferdinand/users/` (collection at `users/ktwu/collection.anki2`)
 
 To stop / uninstall:
 
@@ -171,8 +175,8 @@ docker compose build --no-cache && docker compose up -d
 For development. Two terminals:
 
 ```bash
-# Terminal 1 — backend
-cargo run --bin anki_server -- --collection ~/path/to/collection.anki2
+# Terminal 1 — backend (defaults to ./data/users)
+cargo run --bin anki_server -- --users-dir ~/path/to/users-dir
 
 # Terminal 2 — frontend with hot reload
 cd mockup
@@ -206,12 +210,13 @@ You should see your decks load and a review session ready to start.
 
 ### Where things live
 
-| Concern        | macOS launchd                                              | Docker                          | Dev                |
-| -------------- | ---------------------------------------------------------- | ------------------------------- | ------------------ |
-| Binary         | `/usr/local/bin/ferdinand-server`                          | inside container                | `cargo run` output |
-| Collection     | `~/Library/Application Support/Ferdinand/collection.anki2` | `./data/collection.anki2`       | `--collection` arg |
-| Logs           | `~/Library/Logs/Ferdinand/server.{out,err}.log`            | `docker compose logs -f server` | stdout             |
-| Service config | `~/Library/LaunchAgents/com.ktwu.ferdinand.plist`          | `docker-compose.yml`            | n/a                |
+| Concern        | macOS launchd                                                  | Docker                              | Dev                |
+| -------------- | -------------------------------------------------------------- | ----------------------------------- | ------------------ |
+| Binary         | `/usr/local/bin/ferdinand-server`                              | inside container                    | `cargo run` output |
+| Users dir      | `~/Library/Application Support/Ferdinand/users/`               | `./data/users/`                     | `--users-dir` arg  |
+| Collection     | `…/Ferdinand/users/ktwu/collection.anki2`                      | `./data/users/ktwu/collection.anki2` | inside users-dir   |
+| Logs           | `~/Library/Logs/Ferdinand/server.{out,err}.log`                | `docker compose logs -f server`     | stdout             |
+| Service config | `~/Library/LaunchAgents/com.ktwu.ferdinand.plist`              | `docker-compose.yml`                | n/a                |
 
 ### Restart
 
@@ -262,13 +267,14 @@ launchctl bootstrap "gui/$UID" ~/Library/LaunchAgents/com.ktwu.ferdinand.plist
 ### "collection not found"
 
 Confirm the file exists at the path the install method expects (see
-table in section 6). For launchd, the plist sets `--collection
-~/Library/Application Support/Ferdinand/collection.anki2` — create the
-parent directory if missing:
+table in section 6). For launchd, the plist sets `ANKI_USERS_DIR=
+~/Library/Application Support/Ferdinand/users` and the server opens
+`<that>/ktwu/collection.anki2` — create the per-user directory if
+missing:
 
 ```bash
-mkdir -p ~/Library/Application\ Support/Ferdinand
-cp /path/to/your/collection.anki2 ~/Library/Application\ Support/Ferdinand/
+mkdir -p ~/Library/Application\ Support/Ferdinand/users/ktwu
+cp /path/to/your/collection.anki2 ~/Library/Application\ Support/Ferdinand/users/ktwu/
 ```
 
 ### Build failures
@@ -310,8 +316,9 @@ in plist points at a stale location after a re-build.
 docker compose logs --tail 100 server
 ```
 
-Most often: `./data/collection.anki2` doesn't exist. Place a collection
-file there and `docker compose restart`.
+Most often: `./data/users/ktwu/collection.anki2` doesn't exist. Place a
+collection file there (`mkdir -p data/users/ktwu && cp /path/to/your/
+collection.anki2 data/users/ktwu/`) and `docker compose restart`.
 
 ### Web UI loads but reviews fail
 

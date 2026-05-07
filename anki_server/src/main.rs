@@ -1,6 +1,7 @@
-// anki_server — Phase 1 of the web+iOS redesign.
-// Owns a single Collection and exposes it as a REST API to the web client
-// (mockup/ today, eventually the real web app) and, later, the iOS app.
+// anki_server — REST backend for the Ferdinand web + iOS clients.
+// Phase A1: opens ONE per-user collection (`<users_dir>/<username>/collection.anki2`)
+// and exposes it as a REST API. Phase A2 will add session-based auth and
+// per-request user resolution; deck sharing happens via .apkg export/import.
 
 mod bootstrap;
 mod error;
@@ -20,17 +21,26 @@ use tracing_subscriber::EnvFilter;
 
 use crate::state::AppState;
 
-/// CLI surface for the anki_server binary. Accepts `--collection <path>`
-/// which takes precedence over the `ANKI_COLLECTION` env var when both are
+/// CLI surface for the anki_server binary. Accepts `--users-dir <path>`
+/// which takes precedence over the `ANKI_USERS_DIR` env var when both are
 /// set, so dev scripts and one-off invocations can override the env without
-/// unsetting it (Phase 8-F).
+/// unsetting it. Default = `data/users` relative to the current working
+/// directory, matching the in-repo Phase A1 layout.
 #[derive(Parser, Debug)]
-#[command(about = "Ferdinand anki_server — REST API around a single Anki collection")]
+#[command(about = "Ferdinand anki_server — REST API around per-user Anki collections")]
 struct Cli {
-    /// Path to a `collection.anki2` file. Overrides `ANKI_COLLECTION`.
+    /// Directory holding per-user subdirs (`<users_dir>/<username>/collection.anki2`).
+    /// Overrides `ANKI_USERS_DIR`.
     #[arg(long, value_name = "PATH")]
-    collection: Option<String>,
+    users_dir: Option<String>,
 }
+
+/// Phase A1 hardcoded user. Phase A2 replaces this with a session-resolved
+/// user from tower-sessions.
+const PHASE_A1_HARDCODED_USER: &str = "ktwu";
+
+/// Default users-dir when neither `--users-dir` nor `ANKI_USERS_DIR` is set.
+const DEFAULT_USERS_DIR: &str = "data/users";
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -60,11 +70,12 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         .compact()
         .init();
 
-    // CLI flag wins over env var; either must be present.
-    let collection_path = cli
-        .collection
-        .or_else(|| std::env::var("ANKI_COLLECTION").ok())
-        .context("collection path required: pass --collection <path> or set ANKI_COLLECTION")?;
+    // CLI flag wins over env var; falls back to the in-repo default so a
+    // bare `cargo run -p anki_server` works out of the box.
+    let users_dir = cli
+        .users_dir
+        .or_else(|| std::env::var("ANKI_USERS_DIR").ok())
+        .unwrap_or_else(|| DEFAULT_USERS_DIR.to_string());
     let port: u16 = std::env::var("ANKI_SERVER_PORT")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -79,8 +90,12 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         _ => IpAddr::V4(Ipv4Addr::LOCALHOST),
     };
 
-    let state = AppState::open(&collection_path)
-        .with_context(|| format!("failed to open collection at {collection_path}"))?;
+    let state = AppState::open_for_user(&users_dir, PHASE_A1_HARDCODED_USER)
+        .with_context(|| {
+            format!(
+                "failed to open collection for user '{PHASE_A1_HARDCODED_USER}' under {users_dir}"
+            )
+        })?;
     {
         let mut col = state.col.lock().await;
         bootstrap::seed_if_requested(&mut col)?;

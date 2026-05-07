@@ -52,15 +52,17 @@ docker compose up -d
 curl http://127.0.0.1:40001/api/health
 ```
 
-Your collection lives at `./data/collection.anki2` (mounted as a volume).
+Per-user collections live under `./data/users/<username>/collection.anki2`
+(mounted as a volume). Phase A1 hardcodes the active user to `ktwu`; auth
+arrives in Phase A2.
 
 ### Dev mode (hacking)
 
 For active development with hot-reload mockup and a debug-build server:
 
 ```bash
-# Terminal 1 — backend
-cargo run --bin anki_server -- --collection ~/path/to/collection.anki2
+# Terminal 1 — backend (defaults to ./data/users)
+cargo run --bin anki_server -- --users-dir ./data/users
 
 # Terminal 2 — web frontend
 cd mockup && npm install && npm run dev

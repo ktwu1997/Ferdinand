@@ -27,8 +27,8 @@
 
     <key>EnvironmentVariables</key>
     <dict>
-        <key>ANKI_COLLECTION</key>
-        <string>__HOME__/Library/Application Support/Ferdinand/collection.anki2</string>
+        <key>ANKI_USERS_DIR</key>
+        <string>__HOME__/Library/Application Support/Ferdinand/users</string>
         <key>RUST_LOG</key>
         <string>info,anki_server=debug</string>
     </dict>

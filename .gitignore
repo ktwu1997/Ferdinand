@@ -25,11 +25,16 @@ ts/.svelte-kit
 docs/_build/
 docs/autoapi/
 
-# Anki runtime collection — local SQLite DB, never commit
+# Anki runtime collection — local SQLite DB, never commit.
+# data/collection.anki2 (+ -wal/-shm) is now a symlink into data/users/<name>/
+# for backward compat with scripts; data/users/ is the canonical Phase A1 layout.
 data/collection.anki2
 data/collection.anki2-wal
 data/collection.anki2-shm
+data/collection.anki2.*-bak
+data/collection.media
 data/collection.media/
+data/users/
 
 # Per-deck pipeline runtime state (committed: wordlist.jsonl + cards.jsonl)
 data/*/done.txt

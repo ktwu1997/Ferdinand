@@ -1,9 +1,10 @@
-# Ferdinand — local docker-compose entry (Phase 30-C).
+# Ferdinand — local docker-compose entry (Phase 30-C, multi-user since A1).
 #
 # Usage:
-#     # First-time setup: seed your collection file before booting.
-#     mkdir -p ./data
-#     cp /path/to/your/collection.anki2 ./data/collection.anki2
+#     # First-time setup: seed your per-user collection before booting.
+#     # Phase A1 hardcodes the active user to `ktwu`; Phase A2 will add auth.
+#     mkdir -p ./data/users/ktwu
+#     cp /path/to/your/collection.anki2 ./data/users/ktwu/collection.anki2
 #
 #     # Build + run:
 #     docker compose up --build
@@ -14,9 +15,10 @@
 #     # Tail logs:
 #     docker compose logs -f ferdinand
 #
-# The container expects ./data/collection.anki2 to exist on the host before
-# first run. The bind mount maps ./data on the host to /data in the
-# container, and the binary defaults to ANKI_COLLECTION=/data/collection.anki2.
+# The container expects ./data/users/ktwu/collection.anki2 to exist on the
+# host before first run. The bind mount maps ./data on the host to /data in
+# the container, and the binary opens
+# <ANKI_USERS_DIR>/ktwu/collection.anki2.
 #
 # Port 40001 is published on the host. If you already have something on
 # 40001 (kt's docker dev clutter), change the left side of the ports map.
@@ -33,7 +35,7 @@ services:
     volumes:
       - ./data:/data
     environment:
-      ANKI_COLLECTION: /data/collection.anki2
+      ANKI_USERS_DIR: /data/users
       ANKI_SERVER_PORT: "40001"
       RUST_LOG: info,anki_server=debug
     restart: unless-stopped

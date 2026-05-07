@@ -6,7 +6,9 @@ Auto-starts `anki_server` at login and restarts it if it crashes.
 
 Installs a [LaunchAgent](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html)
 named `com.ktwu.ferdinand` that runs `~/.local/bin/anki_server` with
-`ANKI_COLLECTION` pointing at `~/Library/Application Support/Ferdinand/collection.anki2`.
+`ANKI_USERS_DIR` pointing at `~/Library/Application Support/Ferdinand/users/`.
+The server opens `<that>/ktwu/collection.anki2` (Phase A1 hardcodes the
+active user to `ktwu`; auth lands in Phase A2).
 
 The shipped plist uses `__HOME__` as a placeholder; `install.sh` substitutes
 the real `$HOME` and drops the result into `~/Library/LaunchAgents/`.
@@ -37,7 +39,7 @@ place. Delete them by hand if you want a clean slate.
 
 - Plist (installed): `~/Library/LaunchAgents/com.ktwu.ferdinand.plist`
 - Logs: `~/Library/Logs/Ferdinand/anki_server.{out,err}.log`
-- Data: `~/Library/Application Support/Ferdinand/collection.anki2`
+- Data: `~/Library/Application Support/Ferdinand/users/ktwu/collection.anki2`
 - Port: `40001` (override with `ANKI_SERVER_PORT`)
 
 ## Check it's running
@@ -53,8 +55,9 @@ tail -f ~/Library/Logs/Ferdinand/anki_server.err.log
 - **`anki_server binary not found`**: build Phase 30-A and copy the binary to
   `~/.local/bin/anki_server`. Make sure it has execute permission.
 - **Agent loads but the process keeps dying**: tail the `.err.log`. Common
-  culprits are a missing collection file, a busy port, or a wrong
-  `ANKI_COLLECTION` path. Edit the plist (or re-run `install.sh` after
+  culprits are a missing per-user collection (the server expects
+  `<ANKI_USERS_DIR>/ktwu/collection.anki2`), a busy port, or a wrong
+  `ANKI_USERS_DIR` path. Edit the plist (or re-run `install.sh` after
   fixing the source) and reload.
 - **Port conflict**: another process is already on `40001`. Free the port
   or set `ANKI_SERVER_PORT` in the plist's `EnvironmentVariables` block and
