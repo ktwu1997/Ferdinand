@@ -823,6 +823,45 @@ describe("BrowsePage contract", () => {
             }
         });
 
+        test("tag single-click writes tag:<name> into the search input", async () => {
+            // RED-first contract: clicking a tag row in the left tree must
+            // push `tag:<name>` into the search query so the user can
+            // narrow the card list with one click. Mirrors the deck-row
+            // fix in c4c39dd14 (which used deck:"<name>" with quotes for
+            // multi-word deck names); tags don't get quotes because
+            // Anki's tag syntax treats whitespace as a delimiter and
+            // tags are conventionally slug-like (placeholder example
+            // shows tag:leech with no quotes).
+            vi.mocked(fetchCards).mockResolvedValueOnce({
+                total: 0,
+                cards: [],
+            });
+            vi.mocked(fetchTags).mockResolvedValueOnce({
+                tags: ["leech"],
+            });
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const items = tagItems(container);
+                expect(items.length).toBe(1);
+
+                items[0]!.dispatchEvent(
+                    new MouseEvent("click", { bubbles: true }),
+                );
+                await settle();
+
+                const search = container.querySelector<HTMLInputElement>(
+                    '.toolbar input[type="search"]',
+                );
+                if (!search) throw new Error("search input not found");
+                expect(search.value).toBe("tag:leech");
+            } finally {
+                unmount(instance);
+            }
+        });
+
         test("fetchTags rejects: silent fallback to fakeTags, no error banner", async () => {
             vi.mocked(fetchCards).mockResolvedValueOnce({
                 total: 0,

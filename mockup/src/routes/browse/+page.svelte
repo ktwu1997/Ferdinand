@@ -1544,7 +1544,10 @@
             {#if openSection.tags}
                 <div class="section-items">
                     {#each sidebarTags.slice(0, 8) as t (t)}
-                        <button class="item tag-item">
+                        <button
+                            class="item tag-item"
+                            onclick={() => (query = `tag:${t}`)}
+                        >
                             <span class="hash">#</span>
                             <span>{t}</span>
                         </button>
