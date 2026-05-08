@@ -160,7 +160,11 @@ try {
     await page.goto(`${BASE}/browse`, { waitUntil: "networkidle" });
     await page.screenshot({ path: path.join(ART, "01-browse-initial.png") });
     {
-        const cardRows = await page.locator(".list button.row").count();
+        // Phase A4-ε₁: locator switched from internal `.list button.row` to
+        // [data-testid="browse-row"] after the sketch-skin port replaced the
+        // BrowseRow component with an inline 7-col grid. Stable id beats
+        // brittle internal class.
+        const cardRows = await page.locator('[data-testid="browse-row"]').count();
         const total =
             (await page.locator(".count-tag").textContent())?.trim() ?? "(missing)";
         record(
@@ -171,8 +175,11 @@ try {
     }
 
     // ===== 4 + 5. deck single-click → query + narrow =====
+    // Phase A4-ε₁: switched from `.tree .section-items button.item` to
+    // [data-testid="sidebar-deck"] after the sketch-skin port renamed
+    // sidebar internals; stable testid keeps this test honest.
     const sesameRow = page
-        .locator(".tree .section-items button.item")
+        .locator('[data-testid="sidebar-deck"]')
         .filter({ hasText: SESAME_NAME })
         .first();
     await sesameRow.waitFor({ state: "visible", timeout: 5000 });

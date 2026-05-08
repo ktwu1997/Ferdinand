@@ -34,9 +34,39 @@
         type ApiNotetypeTemplate,
         type ApiSavedSearch,
     } from "$lib/api";
-    import BrowseRow from "$lib/browse/BrowseRow.svelte";
     import BrowseRowSkeleton from "$lib/browse/BrowseRowSkeleton.svelte";
     import { stripHtmlToSnippet } from "$lib/browse/media";
+    import { Btn, Caption } from "$lib/components/ui";
+    import {
+        FerdinandMark,
+        SketchPlus,
+    } from "$lib/components/sketch";
+
+    type StateFilter = {
+        key: "new" | "learning" | "review" | "suspended";
+        label: string;
+        color: string;
+    };
+    const STATE_FILTERS: StateFilter[] = [
+        { key: "new", label: "new", color: "var(--due)" },
+        { key: "learning", label: "learning", color: "var(--warn)" },
+        { key: "review", label: "review", color: "var(--accent)" },
+        { key: "suspended", label: "suspended", color: "var(--ink-mute)" },
+    ];
+
+    function glyphFor(deckName: string): string {
+        if (/N\d|JP|日文|日本語/.test(deckName)) return "JP";
+        if (/^Rust/i.test(deckName)) return "RS";
+        if (/History|HX/i.test(deckName)) return "HX";
+        if (/Anatomy/i.test(deckName)) return "AN";
+        if (/TOEIC/i.test(deckName)) return "TC";
+        if (/Sesame/i.test(deckName)) return "SS";
+        if (/Cloze/i.test(deckName)) return "CZ";
+        const leaf = deckName.split(/::|>|\//).pop() ?? deckName;
+        const ascii = leaf.replace(/[^A-Za-z]/g, "").toUpperCase();
+        if (ascii.length >= 2) return ascii.slice(0, 2);
+        return "··";
+    }
 
     let liveCards = $state<ApiCardSummary[] | null>(null);
     let liveDecks = $state<ApiDeckSummary[] | null>(null);
@@ -320,6 +350,23 @@
                   flag: 0,
               })),
     );
+
+    // Phase A4-ε₁: state-bucket counts for the // state sidebar block.
+    // Counts are derived against `rows` (not `filtered`) so the state
+    // chips show the unfiltered library shape — clicking one then
+    // narrows `query` and `filtered` collapses.
+    let stateCounts = $derived.by(() => {
+        const c: Record<string, number> = {
+            new: 0,
+            learning: 0,
+            review: 0,
+            suspended: 0,
+        };
+        for (const r of rows) {
+            if (r.state in c) c[r.state]++;
+        }
+        return c;
+    });
 
     let filtered = $derived(
         rows.filter(
@@ -1475,29 +1522,32 @@
 
 <svelte:head><title>Browse — Anki</title></svelte:head>
 
-<div class="browse">
-    <!-- inner sidebar (tree) -->
-    <div class="tree">
-        <div class="tree-head">
-            <span class="label">Library</span>
-            <button class="plus" aria-label="New"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg></button>
+<div class="sketch-skin grain page bx-page" data-testid="browse-root">
+    <!-- inner sidebar (tree) — Phase A4-ε₁ sketch-skin port -->
+    <aside class="bx-sidebar" data-testid="browse-sidebar">
+        <div class="bx-brand" data-testid="browse-brand">
+            <FerdinandMark size={24} />
+            <span class="bx-brand-name mono">Ferdinand</span>
         </div>
 
-        <div class="section">
-            <button class="section-title" onclick={() => toggle("decks")}>
-                <svg class="chev" class:open={openSection.decks} viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m9 6 6 6-6 6" /></svg>
-                Decks
+        <div class="bx-section">
+            <button
+                type="button"
+                class="bx-section-title"
+                onclick={() => toggle("decks")}
+                aria-expanded={openSection.decks}
+            >
+                <Caption>decks</Caption>
             </button>
             {#if openSection.decks}
-                <div class="section-items">
+                <div class="bx-section-body" data-testid="browse-deck-list">
                     {#each treeRows as d (d.id)}
                         {#if treeEditingDeckId === d.id}
-                            <div class="item item-edit">
-                                <span class="emoji">{d.emoji}</span>
+                            <div class="bx-deck-row bx-deck-edit">
                                 <input
                                     bind:this={treeDeckInput}
                                     bind:value={treeDeckDraft}
-                                    class="tree-rename"
+                                    class="bx-tree-rename mono"
                                     aria-label="Rename deck"
                                     disabled={isMutatingTreeDeck}
                                     onkeydown={(e) => {
@@ -1506,23 +1556,24 @@
                                     }}
                                     onblur={commitEditTreeDeck}
                                 />
-                                <span class="count">{d.totalCards}</span>
+                                <span class="bx-deck-count mono">{d.totalCards}</span>
                             </div>
                         {:else}
-                            <div class="item-wrap">
+                            <div class="bx-deck-row">
                                 <button
-                                    class="item"
+                                    type="button"
+                                    class="bx-deck-btn mono"
+                                    data-testid="sidebar-deck"
                                     onclick={() => (query = `deck:"${d.name}"`)}
                                     ondblclick={() => startEditTreeDeck(d.id, d.name)}
                                 >
-                                    <span class="emoji">{d.emoji}</span>
-                                    <span>{d.name}</span>
-                                    <span class="count">{d.totalCards}</span>
+                                    <span class="bx-deck-name">{d.name}</span>
+                                    <span class="bx-deck-count">{d.totalCards}</span>
                                 </button>
                                 {#if liveDecks && typeof d.id === "number" && d.id !== 1}
                                     <button
                                         type="button"
-                                        class="delete-x"
+                                        class="bx-row-x"
                                         disabled={treeDeletingDeckId !== null}
                                         onclick={() =>
                                             deleteTreeDeck(d.id as number, d.name)}
@@ -1536,53 +1587,89 @@
             {/if}
         </div>
 
-        <div class="section">
-            <button class="section-title" onclick={() => toggle("tags")}>
-                <svg class="chev" class:open={openSection.tags} viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m9 6 6 6-6 6" /></svg>
-                Tags
+        <div class="bx-section">
+            <div class="bx-section-title">
+                <Caption>state</Caption>
+            </div>
+            <div class="bx-section-body" data-testid="browse-state-filters">
+                {#each STATE_FILTERS as s (s.key)}
+                    <button
+                        type="button"
+                        class="bx-state-row mono"
+                        data-testid="sidebar-state-{s.key}"
+                        onclick={() => (query = `is:${s.key}`)}
+                    >
+                        <span
+                            class="bx-state-dot"
+                            style:background={s.color}
+                            aria-hidden="true"
+                        ></span>
+                        <span class="bx-state-label">{s.label}</span>
+                        <span class="bx-state-count">{stateCounts[s.key] ?? 0}</span>
+                    </button>
+                {/each}
+            </div>
+        </div>
+
+        <div class="bx-section">
+            <button
+                type="button"
+                class="bx-section-title"
+                onclick={() => toggle("tags")}
+                aria-expanded={openSection.tags}
+            >
+                <Caption>tags</Caption>
             </button>
             {#if openSection.tags}
-                <div class="section-items">
-                    {#each sidebarTags.slice(0, 8) as t (t)}
+                <div class="bx-section-body bx-tag-cloud">
+                    {#each sidebarTags.slice(0, 10) as t (t)}
                         <button
-                            class="item tag-item"
+                            type="button"
+                            class="bx-tag-pill mono"
+                            data-testid="sidebar-tag"
                             onclick={() => (query = `tag:${t}`)}
-                        >
-                            <span class="hash">#</span>
-                            <span>{t}</span>
-                        </button>
+                        >{t}</button>
                     {/each}
                 </div>
             {/if}
         </div>
 
-        <div class="section">
-            <button class="section-title" onclick={() => toggle("saved")}>
-                <svg class="chev" class:open={openSection.saved} viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m9 6 6 6-6 6" /></svg>
-                Saved searches
-            </button>
+        <div class="bx-section">
+            <div class="bx-section-title bx-section-title-row">
+                <button
+                    type="button"
+                    class="bx-section-toggle"
+                    onclick={() => toggle("saved")}
+                    aria-expanded={openSection.saved}
+                >
+                    <Caption>pinned searches</Caption>
+                </button>
+                {#if liveSaved !== null && !isCreatingSaved && openSection.saved}
+                    <button
+                        type="button"
+                        class="bx-section-add"
+                        onclick={startCreateSaved}
+                        aria-label="Add saved search"
+                    ><SketchPlus size={12} /></button>
+                {/if}
+            </div>
             {#if openSection.saved}
-                <div class="section-items saved-searches-section">
-                    <!-- Phase 18-C: live list when fetchSavedSearches
-                         resolved; static fakeSavedSearches fallback
-                         keeps the visual when offline / fake-data
-                         mode (no `id` field on the live shape, so
-                         we key by `.name` which is server-unique). -->
+                <div class="bx-section-body">
                     {#if liveSaved !== null}
                         {#each liveSaved as s (s.name)}
-                            <div class="item-wrap saved-row">
+                            <div class="bx-saved-row">
                                 <button
                                     type="button"
-                                    class="item saved"
+                                    class="bx-saved-btn"
                                     onclick={() => (query = s.query)}
                                     aria-label="Run saved search: {s.name}"
                                 >
-                                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" /></svg>
-                                    <span>{s.name}</span>
+                                    <span class="bx-saved-name mono">· {s.name}</span>
+                                    <span class="bx-saved-q mono">{s.query}</span>
                                 </button>
                                 <button
                                     type="button"
-                                    class="saved-delete-btn"
+                                    class="bx-row-x"
                                     disabled={savedDeletingName !== null}
                                     onclick={(e) => {
                                         e.stopPropagation();
@@ -1594,19 +1681,18 @@
                         {/each}
                     {:else}
                         {#each savedSearches as s (s.id)}
-                            <button class="item saved">
-                                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" /></svg>
-                                <span>{s.name}</span>
+                            <button type="button" class="bx-saved-btn">
+                                <span class="bx-saved-name mono">· {s.name}</span>
                             </button>
                         {/each}
                     {/if}
 
                     {#if isCreatingSaved}
-                        <div class="saved-create-form">
+                        <div class="bx-saved-form">
                             <input
                                 bind:this={newSavedNameInput}
                                 bind:value={newSavedName}
-                                class="saved-input"
+                                class="bx-saved-input mono"
                                 type="text"
                                 placeholder="Name"
                                 disabled={isMutatingSaved}
@@ -1618,7 +1704,7 @@
                             />
                             <input
                                 bind:value={newSavedQuery}
-                                class="saved-input saved-query-input"
+                                class="bx-saved-input mono"
                                 type="text"
                                 placeholder="deck:N2 is:due"
                                 disabled={isMutatingSaved}
@@ -1628,40 +1714,61 @@
                                     else if (e.key === "Escape") cancelCreateSaved();
                                 }}
                             />
-                            <div class="saved-create-actions">
-                                <button
-                                    type="button"
-                                    class="saved-save-btn"
+                            <div class="bx-saved-actions">
+                                <Btn
+                                    kind="primary"
+                                    size="sm"
                                     disabled={isMutatingSaved}
                                     onclick={commitCreateSaved}
-                                >Save</button>
-                                <button
-                                    type="button"
-                                    class="saved-cancel-btn"
+                                >save</Btn>
+                                <Btn
+                                    kind="ghost"
+                                    size="sm"
                                     disabled={isMutatingSaved}
                                     onclick={cancelCreateSaved}
-                                >Cancel</button>
+                                >cancel</Btn>
                             </div>
                         </div>
-                    {:else if liveSaved !== null}
-                        <button
-                            type="button"
-                            class="saved-new-btn"
-                            onclick={startCreateSaved}
-                            aria-label="Add saved search"
-                        >+ New saved search</button>
                     {/if}
 
                     {#if savedError}
-                        <div class="saved-error" role="alert">{savedError}</div>
+                        <div class="bx-saved-error mono" role="alert">// {savedError}</div>
                     {/if}
                 </div>
             {/if}
         </div>
-    </div>
+    </aside>
 
-    <!-- results list -->
-    <div class="results">
+    <!-- results pane -->
+    <main class="bx-main">
+        <header class="bx-hero" data-testid="browse-hero">
+            <div class="bx-hero-left">
+                <Caption>the.card.archive</Caption>
+                <h1 class="bx-title mono" data-testid="browse-title">
+                    browse
+                    <span class="hand bx-tag-everything" aria-hidden="true">everything</span>
+                </h1>
+                <p class="bx-subtitle mono">
+                    {liveTotal ?? rows.length} cards across {treeRows.length} deck{treeRows.length === 1 ? "" : "s"}
+                </p>
+            </div>
+            <div class="bx-hero-right">
+                <Btn kind="outline" size="sm" disabled aria-label="Import (coming soon)">
+                    {#snippet leading()}<SketchPlus size={12} />{/snippet}
+                    import
+                </Btn>
+                <Btn kind="primary" size="sm" href="/notes/new">
+                    {#snippet leading()}<SketchPlus size={12} />{/snippet}
+                    new note
+                </Btn>
+            </div>
+        </header>
+
+        <!--
+            Toolbar (search + filters + pagination) — LEGACY skin.
+            Phase A4-ε₁ scope keeps these on the legacy chrome; the
+            chip-token search bar + filter sheet rework lands in ζ.
+        -->
         <div class="toolbar">
             <div class="search">
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
@@ -1774,49 +1881,119 @@
             {/if}
         </div>
 
-        <div class="list" role="list">
-            {#if loading}
-                {#each [0, 1, 2, 3, 4] as i (i)}
-                    <BrowseRowSkeleton />
-                {/each}
-            {:else if filtered.length === 0}
-                <div class="empty" role="status" aria-live="polite">
-                    <div class="empty-title">No cards match</div>
-                    <div class="empty-hint">
-                        Try a broader query, or
-                        <button class="empty-action" onclick={clearQuery}>clear the search</button>.
+        <!-- 7-column sketch-skin table — Phase A4-ε₁ -->
+        <div class="bx-table" role="table" aria-label="Cards" data-testid="browse-table">
+            <div class="bx-table-head mono" role="row">
+                <span class="bx-col-check" role="columnheader" aria-hidden="true"></span>
+                <span class="bx-col-num" role="columnheader">#</span>
+                <span class="bx-col-glyph" role="columnheader" aria-label="type"></span>
+                <span class="bx-col-front" role="columnheader">front</span>
+                <span class="bx-col-back" role="columnheader">back</span>
+                <span class="bx-col-deck" role="columnheader">deck</span>
+                <span class="bx-col-tags" role="columnheader">tags</span>
+                <span class="bx-col-due" role="columnheader">due</span>
+            </div>
+
+            <div class="bx-table-body" role="rowgroup">
+                {#if loading}
+                    {#each [0, 1, 2, 3, 4] as i (i)}
+                        <BrowseRowSkeleton />
+                    {/each}
+                {:else if filtered.length === 0}
+                    <div
+                        class="bx-empty mono"
+                        role="status"
+                        aria-live="polite"
+                        data-testid="browse-empty"
+                    >
+                        <div class="bx-empty-title">// no cards match</div>
+                        <div class="bx-empty-hint">
+                            try a broader query, or
+                            <button
+                                type="button"
+                                class="bx-empty-action"
+                                onclick={clearQuery}
+                            >clear the search</button>.
+                        </div>
                     </div>
+                {:else}
+                    {#each filtered as r, i (r.id)}
+                        {@const numericId = Number(r.id)}
+                        {@const idValid = Number.isFinite(numericId) && numericId > 0}
+                        {@const isSelected = selected?.id === r.id}
+                        {@const isChecked = idValid && selectedIds.has(numericId)}
+                        <div
+                            class="bx-row"
+                            class:selected={isSelected}
+                            class:checked={isChecked}
+                            role="row"
+                            data-testid="browse-row"
+                            data-card-id={r.id}
+                        >
+                            <span class="bx-col-check" role="cell">
+                                <input
+                                    type="checkbox"
+                                    class="row-check bx-row-check"
+                                    aria-label="Select card {r.id}"
+                                    checked={isChecked}
+                                    disabled={!idValid || isMutatingBulk}
+                                    onchange={() =>
+                                        idValid && toggleRowSelected(numericId)}
+                                />
+                            </span>
+                            <button
+                                type="button"
+                                class="bx-row-btn"
+                                aria-label="Open card {r.id}"
+                                data-testid="browse-row-btn"
+                                onclick={() => selectRow(i)}
+                            >
+                                <span class="bx-col-num mono">
+                                    {String(i + 1 + pageOffset).padStart(3, "0")}
+                                </span>
+                                <span class="bx-col-glyph mono">
+                                    {glyphFor(r.deckName)}
+                                </span>
+                                <span class="bx-col-front">
+                                    <span class="bx-front-text">
+                                        {r.frontSnippet || "(empty front)"}
+                                    </span>
+                                </span>
+                                <span class="bx-col-back mono">
+                                    {r.backSnippet || ""}
+                                </span>
+                                <span class="bx-col-deck mono">{r.deckName}</span>
+                                <span class="bx-col-tags">
+                                    {#each r.tags.slice(0, 2) as t (t)}
+                                        <span class="bx-tag-chip mono">{t}</span>
+                                    {/each}
+                                    {#if r.tags.length > 2}
+                                        <span class="bx-tag-chip bx-tag-chip-more mono"
+                                            >+{r.tags.length - 2}</span
+                                        >
+                                    {/if}
+                                </span>
+                                <span
+                                    class="bx-col-due mono"
+                                    class:bx-due-now={r.due === "now"}
+                                >{r.due}</span>
+                            </button>
+                        </div>
+                    {/each}
+                {/if}
+            </div>
+
+            <div class="bx-table-foot mono">
+                <Caption>{filtered.length} of {liveTotal ?? rows.length} · sorted by due asc</Caption>
+                <div class="bx-table-keys">
+                    <span>↑↓ navigate</span>
+                    <span>↵ open</span>
+                    <span>e edit</span>
+                    <span>⌫ delete</span>
                 </div>
-            {:else}
-                {#each filtered as r, i (r.id)}
-                    {@const numericId = Number(r.id)}
-                    {@const idValid = Number.isFinite(numericId) && numericId > 0}
-                    <div class="row-wrap" class:row-wrap-checked={idValid && selectedIds.has(numericId)}>
-                        <input
-                            type="checkbox"
-                            class="row-check"
-                            aria-label="Select card {r.id}"
-                            checked={idValid && selectedIds.has(numericId)}
-                            disabled={!idValid || isMutatingBulk}
-                            onchange={() => idValid && toggleRowSelected(numericId)}
-                        />
-                        <BrowseRow
-                            id={r.id}
-                            frontHtml={r.frontHtml}
-                            backHtml={r.backHtml}
-                            deckName={r.deckName}
-                            deckEmoji={r.deckEmoji}
-                            tags={r.tags}
-                            due={r.due}
-                            state={r.state}
-                            selected={selected?.id === r.id}
-                            onSelect={() => selectRow(i)}
-                        />
-                    </div>
-                {/each}
-            {/if}
+            </div>
         </div>
-    </div>
+    </main>
 
     <!-- editor panel -->
     <aside class="editor">
@@ -3273,6 +3450,619 @@
         }
         .bulk-toolbar {
             flex-wrap: wrap;
+        }
+    }
+
+    /* ────────────────────────────────────────────────────────────
+       Phase A4-ε₁ — sketch-skin chrome for /browse
+       Sidebar + hero + 7-col table; toolbar/select-strip/editor
+       remain on legacy classes (rework lands in ζ).
+       ──────────────────────────────────────────────────────────── */
+
+    .bx-page {
+        display: grid;
+        grid-template-columns: 240px minmax(0, 1fr) 360px;
+        height: 100vh;
+        overflow: hidden;
+        background: var(--bg);
+        color: var(--ink);
+    }
+
+    /* — Sidebar ————————————————————————— */
+    .bx-sidebar {
+        display: flex;
+        flex-direction: column;
+        gap: 22px;
+        padding: 24px 18px 24px 22px;
+        background: var(--bg-soft);
+        border-right: 1.5px solid var(--ink);
+        overflow-y: auto;
+    }
+    .bx-brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    .bx-brand-name {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--ink);
+    }
+    .bx-section {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+    .bx-section-title {
+        background: transparent;
+        border: 0;
+        padding: 0;
+        text-align: left;
+        cursor: pointer;
+        color: var(--ink-mute);
+    }
+    .bx-section-title-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+    }
+    .bx-section-toggle {
+        background: transparent;
+        border: 0;
+        padding: 0;
+        text-align: left;
+        cursor: pointer;
+    }
+    .bx-section-add {
+        background: transparent;
+        border: 0;
+        padding: 2px 4px;
+        cursor: pointer;
+        color: var(--ink-mute);
+        display: inline-flex;
+        align-items: center;
+    }
+    .bx-section-add:hover {
+        color: var(--accent);
+    }
+    .bx-section-body {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .bx-deck-row {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+    .bx-deck-btn {
+        flex: 1;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 5px 8px;
+        background: transparent;
+        border: 1.2px solid transparent;
+        border-radius: 4px;
+        font-size: 12px;
+        color: var(--ink-soft);
+        cursor: pointer;
+        text-align: left;
+    }
+    .bx-deck-btn:hover {
+        background: var(--paper);
+        color: var(--ink);
+        border-color: var(--rule);
+    }
+    .bx-deck-btn:focus-visible {
+        outline: 1.5px solid var(--ink);
+        outline-offset: 2px;
+    }
+    .bx-deck-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .bx-deck-count {
+        font-size: 10px;
+        color: var(--ink-mute);
+        font-variant-numeric: tabular-nums;
+        flex-shrink: 0;
+        margin-left: 8px;
+    }
+    .bx-deck-edit {
+        padding: 5px 8px;
+        background: var(--paper);
+        border: 1.2px solid var(--ink);
+        border-radius: 4px;
+    }
+    .bx-tree-rename {
+        flex: 1;
+        font-size: 12px;
+        background: transparent;
+        border: 0;
+        outline: none;
+        color: var(--ink);
+    }
+
+    .bx-row-x {
+        flex-shrink: 0;
+        width: 18px;
+        height: 18px;
+        background: transparent;
+        border: 0;
+        padding: 0;
+        font-size: 14px;
+        line-height: 1;
+        color: var(--ink-mute);
+        cursor: pointer;
+        opacity: 0;
+        transition: opacity 120ms;
+    }
+    .bx-deck-row:hover .bx-row-x,
+    .bx-saved-row:hover .bx-row-x {
+        opacity: 1;
+    }
+    .bx-row-x:hover {
+        color: var(--due);
+    }
+    .bx-row-x:focus-visible {
+        opacity: 1;
+        outline: 1.5px solid var(--ink);
+        outline-offset: 1px;
+    }
+
+    .bx-state-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 8px;
+        background: transparent;
+        border: 0;
+        font-size: 12px;
+        color: var(--ink-soft);
+        cursor: pointer;
+        text-align: left;
+    }
+    .bx-state-row:hover {
+        color: var(--ink);
+    }
+    .bx-state-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 2px;
+        border: 1px solid var(--ink);
+        flex-shrink: 0;
+    }
+    .bx-state-label {
+        flex: 1;
+    }
+    .bx-state-count {
+        font-size: 10px;
+        color: var(--ink-mute);
+        font-variant-numeric: tabular-nums;
+    }
+
+    .bx-tag-cloud {
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: 4px;
+    }
+    .bx-tag-pill {
+        font-size: 10px;
+        padding: 2px 8px;
+        border: 1px solid var(--rule-soft);
+        border-radius: 999px;
+        background: var(--paper);
+        color: var(--ink-soft);
+        cursor: pointer;
+    }
+    .bx-tag-pill:hover {
+        border-color: var(--ink);
+        color: var(--ink);
+    }
+
+    .bx-saved-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 4px;
+    }
+    .bx-saved-btn {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        padding: 5px 8px;
+        background: transparent;
+        border: 0;
+        border-radius: 4px;
+        cursor: pointer;
+        text-align: left;
+    }
+    .bx-saved-btn:hover {
+        background: var(--paper);
+    }
+    .bx-saved-name {
+        font-size: 12px;
+        color: var(--ink-soft);
+    }
+    .bx-saved-q {
+        font-size: 10px;
+        color: var(--ink-mute);
+        margin-left: 10px;
+    }
+    .bx-saved-form {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 8px;
+        background: var(--paper);
+        border: 1.2px solid var(--ink);
+        border-radius: 4px;
+    }
+    .bx-saved-input {
+        font-size: 12px;
+        padding: 4px 6px;
+        background: var(--bg);
+        border: 1px solid var(--rule);
+        border-radius: 2px;
+        color: var(--ink);
+    }
+    .bx-saved-input:focus {
+        outline: none;
+        border-color: var(--ink);
+    }
+    .bx-saved-actions {
+        display: flex;
+        gap: 6px;
+    }
+    .bx-saved-error {
+        font-size: 11px;
+        color: var(--due);
+        padding: 4px 0;
+    }
+
+    /* — Main pane ————————————————————————— */
+    .bx-main {
+        display: flex;
+        flex-direction: column;
+        padding: 24px 32px 16px;
+        overflow: hidden;
+        min-width: 0;
+    }
+    .bx-hero {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        gap: 16px;
+        margin-bottom: 16px;
+    }
+    .bx-hero-left {
+        min-width: 0;
+    }
+    .bx-title {
+        font-size: 28px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        margin: 6px 0 0;
+        line-height: 1.1;
+    }
+    .bx-tag-everything {
+        color: var(--accent);
+        font-size: 22px;
+        margin-left: 12px;
+    }
+    .bx-subtitle {
+        font-size: 12px;
+        color: var(--ink-mute);
+        margin: 6px 0 0;
+    }
+    .bx-hero-right {
+        display: flex;
+        gap: 8px;
+        flex-shrink: 0;
+    }
+
+    /* — Table ————————————————————————— */
+    .bx-table {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        margin-top: 8px;
+    }
+    .bx-table-head,
+    .bx-row-btn {
+        display: grid;
+        grid-template-columns:
+            32px /* check */
+            32px /* num */
+            36px /* glyph */
+            minmax(120px, 1.6fr) /* front */
+            minmax(120px, 1.4fr) /* back */
+            90px /* deck */
+            120px /* tags */
+            56px; /* due */
+        gap: 14px;
+        align-items: center;
+    }
+    .bx-table-head {
+        font-size: 10px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--ink-mute);
+        padding: 10px 12px;
+        border-bottom: 1px dashed var(--rule);
+    }
+    .bx-table-head .bx-col-num {
+        text-align: right;
+    }
+    .bx-table-head .bx-col-due {
+        text-align: right;
+    }
+
+    .bx-table-body {
+        flex: 1;
+        overflow-y: auto;
+        padding-bottom: 8px;
+    }
+
+    .bx-row {
+        position: relative;
+        display: grid;
+        grid-template-columns: 32px 1fr;
+        align-items: stretch;
+        border-bottom: 1px solid var(--rule-soft);
+        transition: transform 120ms, box-shadow 120ms;
+    }
+    .bx-row:hover {
+        transform: translate(-0.5px, -0.5px);
+        box-shadow: 4px 4px 0 var(--rule);
+        z-index: 1;
+    }
+    .bx-row.selected {
+        background: var(--accent-soft);
+        border-left: 1.5px solid var(--accent);
+        border-bottom-color: var(--accent);
+    }
+    .bx-row.checked .bx-col-front {
+        color: var(--ink-soft);
+    }
+
+    .bx-col-check {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding-left: 8px;
+    }
+    .bx-row-check {
+        width: 14px;
+        height: 14px;
+        cursor: pointer;
+    }
+
+    .bx-row-btn {
+        background: transparent;
+        border: 0;
+        padding: 10px 12px;
+        text-align: left;
+        cursor: pointer;
+        font-size: 13px;
+        color: inherit;
+        width: 100%;
+    }
+    .bx-row-btn:focus-visible {
+        outline: 1.5px solid var(--ink);
+        outline-offset: -2px;
+    }
+
+    .bx-col-num {
+        font-size: 11px;
+        color: var(--ink-mute);
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+    }
+    .bx-col-glyph {
+        width: 36px;
+        height: 36px;
+        display: grid;
+        place-items: center;
+        border: 1.2px solid var(--ink);
+        border-radius: 3px;
+        background: var(--bg);
+        font-size: 9px;
+        font-weight: 600;
+        line-height: 1;
+        color: var(--ink);
+    }
+    .bx-col-front {
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--ink);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0;
+    }
+    .bx-front-text {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        display: block;
+    }
+    .bx-col-back {
+        font-size: 12px;
+        color: var(--ink-soft);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0;
+    }
+    .bx-col-deck {
+        font-size: 10px;
+        color: var(--ink-mute);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .bx-col-tags {
+        display: flex;
+        gap: 4px;
+        flex-wrap: nowrap;
+        overflow: hidden;
+    }
+    .bx-tag-chip {
+        font-size: 9px;
+        padding: 1px 6px;
+        border: 1px solid var(--rule-soft);
+        border-radius: 999px;
+        color: var(--ink-soft);
+        white-space: nowrap;
+    }
+    .bx-tag-chip-more {
+        color: var(--ink-mute);
+    }
+    .bx-col-due {
+        font-size: 11px;
+        color: var(--ink-mute);
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+    }
+    .bx-due-now {
+        color: var(--due);
+        font-weight: 600;
+    }
+
+    .bx-empty {
+        padding: 36px 12px;
+        text-align: center;
+        color: var(--ink-mute);
+    }
+    .bx-empty-title {
+        font-size: 13px;
+        color: var(--ink-soft);
+        margin-bottom: 6px;
+    }
+    .bx-empty-hint {
+        font-size: 11px;
+    }
+    .bx-empty-action {
+        background: transparent;
+        border: 0;
+        padding: 0;
+        color: var(--accent);
+        cursor: pointer;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+        font: inherit;
+    }
+
+    .bx-table-foot {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        border-top: 1px dashed var(--rule);
+        padding-top: 12px;
+        margin-top: 4px;
+        font-size: 11px;
+        color: var(--ink-mute);
+    }
+    .bx-table-keys {
+        display: flex;
+        gap: 14px;
+    }
+
+    /* — Mobile — ε₁ scope: collapse sidebar + editor, stack rows —— */
+    @media (max-width: 768px) {
+        .bx-page {
+            display: block;
+            height: auto;
+            min-height: 100vh;
+            overflow: visible;
+        }
+        .bx-sidebar {
+            display: none;
+        }
+        :global(.bx-page > aside.editor) {
+            display: none;
+        }
+        .bx-main {
+            padding: 18px 18px 24px;
+            overflow: visible;
+        }
+        .bx-hero {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 10px;
+        }
+        .bx-title {
+            font-size: 24px;
+        }
+        .bx-tag-everything {
+            font-size: 18px;
+        }
+        .bx-table-head {
+            display: none;
+        }
+        .bx-table-body {
+            overflow: visible;
+        }
+        .bx-row {
+            display: block;
+            border: 1.2px solid var(--ink);
+            border-radius: 4px;
+            background: var(--paper);
+            box-shadow: 2px 2px 0 var(--ink);
+            margin-bottom: 10px;
+            padding: 10px 14px;
+        }
+        .bx-row:hover {
+            transform: none;
+            box-shadow: 2px 2px 0 var(--ink);
+        }
+        .bx-row.selected {
+            border-color: var(--accent);
+            box-shadow: 2px 2px 0 var(--accent);
+        }
+        .bx-col-check {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            padding: 0;
+        }
+        .bx-row-btn {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 0;
+        }
+        .bx-col-num,
+        .bx-col-glyph {
+            display: inline-block;
+            margin-right: 8px;
+        }
+        .bx-col-glyph {
+            width: 28px;
+            height: 28px;
+            font-size: 8px;
+        }
+        .bx-col-front {
+            font-size: 15px;
+            white-space: normal;
+        }
+        .bx-col-back {
+            white-space: normal;
+        }
+        .bx-col-due {
+            text-align: left;
+        }
+        .bx-table-foot {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 6px;
         }
     }
 </style>
