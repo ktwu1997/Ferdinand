@@ -1,9 +1,14 @@
 <script lang="ts">
     import "../app.css";
+    import { onMount } from "svelte";
+    import { browser } from "$app/environment";
+    import { goto } from "$app/navigation";
     import { page } from "$app/stores";
     import Sidebar from "$lib/components/Sidebar.svelte";
     import BottomNav from "$lib/components/BottomNav.svelte";
     import MobileTopBar from "$lib/components/MobileTopBar.svelte";
+    import { setOnUnauthorized } from "$lib/api";
+    import { auth } from "$lib/auth.svelte";
 
     interface Props {
         children?: any;
@@ -13,13 +18,41 @@
 
     // Full-screen routes (no chrome — sidebar, topbar, or bottom nav).
     // /login lives here so the sketch-skin login page renders edge-to-edge
-    // without the legacy cream chrome around it; /_skin_preview is the
-    // Phase A4-α visual smoke-test page (deleted before β commit).
-    const fullscreenRoutes = ["/study", "/login", "/_skin_preview"];
+    // without the legacy cream chrome around it.
+    const fullscreenRoutes = ["/study", "/login"];
 
     let isFullscreen = $derived(
         fullscreenRoutes.some((r) => $page.url.pathname.startsWith(r)),
     );
+
+    // Phase A4-β: wire the 401-redirect hook on app mount, then bootstrap
+    // the auth store so we know `authed`/`anon` before the route guard
+    // runs. Both happen inside `onMount` so SvelteKit's SSR pass doesn't
+    // try to use $app/navigation. Bootstrap is fire-and-forget — the
+    // guard's $effect re-runs once status flips off "checking", so we
+    // don't need to await here.
+    onMount(() => {
+        setOnUnauthorized(() => auth.handleUnauthorized());
+        void auth.bootstrap();
+        return () => setOnUnauthorized(null);
+    });
+
+    // Phase A4-β route guard. Whenever auth resolves to "anon" and the
+    // user is anywhere other than /login, bounce them to /login with the
+    // attempted path in `?next=` so the post-login redirect lands them
+    // back where they started. The guard sits inside `$effect` so it
+    // observes both `auth.status` and the active pathname; "unknown" /
+    // "checking" leave the user where they are (the layout shell stays
+    // up — pages can show their own loading affordance off
+    // `auth.status === "checking"` if they want).
+    $effect(() => {
+        if (!browser) return;
+        if (auth.status !== "anon") return;
+        const path = $page.url.pathname;
+        if (path === "/login") return;
+        const next = path + $page.url.search;
+        void goto(`/login?next=${encodeURIComponent(next)}`);
+    });
 </script>
 
 <div class="shell" class:fullscreen={isFullscreen}>

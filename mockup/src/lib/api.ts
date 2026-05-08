@@ -149,12 +149,42 @@ export function mediaBase(): string {
     return `${apiBase()}/media/`;
 }
 
+// Phase A4-β: signed-cookie session lives in a HttpOnly cookie set by
+// anki_server on POST /api/auth/login. Every API call needs
+// `credentials: "include"` so the browser actually sends it cross-origin
+// during dev (vite :5174 → anki_server :40001) and same-origin in prod.
+// Without this, every authed request becomes anonymous and the server
+// returns 401 even for a freshly-logged-in user.
+
+// Phase A4-β: 401-redirect hook. The auth store (mockup/src/lib/auth.svelte.ts)
+// registers a callback here on bootstrap; whenever a non-auth API call
+// returns 401, the callback clears auth state and redirects to /login.
+// We deliberately skip the hook for /api/auth/* so:
+//   - fetchAuthMe()'s 401 (anonymous user) doesn't redirect-loop
+//   - postAuthLogin()'s 401 (wrong password) surfaces inline as a form
+//     error instead of bouncing the user away from the login page.
+type UnauthorizedCallback = () => void;
+let onUnauthorizedCallback: UnauthorizedCallback | null = null;
+
+export function setOnUnauthorized(cb: UnauthorizedCallback | null): void {
+    onUnauthorizedCallback = cb;
+}
+
+function fireOnUnauthorized(path: string): void {
+    if (path.startsWith("/api/auth/")) return;
+    onUnauthorizedCallback?.();
+}
+
 async function getJson<T>(path: string, init?: RequestInit): Promise<T> {
     const res = await fetch(`${apiBase()}${path}`, {
+        credentials: "include",
         headers: { accept: "application/json" },
         ...init,
     });
-    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    if (!res.ok) {
+        if (res.status === 401) fireOnUnauthorized(path);
+        throw new Error(`${res.status} ${res.statusText}`);
+    }
     return (await res.json()) as T;
 }
 
@@ -167,6 +197,7 @@ async function jsonRequest<T>(
 ): Promise<T> {
     const res = await fetch(`${apiBase()}${path}`, {
         method,
+        credentials: "include",
         headers: {
             "content-type": "application/json",
             accept: "application/json",
@@ -174,6 +205,7 @@ async function jsonRequest<T>(
         body: JSON.stringify(body),
     });
     if (!res.ok) {
+        if (res.status === 401) fireOnUnauthorized(path);
         let detail = res.statusText;
         try {
             const parsed = (await res.json()) as { message?: string };
@@ -363,11 +395,14 @@ export interface ApiDeckConfigDeleteResponse {
 export async function deleteDeckConfig(
     id: number,
 ): Promise<ApiDeckConfigDeleteResponse> {
-    const res = await fetch(`${apiBase()}/api/deck_config/${id}`, {
+    const path = `/api/deck_config/${id}`;
+    const res = await fetch(`${apiBase()}${path}`, {
         method: "DELETE",
+        credentials: "include",
         headers: { accept: "application/json" },
     });
     if (!res.ok) {
+        if (res.status === 401) fireOnUnauthorized(path);
         let detail = res.statusText;
         try {
             const parsed = (await res.json()) as { message?: string };
@@ -513,11 +548,14 @@ export async function deleteNotetypeField(
     id: number,
     ord: number,
 ): Promise<ApiNotetypeDetail> {
-    const res = await fetch(`${apiBase()}/api/notetypes/${id}/fields/${ord}`, {
+    const path = `/api/notetypes/${id}/fields/${ord}`;
+    const res = await fetch(`${apiBase()}${path}`, {
         method: "DELETE",
+        credentials: "include",
         headers: { accept: "application/json" },
     });
     if (!res.ok) {
+        if (res.status === 401) fireOnUnauthorized(path);
         let detail = res.statusText;
         try {
             const body = (await res.json()) as { message?: string };
@@ -571,11 +609,14 @@ export interface ApiDeckDeleteResponse {
  * deck id=1 (400), and missing ids (404).
  */
 export async function deleteDeck(id: number): Promise<ApiDeckDeleteResponse> {
-    const res = await fetch(`${apiBase()}/api/decks/${id}`, {
+    const path = `/api/decks/${id}`;
+    const res = await fetch(`${apiBase()}${path}`, {
         method: "DELETE",
+        credentials: "include",
         headers: { accept: "application/json" },
     });
     if (!res.ok) {
+        if (res.status === 401) fireOnUnauthorized(path);
         let detail = res.statusText;
         try {
             const parsed = (await res.json()) as { message?: string };
@@ -603,11 +644,14 @@ export interface ApiNoteDeleteResponse {
  * note_id field on ApiCardSummary, NOT the card id.
  */
 export async function deleteNote(id: number): Promise<ApiNoteDeleteResponse> {
-    const res = await fetch(`${apiBase()}/api/notes/${id}`, {
+    const path = `/api/notes/${id}`;
+    const res = await fetch(`${apiBase()}${path}`, {
         method: "DELETE",
+        credentials: "include",
         headers: { accept: "application/json" },
     });
     if (!res.ok) {
+        if (res.status === 401) fireOnUnauthorized(path);
         let detail = res.statusText;
         try {
             const parsed = (await res.json()) as { message?: string };
@@ -720,10 +764,13 @@ export async function deleteSavedSearch(
     name: string,
 ): Promise<ApiSavedSearchDeleteResponse> {
     const encoded = encodeURIComponent(name);
-    const res = await fetch(`${apiBase()}/api/saved_searches/${encoded}`, {
+    const path = `/api/saved_searches/${encoded}`;
+    const res = await fetch(`${apiBase()}${path}`, {
         method: "DELETE",
+        credentials: "include",
     });
     if (!res.ok) {
+        if (res.status === 401) fireOnUnauthorized(path);
         let detail = res.statusText;
         try {
             const body = (await res.json()) as { message?: string };
@@ -812,10 +859,13 @@ export interface ApiNoteSummary {
  * repeatedly from a Svelte effect without lock contention.
  */
 export async function fetchNote(id: number): Promise<ApiNoteSummary> {
-    const res = await fetch(`${apiBase()}/api/notes/${id}`, {
+    const path = `/api/notes/${id}`;
+    const res = await fetch(`${apiBase()}${path}`, {
+        credentials: "include",
         headers: { accept: "application/json" },
     });
     if (!res.ok) {
+        if (res.status === 401) fireOnUnauthorized(path);
         let detail = res.statusText;
         try {
             const parsed = (await res.json()) as { message?: string };
@@ -874,11 +924,14 @@ export interface ApiMediaUploadResponse {
 export async function postMedia(file: File): Promise<ApiMediaUploadResponse> {
     const form = new FormData();
     form.append("file", file, file.name);
-    const res = await fetch(`${apiBase()}/media`, {
+    const path = "/media";
+    const res = await fetch(`${apiBase()}${path}`, {
         method: "POST",
+        credentials: "include",
         body: form,
     });
     if (!res.ok) {
+        if (res.status === 401) fireOnUnauthorized(path);
         let detail = res.statusText;
         try {
             const parsed = (await res.json()) as { message?: string };
@@ -1148,4 +1201,72 @@ export async function bulkFlag(
         card_ids: cardIds,
         flag,
     });
+}
+
+/**
+ * Phase A4-β: authenticated user payload returned by GET /api/auth/me and
+ * POST /api/auth/login. `username` is lowercase a-z 0-9 _ - (server
+ * enforces 3..=64 chars at register/login boundary); the auth store and
+ * /login page surface it as-is.
+ */
+export interface ApiAuthMe {
+    username: string;
+}
+
+/**
+ * Phase A4-β: GET /api/auth/me. Resolves to `null` when the server
+ * reports 401 (no session yet) so the auth store's bootstrap can branch
+ * into "anon" without catching an Error. Other HTTP failures still throw
+ * so genuine outages aren't silently treated as "logged out".
+ *
+ * Bypasses the global `onUnauthorized` hook (path is under `/api/auth/`)
+ * so an anonymous bootstrap doesn't trigger a redirect-loop on /login.
+ */
+export async function fetchAuthMe(): Promise<ApiAuthMe | null> {
+    const path = "/api/auth/me";
+    const res = await fetch(`${apiBase()}${path}`, {
+        credentials: "include",
+        headers: { accept: "application/json" },
+    });
+    if (res.status === 401) return null;
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    return (await res.json()) as ApiAuthMe;
+}
+
+/**
+ * Phase A4-β: POST /api/auth/login. Server returns 200 + UserBody on
+ * success, 401 ("invalid credentials") on bad creds, 400 on malformed
+ * input, 429 ("too many login attempts; try again later") when the
+ * sliding-window rate-limiter trips. Errors propagate as
+ * `Error("<status> <message>")` so the form can render the message
+ * inline. The 401 here is NOT routed through `fireOnUnauthorized` —
+ * the path lives under `/api/auth/` so wrong-password doesn't bounce
+ * the user away from the login form.
+ */
+export async function postAuthLogin(
+    username: string,
+    password: string,
+): Promise<ApiAuthMe> {
+    return jsonRequest<ApiAuthMe>("/api/auth/login", "POST", {
+        username,
+        password,
+    });
+}
+
+/**
+ * Phase A4-β: POST /api/auth/logout. Idempotent — server returns 204
+ * even if no session existed. We don't go through `jsonRequest` because
+ * 204 has no body to parse; we still send `credentials: "include"` so
+ * the server can identify and flush the session cookie.
+ */
+export async function postAuthLogout(): Promise<void> {
+    const path = "/api/auth/logout";
+    const res = await fetch(`${apiBase()}${path}`, {
+        method: "POST",
+        credentials: "include",
+        headers: { accept: "application/json" },
+    });
+    if (!res.ok && res.status !== 204) {
+        throw new Error(`${res.status} ${res.statusText}`);
+    }
 }
