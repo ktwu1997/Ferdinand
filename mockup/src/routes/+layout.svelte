@@ -11,8 +11,11 @@
 
     let { children }: Props = $props();
 
-    // Full-screen routes (no chrome — sidebar, topbar, or bottom nav)
-    const fullscreenRoutes = ["/study"];
+    // Full-screen routes (no chrome — sidebar, topbar, or bottom nav).
+    // /login lives here so the sketch-skin login page renders edge-to-edge
+    // without the legacy cream chrome around it; /_skin_preview is the
+    // Phase A4-α visual smoke-test page (deleted before β commit).
+    const fullscreenRoutes = ["/study", "/login", "/_skin_preview"];
 
     let isFullscreen = $derived(
         fullscreenRoutes.some((r) => $page.url.pathname.startsWith(r)),

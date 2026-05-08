@@ -1,0 +1,208 @@
+/*
+ * Phase A4-α — sketch design tokens (kraft-paper / pen-and-notebook aesthetic).
+ *
+ * Scoped under `.sketch-skin` so the legacy `lib/tokens.css` system on the
+ * existing 6 routes stays untouched until Phase A4-γ promotes this skin to
+ * `:root`. Both can coexist: a page wrapping its content in
+ * `<div class="sketch-skin">…</div>` resolves all `--ink/--paper/--accent`
+ * lookups via this file; everything outside falls back to lib/tokens.css.
+ *
+ * Color values transcribed verbatim from
+ * design_handoff_ferdinand/README.md §"Design tokens".
+ */
+
+.sketch-skin,
+.sketch-skin[data-theme="light"] {
+    --bg: oklch(90.5% 0.022 80); /* kraft cream — page background */
+    --bg-soft: oklch(88% 0.024 80); /* slightly darker section bg */
+    --bg-deep: oklch(85% 0.026 78); /* deepest, used for hero overlays */
+    --paper: oklch(94% 0.018 82); /* card / panel surface */
+
+    --ink: oklch(22% 0.018 60); /* primary text + borders */
+    --ink-soft: oklch(38% 0.018 60); /* secondary text */
+    --ink-mute: oklch(52% 0.014 60); /* tertiary / metadata */
+
+    --rule: oklch(72% 0.024 70); /* dashed dividers */
+    --rule-soft: oklch(80% 0.022 75); /* subtle table borders */
+
+    --accent: oklch(34% 0.07 155); /* Pine Ink green */
+    --accent-soft: oklch(80% 0.05 150); /* tinted bg behind accent */
+
+    --warn: oklch(50% 0.13 50); /* hard / warning */
+    --due: oklch(48% 0.13 32); /* again / danger */
+}
+
+:root[data-theme="dark"] .sketch-skin,
+.sketch-skin[data-theme="dark"] {
+    --bg: oklch(15.5% 0.012 60);
+    --bg-soft: oklch(18.5% 0.014 60);
+    --bg-deep: oklch(12% 0.01 60);
+    --paper: oklch(20% 0.014 62);
+
+    --ink: oklch(92% 0.012 78);
+    --ink-soft: oklch(72% 0.012 70);
+    --ink-mute: oklch(55% 0.012 70);
+
+    --rule: oklch(34% 0.014 62);
+    --rule-soft: oklch(26% 0.012 62);
+
+    --accent: oklch(74% 0.1 152); /* lighter Pine in dark mode */
+    --accent-soft: oklch(28% 0.05 150);
+
+    --warn: oklch(75% 0.13 60);
+    --due: oklch(72% 0.16 30);
+}
+
+/* Auto dark via OS preference when the user hasn't pinned a theme. */
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .sketch-skin:not([data-theme="light"]) {
+        --bg: oklch(15.5% 0.012 60);
+        --bg-soft: oklch(18.5% 0.014 60);
+        --bg-deep: oklch(12% 0.01 60);
+        --paper: oklch(20% 0.014 62);
+        --ink: oklch(92% 0.012 78);
+        --ink-soft: oklch(72% 0.012 70);
+        --ink-mute: oklch(55% 0.012 70);
+        --rule: oklch(34% 0.014 62);
+        --rule-soft: oklch(26% 0.012 62);
+        --accent: oklch(74% 0.1 152);
+        --accent-soft: oklch(28% 0.05 150);
+        --warn: oklch(75% 0.13 60);
+        --due: oklch(72% 0.16 30);
+    }
+}
+
+/* Typography, shadow, radius, spacing — shared across themes.
+   Hung off `:where(.sketch-skin)` so specificity stays at 0 and downstream
+   component styles don't have to fight a 0-1-0 selector to override. */
+:where(.sketch-skin) {
+    --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system,
+        "Segoe UI", "Noto Sans TC", sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo,
+        monospace;
+    --font-cjk: "Klee One", "LXGW WenKai TC", "Noto Serif TC", ui-serif,
+        serif;
+    --font-hand: "Caveat", "Klee One", cursive;
+
+    /* Stamp shadows — pure offset, no blur. */
+    --shadow-stamp-sm: 2px 2px 0 var(--ink);
+    --shadow-stamp-md: 3px 3px 0 var(--ink);
+    --shadow-stamp-lg: 5px 5px 0 var(--ink);
+    --shadow-stamp-xl: 8px 8px 0 var(--ink);
+
+    /* Radii — never above 8px per spec. */
+    --radius: 4px;
+    --radius-md: 6px;
+    --radius-lg: 8px;
+    --radius-pill: 999px;
+
+    /* Spacing scale — README values verbatim. */
+    --space-1: 4px;
+    --space-2: 6px;
+    --space-3: 8px;
+    --space-4: 10px;
+    --space-5: 12px;
+    --space-6: 14px;
+    --space-7: 18px;
+    --space-8: 22px;
+    --space-9: 28px;
+    --space-10: 32px;
+    --space-12: 48px;
+
+    /* Borders. */
+    --border-w: 1.5px;
+    --border-w-thin: 1.2px;
+}
+
+/* Skin-wide page chrome: paper background, ink text, base font. */
+.sketch-skin {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-feature-settings: "ss01", "cv02";
+}
+
+/* Subtle paper-grain noise overlay — README §"Aesthetic direction" calls for
+   ~3.5% opacity. Implemented as a stack of repeating gradients to avoid an
+   external image. Decorative only; pointer-events:none keeps it clickable. */
+.sketch-skin.grain {
+    position: relative;
+}
+.sketch-skin.grain::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.035;
+    background-image:
+        radial-gradient(
+            circle at 25% 30%,
+            var(--ink) 0.5px,
+            transparent 1px
+        ),
+        radial-gradient(
+            circle at 75% 70%,
+            var(--ink) 0.5px,
+            transparent 1px
+        ),
+        radial-gradient(
+            circle at 50% 50%,
+            var(--ink) 0.4px,
+            transparent 0.8px
+        );
+    background-size: 9px 9px, 11px 11px, 7px 7px;
+    background-position: 0 0, 3px 5px, 1px 2px;
+}
+.sketch-skin.grain > * {
+    position: relative;
+    z-index: 1;
+}
+
+/* Hand-drawn SVG icon defaults — `class="sketch"` markers in sketches.jsx
+   resolve here to the 1.6px rounded-cap stroke per spec. */
+.sketch-skin .sketch {
+    color: currentColor;
+    display: inline-block;
+}
+.sketch-skin .sketch path,
+.sketch-skin .sketch circle,
+.sketch-skin .sketch rect,
+.sketch-skin .sketch polyline,
+.sketch-skin .sketch line {
+    stroke: currentColor;
+    stroke-width: 1.6;
+    fill: none;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    vector-effect: non-scaling-stroke;
+}
+.sketch-skin .sketch .thick {
+    stroke-width: 2.2;
+}
+.sketch-skin .sketch .thin {
+    stroke-width: 1;
+}
+.sketch-skin .sketch .fill-paper {
+    fill: var(--paper);
+}
+.sketch-skin .sketch .fill-accent-soft {
+    fill: var(--accent-soft);
+}
+
+/* Hand annotation — Caveat for the rare margin scribble. */
+.sketch-skin .hand {
+    font-family: var(--font-hand);
+    line-height: 1.1;
+}
+
+/* Mono utility — captions, button labels, metadata all share these knobs. */
+.sketch-skin .mono {
+    font-family: var(--font-mono);
+    font-feature-settings: "ss02", "zero", "cv01";
+}
+
+/* CJK content slot — front/back fields, deck names, notes apply this. */
+.sketch-skin .cjk {
+    font-family: var(--font-cjk);
+}

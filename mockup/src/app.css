@@ -1,5 +1,11 @@
 @import "./lib/tokens.css";
 
+/* Phase A4-α: sketch-aesthetic typography (always loaded — fonts are
+   global) + design tokens (scoped under `.sketch-skin`, harmless on
+   pages that don't opt in). */
+@import "./styles/typography.css";
+@import "./styles/tokens.css";
+
 *,
 *::before,
 *::after {

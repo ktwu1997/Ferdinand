@@ -1,0 +1,23 @@
+/*
+ * Phase A4-α — font loading.
+ *
+ * CDN-loaded via Google Fonts with `font-display: swap` so first paint
+ * doesn't block on font bytes. README §Assets calls out self-hosting as
+ * the eventual target — punt that to a later perf phase; α just needs
+ * the right faces on screen.
+ *
+ * Faces:
+ *   - Geist 300-700           → body / UI sans
+ *   - JetBrains Mono 400-700  → mono / metadata / button labels
+ *   - Klee One 400-600        → CJK content
+ *   - LXGW WenKai TC 400      → TC fallback for Klee gaps
+ *   - Noto Serif TC 400-700   → final CJK fallback
+ *   - Caveat 400-700          → hand-scribbled margin annotations
+ */
+
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Klee+One:wght@400;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=LXGW+WenKai+TC:wght@400&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Caveat:wght@400;500;600;700&display=swap");
