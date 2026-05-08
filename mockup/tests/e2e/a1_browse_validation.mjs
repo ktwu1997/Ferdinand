@@ -165,12 +165,20 @@ try {
         // BrowseRow component with an inline 7-col grid. Stable id beats
         // brittle internal class.
         const cardRows = await page.locator('[data-testid="browse-row"]').count();
+        // Phase A4-ζ: legacy .count-tag was renamed to .bx-toolbar-count
+        // and exposes data-testid="browse-toolbar-count" for stable
+        // locator anchoring.
         const total =
-            (await page.locator(".count-tag").textContent())?.trim() ?? "(missing)";
+            (
+                await page
+                    .locator('[data-testid="browse-toolbar-count"]')
+                    .textContent()
+                    .catch(() => null)
+            )?.trim() ?? "(missing)";
         record(
-            "3. /browse renders card rows + count-tag",
+            "3. /browse renders card rows + toolbar count",
             cardRows > 0 && total !== "(missing)",
-            `card_rows=${cardRows} count_tag="${total}"`,
+            `card_rows=${cardRows} count="${total}"`,
         );
     }
 
@@ -194,12 +202,19 @@ try {
         cardsResp = await fetchPromise;
     } catch {}
 
-    const searchInput = page.locator('.toolbar input[type="search"]');
-    const searchValue = await searchInput.inputValue();
+    // Phase A4-ζ: query is now reflected as a chip in the chip-token
+    // toolbar (parseQueryChips renders one bx-chip per token). The
+    // first chip's text mirrors the committed query verbatim, so
+    // sidebar-click → query=`deck:"…"` shows up as a deck chip with
+    // exactly that text. The bound input is now `pendingInput` and
+    // stays empty when query was set programmatically.
+    const firstChip = page.locator('[data-testid="browse-toolbar-chip"]').first();
+    await firstChip.waitFor({ state: "visible", timeout: 2000 }).catch(() => null);
+    const chipText = ((await firstChip.textContent().catch(() => "")) ?? "").trim();
     record(
         "4. deck single-click sets search query to deck:\"<name>\"",
-        searchValue === `deck:"${SESAME_NAME}"`,
-        `query=${JSON.stringify(searchValue)}`,
+        chipText === `deck:"${SESAME_NAME}"`,
+        `chip=${JSON.stringify(chipText)}`,
     );
 
     {
@@ -244,13 +259,29 @@ try {
     }
 
     // ===== 7. clear search restores =====
+    // Phase A4-ζ: legacy single-input model is gone — `query` is now
+    // a chip-token bar driven by parseQueryChips(query). Clearing the
+    // search means popping every chip (each click on a bx-chip fires
+    // removeChipAt(i) which rebuilds query without that token). Loop
+    // with a safety cap so a regression that breaks chip removal can't
+    // hang the suite.
     {
         const restorePromise = page.waitForResponse(
             (r) => r.url().includes("/api/cards") && r.status() === 200,
             { timeout: 5000 },
         );
-        await searchInput.fill("");
-        await searchInput.dispatchEvent("input");
+        let safety = 10;
+        while (safety-- > 0) {
+            const remaining = await page
+                .locator('[data-testid="browse-toolbar-chip"]')
+                .count();
+            if (remaining === 0) break;
+            await page
+                .locator('[data-testid="browse-toolbar-chip"]')
+                .first()
+                .click();
+            await page.waitForTimeout(60);
+        }
         let restored = null;
         try {
             const resp = await restorePromise;

@@ -1,7 +1,6 @@
 <script lang="ts">
     import { onMount, tick } from "svelte";
     import { cards as fakeCards, decks as fakeDecks, savedSearches, tags as fakeTags } from "$lib/data";
-    import Kbd from "$lib/components/Kbd.svelte";
     import {
         bulkFlag,
         bulkSuspend,
@@ -40,6 +39,7 @@
     import {
         FerdinandMark,
         SketchPlus,
+        SketchSearch,
     } from "$lib/components/sketch";
 
     type StateFilter = {
@@ -111,6 +111,20 @@
     // $state because nothing reactive needs to read these.
     let searchSeq = 0;
     let lastFetchedQ = "";
+
+    // Phase A4-ζ: chip-token toolbar state. `query` stays the committed
+    // search string (drives debounced fetch + chip rendering); `pendingInput`
+    // is the live in-flight typing buffer that flushes into `query` on
+    // Enter / closing-quote / a trailing space after a complete token.
+    // This dual-state split keeps the cursor and chip rendering visually
+    // disjoint — without it, the bound input value would echo the same
+    // text the chips already display.
+    let pendingInput = $state("");
+    let toolbarSearchInput = $state<HTMLInputElement | null>(null);
+    let filterSheetOpen = $state(false);
+    type FilterStateKey = "new" | "learning" | "review" | "suspended";
+    let filterDraftStates = $state<FilterStateKey[]>([]);
+    let filterDraftTags = $state<string[]>([]);
 
     // Phase 9-P: editor-panel mutations against anki_server. Stateful page,
     // so errors surface as an explicit banner (per 9-N3 design_pattern_proven)
@@ -586,6 +600,201 @@
             savedDeletingName = null;
         }
     }
+
+    // Phase A4-ζ: chip-token toolbar parser. Splits the committed `query`
+    // string into structured tokens for the toolbar to render. The kinds
+    // map to deck:"…" / tag:… / is:… / bare-text and drive chip colour.
+    // Bare commit strings are preserved verbatim (e.g. `deck:"Sesame…"`)
+    // so chip-text === query-substring round-trips losslessly when a chip
+    // is removed.
+    type ChipToken = {
+        kind: "deck" | "tag" | "is" | "text";
+        raw: string;
+    };
+    function parseQueryChips(q: string): ChipToken[] {
+        const tokens: ChipToken[] = [];
+        if (!q.trim()) return tokens;
+        // Match: prefix:"quoted value"  |  prefix:bareword  |  bareword
+        const re =
+            /(deck|tag|is):"([^"]+)"|(deck|tag|is):(\S+)|("([^"]+)")|(\S+)/g;
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(q)) !== null) {
+            if (m[1]) {
+                tokens.push({
+                    kind: m[1] as ChipToken["kind"],
+                    raw: `${m[1]}:"${m[2]}"`,
+                });
+            } else if (m[3]) {
+                tokens.push({
+                    kind: m[3] as ChipToken["kind"],
+                    raw: `${m[3]}:${m[4]}`,
+                });
+            } else if (m[5]) {
+                tokens.push({ kind: "text", raw: m[5] });
+            } else if (m[7]) {
+                tokens.push({ kind: "text", raw: m[7] });
+            }
+        }
+        return tokens;
+    }
+
+    function commitPendingInput(): void {
+        const t = pendingInput.trim();
+        if (t === "") return;
+        query = query.trim() === "" ? t : `${query.trim()} ${t}`;
+        pendingInput = "";
+    }
+
+    // Auto-commit watcher — fires on every keystroke. Closing-quote
+    // commits a `deck:"…"` token; trailing space commits a complete
+    // `tag:foo` / `is:foo` / bare token. Editing mid-token (no trailing
+    // space, no closing quote) keeps the buffer pending so backspace
+    // still works on the partial.
+    function maybeAutoCommit(): void {
+        const v = pendingInput;
+        if (v === "") return;
+        // Complete deck:"…" — closing quote present, no trailing chars
+        if (/^(deck|tag|is):"[^"]+"$/.test(v.trim())) {
+            commitPendingInput();
+            return;
+        }
+        // tag:foo / is:foo / bare followed by trailing space
+        if (
+            /^(tag|is):\S+\s+$/.test(v) ||
+            (/^\S+\s+$/.test(v) && !/^(deck|tag|is):"/.test(v))
+        ) {
+            commitPendingInput();
+            return;
+        }
+    }
+
+    function removeChipAt(idx: number): void {
+        const chips = parseQueryChips(query);
+        if (idx < 0 || idx >= chips.length) return;
+        chips.splice(idx, 1);
+        query = chips.map((c) => c.raw).join(" ");
+        // Refocus the toolbar input so the cursor returns to a sensible
+        // position (right after the last chip) — without this the chip
+        // click steals focus and the user has to click the input again.
+        toolbarSearchInput?.focus();
+    }
+
+    function onToolbarKeydown(e: KeyboardEvent): void {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            commitPendingInput();
+            return;
+        }
+        if (e.key === "Backspace" && pendingInput === "") {
+            // Empty buffer + backspace = pop the last chip. Quiet UX
+            // (no confirm) because the chip is one click away from
+            // being put back via the inline input.
+            const chips = parseQueryChips(query);
+            if (chips.length > 0) {
+                chips.pop();
+                query = chips.map((c) => c.raw).join(" ");
+            }
+        }
+    }
+
+    // — ζ filter sheet handlers —
+    function openFilterSheet(): void {
+        // Seed the draft selections from whatever `is:`/`tag:` chips
+        // are already in the query so opening the sheet on top of an
+        // active filter doesn't blow the user's selection away on apply.
+        const chips = parseQueryChips(query);
+        filterDraftStates = chips
+            .filter((c) => c.kind === "is")
+            .map((c) => c.raw.replace(/^is:/, "") as FilterStateKey)
+            .filter((k) =>
+                ["new", "learning", "review", "suspended"].includes(k),
+            );
+        filterDraftTags = chips
+            .filter((c) => c.kind === "tag")
+            .map((c) => c.raw.replace(/^tag:"?/, "").replace(/"$/, ""));
+        filterSheetOpen = true;
+    }
+
+    function closeFilterSheet(): void {
+        filterSheetOpen = false;
+    }
+
+    function toggleDraftState(s: FilterStateKey): void {
+        filterDraftStates = filterDraftStates.includes(s)
+            ? filterDraftStates.filter((x) => x !== s)
+            : [...filterDraftStates, s];
+    }
+
+    function toggleDraftTag(t: string): void {
+        filterDraftTags = filterDraftTags.includes(t)
+            ? filterDraftTags.filter((x) => x !== t)
+            : [...filterDraftTags, t];
+    }
+
+    function resetFilterSheet(): void {
+        filterDraftStates = [];
+        filterDraftTags = [];
+    }
+
+    function applyFilterSheet(): void {
+        // Strip is:/tag: chips from the current query, then re-append
+        // the draft selections. Keeps deck:/text chips intact so the
+        // sheet behaves additively over a deck-scoped search.
+        const remaining = parseQueryChips(query)
+            .filter((c) => c.kind !== "is" && c.kind !== "tag")
+            .map((c) => c.raw);
+        const stateChips = filterDraftStates.map((s) => `is:${s}`);
+        const tagChips = filterDraftTags.map((t) =>
+            t.includes(" ") ? `tag:"${t}"` : `tag:${t}`,
+        );
+        query = [...remaining, ...stateChips, ...tagChips].join(" ").trim();
+        filterSheetOpen = false;
+    }
+
+    async function startCreateSavedFromToolbar(): Promise<void> {
+        // Hook the toolbar's "save search" button into the existing
+        // sidebar inline form (Phase 18-C). Pre-fills the query input
+        // with the current toolbar query so a one-click save commits
+        // the right thing; user just types a name. ScrollIntoView
+        // makes sure the form is visible even on a long sidebar.
+        await startCreateSaved();
+        if (isCreatingSaved) {
+            newSavedQuery = query;
+            await tick();
+            newSavedNameInput?.scrollIntoView({
+                behavior: "smooth",
+                block: "center",
+            });
+        }
+    }
+
+    // Phase A4-ζ: window-level keydown for the toolbar shortcut. ⌘K /
+    // Ctrl+K focuses the chip-token searchbar from anywhere on the
+    // page; ESC closes the filter sheet. We bail out if focus is in
+    // a different input so typing the literal "k" inside an editor
+    // textarea doesn't yank focus out from under the user.
+    $effect(() => {
+        function onKey(e: KeyboardEvent): void {
+            if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+                const t = e.target as HTMLElement | null;
+                const inOtherInput =
+                    t &&
+                    (t.tagName === "INPUT" || t.tagName === "TEXTAREA") &&
+                    t !== toolbarSearchInput;
+                if (inOtherInput) return;
+                e.preventDefault();
+                toolbarSearchInput?.focus();
+                toolbarSearchInput?.select();
+                return;
+            }
+            if (e.key === "Escape" && filterSheetOpen) {
+                e.preventDefault();
+                closeFilterSheet();
+            }
+        }
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    });
 
     // Phase 11-A: derive the selected card's current preset_id from the
     // live deck list. Null when offline / fake-data / deck not yet loaded
@@ -1688,7 +1897,7 @@
                     {/if}
 
                     {#if isCreatingSaved}
-                        <div class="bx-saved-form">
+                        <div class="bx-saved-form" data-testid="sidebar-saved-form">
                             <input
                                 bind:this={newSavedNameInput}
                                 bind:value={newSavedName}
@@ -1765,43 +1974,180 @@
         </header>
 
         <!--
-            Toolbar (search + filters + pagination) — LEGACY skin.
-            Phase A4-ε₁ scope keeps these on the legacy chrome; the
-            chip-token search bar + filter sheet rework lands in ζ.
+            Phase A4-ζ — sketch-skin chip-token toolbar. Renders parsed
+            chips for committed `query` tokens; live `pendingInput`
+            buffer auto-commits on Enter / closing-quote / trailing
+            space after a complete token. Filter / save-search / count
+            sit to the right; pagination tucked below on mobile.
         -->
-        <div class="toolbar">
-            <div class="search">
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
+        <div class="bx-toolbar" data-testid="browse-toolbar">
+            <div
+                class="bx-searchbar"
+                data-testid="browse-toolbar-search"
+                role="search"
+            >
+                <SketchSearch size={14} />
+                {#each parseQueryChips(query) as chip, i (i + ":" + chip.raw)}
+                    <button
+                        type="button"
+                        class="bx-chip bx-chip-{chip.kind} mono"
+                        onclick={(e) => {
+                            e.stopPropagation();
+                            removeChipAt(i);
+                        }}
+                        aria-label="Remove {chip.raw}"
+                        data-testid="browse-toolbar-chip"
+                    >{chip.raw}</button>
+                {/each}
                 <input
+                    bind:this={toolbarSearchInput}
+                    bind:value={pendingInput}
+                    oninput={maybeAutoCommit}
+                    onkeydown={onToolbarKeydown}
                     type="search"
-                    bind:value={query}
-                    placeholder="deck:N2  tag:leech  added:1 …"
+                    class="bx-search-input mono"
+                    placeholder={parseQueryChips(query).length === 0
+                        ? "deck:N2  tag:leech  added:1 …"
+                        : ""}
+                    aria-label="Search cards"
+                    data-testid="browse-toolbar-input"
                 />
-                <Kbd>/</Kbd>
+                <span class="bx-cursor" aria-hidden="true"></span>
+                <span class="bx-kbd-hint mono" aria-hidden="true">⌘K</span>
             </div>
-            <div class="filters">
-                <button class="pill active">All</button>
-                <button class="pill pill-new">New</button>
-                <button class="pill pill-learning">Learning</button>
-                <button class="pill pill-review">Review</button>
-                <button class="pill pill-suspended">Suspended</button>
-            </div>
-            <div class="pagination" role="group" aria-label="Pagination">
-                <button
-                    class="pill page-btn"
-                    onclick={() => goPage(pageOffset - PAGE_SIZE)}
+            <Btn
+                kind="outline"
+                size="sm"
+                onclick={openFilterSheet}
+                data-testid="browse-toolbar-filter"
+            >
+                {#snippet leading()}<SketchPlus size={12} />{/snippet}
+                filter
+            </Btn>
+            <Btn
+                kind="paper"
+                size="sm"
+                onclick={startCreateSavedFromToolbar}
+                data-testid="browse-toolbar-save-search"
+            >save search</Btn>
+            <div
+                class="bx-toolbar-paginate"
+                role="group"
+                aria-label="Pagination"
+                data-testid="browse-toolbar-paginate"
+            >
+                <Btn
+                    kind="ghost"
+                    size="sm"
                     disabled={!canPrev}
+                    onclick={() => goPage(pageOffset - PAGE_SIZE)}
                     aria-label="Previous page"
-                >‹ Prev</button>
-                <span class="count-tag" aria-live="polite">{countTagText}</span>
-                <button
-                    class="pill page-btn"
-                    onclick={() => goPage(pageOffset + PAGE_SIZE)}
+                >‹ prev</Btn>
+                <span
+                    class="bx-toolbar-count mono"
+                    aria-live="polite"
+                    data-testid="browse-toolbar-count"
+                >{countTagText}</span>
+                <Btn
+                    kind="ghost"
+                    size="sm"
                     disabled={!canNext}
+                    onclick={() => goPage(pageOffset + PAGE_SIZE)}
                     aria-label="Next page"
-                >Next ›</button>
+                >next ›</Btn>
             </div>
         </div>
+
+        <!--
+            ζ filter sheet — modal dialog with state chip toggles + tag
+            multi-select. Seeds draft from current query so reopening
+            doesn't blow selections away; apply rebuilds is:/tag: chips
+            without touching deck:/text chips.
+        -->
+        {#if filterSheetOpen}
+            <div
+                class="bx-filter-backdrop"
+                role="presentation"
+                onclick={closeFilterSheet}
+            ></div>
+            <div
+                class="bx-filter-sheet"
+                data-testid="browse-filter-sheet"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="bx-filter-title"
+            >
+                <header class="bx-filter-header">
+                    <Caption
+                        ><span id="bx-filter-title">// filters</span></Caption
+                    >
+                    <Btn
+                        kind="ghost"
+                        size="sm"
+                        onclick={closeFilterSheet}
+                        aria-label="Close filters"
+                        data-testid="browse-filter-close"
+                    >×</Btn>
+                </header>
+                <div class="bx-filter-body">
+                    <section class="bx-filter-row">
+                        <Caption>// state</Caption>
+                        <div class="bx-filter-chips">
+                            {#each STATE_FILTERS as s}
+                                <button
+                                    type="button"
+                                    class="bx-filter-chip mono"
+                                    class:active={filterDraftStates.includes(
+                                        s.key,
+                                    )}
+                                    style="--chip-color: {s.color}"
+                                    onclick={() => toggleDraftState(s.key)}
+                                    data-testid="browse-filter-state-{s.key}"
+                                >
+                                    <span
+                                        class="bx-filter-chip-dot"
+                                        aria-hidden="true"
+                                    ></span>
+                                    {s.label}
+                                </button>
+                            {/each}
+                        </div>
+                    </section>
+                    {#if (liveTags ?? []).length > 0}
+                        <section class="bx-filter-row">
+                            <Caption>// tags</Caption>
+                            <div class="bx-filter-chips">
+                                {#each liveTags ?? [] as t}
+                                    <button
+                                        type="button"
+                                        class="bx-filter-chip mono"
+                                        class:active={filterDraftTags.includes(
+                                            t,
+                                        )}
+                                        onclick={() => toggleDraftTag(t)}
+                                        data-testid="browse-filter-tag"
+                                    >· {t}</button>
+                                {/each}
+                            </div>
+                        </section>
+                    {/if}
+                </div>
+                <footer class="bx-filter-footer">
+                    <Btn
+                        kind="ghost"
+                        size="sm"
+                        onclick={resetFilterSheet}
+                        data-testid="browse-filter-reset"
+                    >reset</Btn>
+                    <Btn
+                        kind="primary"
+                        size="sm"
+                        onclick={applyFilterSheet}
+                        data-testid="browse-filter-apply"
+                    >apply</Btn>
+                </footer>
+            </div>
+        {/if}
 
         <!--
             Phase 20-B: select-all + bulk toolbar. The header strip is
@@ -2512,107 +2858,9 @@
         min-height: 0;
         border-right: 1px solid var(--border);
     }
-    .toolbar {
-        display: flex;
-        align-items: center;
-        gap: var(--space-3);
-        padding: var(--space-4) var(--space-6);
-        border-bottom: 1px solid var(--border);
-    }
-    .search {
-        display: flex;
-        align-items: center;
-        gap: var(--space-2);
-        flex: 1;
-        padding: 0.55rem 0.85rem;
-        border: 1px solid var(--border);
-        border-radius: var(--radius-md);
-        background: #ffffff;
-        color: var(--text-subtle);
-        max-width: 480px;
-        transition:
-            border-color var(--duration-fast) var(--ease),
-            box-shadow var(--duration-fast) var(--ease);
-    }
-    :global([data-theme="dark"]) .search {
-        background: var(--bg-elevated);
-    }
-    .search:hover {
-        border-color: var(--border-strong);
-    }
-    .search:focus-within {
-        border-color: var(--accent);
-        box-shadow: var(--shadow-sm);
-    }
-    .search input {
-        background: none;
-        border: 0;
-        outline: 0;
-        flex: 1;
-        font-size: var(--text-sm);
-        color: var(--text);
-        font-family: var(--font-mono);
-    }
-    .search input::placeholder {
-        color: var(--text-subtle);
-        font-family: var(--font-mono);
-    }
-
-    .filters {
-        display: flex;
-        gap: 2px;
-        padding: 3px;
-        background: var(--bg-subtle);
-        border-radius: var(--radius-md);
-    }
-    .pill {
-        padding: 0.35rem 0.8rem;
-        font-size: var(--text-xs);
-        color: var(--text-muted);
-        border-radius: var(--radius-sm);
-        font-weight: 500;
-        transition:
-            color var(--duration-fast) var(--ease),
-            background var(--duration-fast) var(--ease),
-            box-shadow var(--duration-fast) var(--ease);
-    }
-    .pill:hover:not(.active) {
-        color: var(--text);
-        background: var(--bg-hover);
-    }
-    .pill.active {
-        background: var(--bg-elevated);
-        color: var(--text);
-        box-shadow: var(--shadow-sm);
-    }
-
-    /* Hover tints echo row state chip palette for semantic hinting */
-    .pill.pill-new:hover:not(.active) {
-        background: color-mix(in oklch, var(--info) 10%, transparent);
-        color: var(--info);
-    }
-    .pill.pill-learning:hover:not(.active) {
-        background: color-mix(in oklch, var(--warning) 14%, transparent);
-        color: var(--warning);
-    }
-    .pill.pill-review:hover:not(.active) {
-        background: color-mix(in oklch, var(--success) 12%, transparent);
-        color: var(--success);
-    }
-    .pill.pill-suspended:hover:not(.active) {
-        background: var(--bg-inset);
-        color: var(--text-muted);
-    }
-    .count-tag {
-        font-size: var(--text-xs);
-        color: var(--text-subtle);
-        font-variant-numeric: tabular-nums;
-        font-family: var(--font-mono);
-        margin-left: auto;
-        padding: 3px 8px;
-        background: var(--bg-subtle);
-        border-radius: var(--radius-sm);
-    }
+    /* Phase A4-ζ: legacy .toolbar/.search/.filters/.pill/.count-tag
+       chrome was here — replaced by .bx-toolbar / .bx-searchbar /
+       .bx-chip / .bx-toolbar-count further down the stylesheet. */
 
     /* Phase 20-B: bulk-select strip + toolbar. The strip is sticky
        below the search/pagination toolbar so the master checkbox and
@@ -2723,33 +2971,8 @@
         justify-content: center;
     }
 
-    .row-wrap {
-        display: grid;
-        grid-template-columns: 24px 1fr;
-        align-items: center;
-        gap: var(--space-2);
-    }
-    .row-wrap-checked {
-        background: color-mix(in oklch, var(--accent) 6%, transparent);
-        border-radius: var(--radius-md);
-    }
-    .row-check {
-        cursor: pointer;
-        margin-left: var(--space-2);
-    }
-    .row-check:disabled {
-        cursor: not-allowed;
-        opacity: 0.4;
-    }
-
-    .list {
-        flex: 1;
-        overflow-y: auto;
-        display: flex;
-        flex-direction: column;
-        gap: var(--space-2);
-        padding: var(--space-4) var(--space-6);
-    }
+    /* Phase A4-ε₁/ζ: legacy .row-wrap / .row-check / .list lived here —
+       superseded by .bx-row* / .bx-table chrome in the ε₁ section. */
 
     .empty {
         margin: var(--space-8) auto;
@@ -2929,18 +3152,9 @@
         opacity: 0.55;
         cursor: progress;
     }
-    /* Phase 11-C: pagination cluster lives in the toolbar. Prev/Next pills
-       reuse .pill styling but stay disabled with reduced opacity so the
-       page-boundary state is unmistakable. */
-    .pagination {
-        display: inline-flex;
-        align-items: center;
-        gap: var(--space-2);
-    }
-    .page-btn:disabled {
-        opacity: 0.4;
-        cursor: not-allowed;
-    }
+    /* Phase A4-ζ: legacy .pagination / .page-btn:disabled lived here —
+       replaced by .bx-toolbar-paginate (Btn ghost prev/next).        */
+
     .tag-edit {
         display: flex;
         flex-wrap: wrap;
@@ -3434,19 +3648,6 @@
         .tree,
         .editor {
             display: none;
-        }
-        .list {
-            padding: var(--space-3) var(--space-3);
-        }
-        .toolbar {
-            flex-wrap: wrap;
-            gap: var(--space-2);
-            padding: var(--space-3) var(--space-3);
-        }
-        .filters {
-            flex-wrap: wrap;
-            gap: var(--space-2);
-            row-gap: var(--space-2);
         }
         .bulk-toolbar {
             flex-wrap: wrap;
@@ -4063,6 +4264,304 @@
             flex-direction: column;
             align-items: flex-start;
             gap: 6px;
+        }
+    }
+
+    /* ────────────────────────────────────────────────────────────
+       Phase A4-ζ — chip-token toolbar + filter sheet
+       Replaces legacy .toolbar / .search / .filters / .pill /
+       .pagination / .count-tag chrome. Toolbar lives below the
+       hero, sheet floats centred on desktop / bottom-anchored
+       on mobile.
+       ──────────────────────────────────────────────────────────── */
+
+    .bx-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 16px 32px;
+        border-bottom: 1.5px solid var(--ink);
+        flex-wrap: wrap;
+    }
+
+    .bx-searchbar {
+        flex: 1 1 280px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+        padding: 8px 14px;
+        min-height: 38px;
+        border: 1.5px solid var(--ink);
+        border-radius: var(--radius);
+        background: var(--paper);
+        color: var(--ink);
+        box-shadow: 2px 2px 0 var(--ink);
+        cursor: text;
+        transition:
+            transform 100ms ease,
+            box-shadow 100ms ease;
+    }
+
+    .bx-searchbar:focus-within {
+        transform: translate(-0.5px, -0.5px);
+        box-shadow: 3px 3px 0 var(--ink);
+    }
+
+    .bx-chip {
+        display: inline-flex;
+        align-items: center;
+        padding: 1px 6px;
+        font-size: 12px;
+        line-height: 1.4;
+        border: 1px dashed var(--rule);
+        border-radius: 3px;
+        background: transparent;
+        color: var(--ink);
+        cursor: pointer;
+        transition:
+            background-color 100ms ease,
+            border-color 100ms ease;
+    }
+
+    .bx-chip:hover {
+        background: color-mix(in oklch, var(--ink) 8%, transparent);
+        border-style: solid;
+    }
+
+    .bx-chip-deck {
+        color: var(--accent);
+        border-color: color-mix(in oklch, var(--accent) 35%, transparent);
+    }
+
+    .bx-chip-tag {
+        color: var(--ink);
+        border-color: color-mix(in oklch, var(--ink) 30%, transparent);
+    }
+
+    .bx-chip-is {
+        color: var(--ink-soft, var(--ink));
+        border-color: color-mix(in oklch, var(--ink) 24%, transparent);
+        font-style: italic;
+    }
+
+    .bx-chip-text {
+        color: var(--ink);
+        border-color: color-mix(in oklch, var(--ink) 20%, transparent);
+    }
+
+    .bx-search-input {
+        flex: 1 1 60px;
+        min-width: 60px;
+        background: transparent;
+        border: 0;
+        outline: 0;
+        color: var(--ink);
+        font-family: var(--font-mono);
+        font-size: 12px;
+        padding: 2px 0;
+    }
+
+    .bx-search-input::placeholder {
+        color: var(--ink-mute);
+        font-family: var(--font-mono);
+    }
+
+    .bx-cursor {
+        width: 1px;
+        height: 14px;
+        background: var(--ink-mute);
+        animation: bx-blink 1s step-end infinite;
+    }
+
+    .bx-searchbar:focus-within .bx-cursor {
+        display: none;
+    }
+
+    @keyframes bx-blink {
+        0%,
+        50% {
+            opacity: 1;
+        }
+        51%,
+        100% {
+            opacity: 0;
+        }
+    }
+
+    .bx-kbd-hint {
+        font-size: 10px;
+        color: var(--ink-mute);
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        margin-left: auto;
+        padding-left: 8px;
+    }
+
+    .bx-toolbar-paginate {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin-left: auto;
+    }
+
+    .bx-toolbar-count {
+        font-size: 11px;
+        color: var(--ink-mute);
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 0.04em;
+        padding: 0 6px;
+        white-space: nowrap;
+    }
+
+    /* — ζ Filter sheet — */
+    .bx-filter-backdrop {
+        position: fixed;
+        inset: 0;
+        background: color-mix(in oklch, var(--ink) 18%, transparent);
+        z-index: 40;
+        animation: bx-fade-in 140ms ease-out;
+    }
+
+    .bx-filter-sheet {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: min(560px, calc(100vw - 32px));
+        max-height: 70vh;
+        display: flex;
+        flex-direction: column;
+        background: var(--paper);
+        border: 1.5px solid var(--ink);
+        border-radius: 6px;
+        box-shadow: 4px 4px 0 var(--ink);
+        z-index: 41;
+        animation: bx-sheet-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @keyframes bx-fade-in {
+        from {
+            opacity: 0;
+        }
+        to {
+            opacity: 1;
+        }
+    }
+
+    @keyframes bx-sheet-in {
+        from {
+            opacity: 0;
+            transform: translate(-50%, calc(-50% + 8px));
+        }
+        to {
+            opacity: 1;
+            transform: translate(-50%, -50%);
+        }
+    }
+
+    .bx-filter-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 14px 18px;
+        border-bottom: 1px dashed var(--rule);
+    }
+
+    .bx-filter-body {
+        padding: 14px 18px 18px;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+    }
+
+    .bx-filter-row {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .bx-filter-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+
+    .bx-filter-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 10px;
+        border: 1px solid var(--rule);
+        border-radius: 3px;
+        background: var(--paper);
+        color: var(--ink);
+        font-size: 11px;
+        text-transform: lowercase;
+        cursor: pointer;
+        transition:
+            background-color 100ms ease,
+            border-color 100ms ease,
+            box-shadow 100ms ease;
+    }
+
+    .bx-filter-chip-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--chip-color, var(--ink-mute));
+        border: 1px solid var(--ink);
+    }
+
+    .bx-filter-chip:hover {
+        background: var(--bg-soft);
+        border-color: var(--ink);
+    }
+
+    .bx-filter-chip.active {
+        background: color-mix(in oklch, var(--ink) 8%, var(--paper));
+        border-color: var(--ink);
+        box-shadow: 1px 1px 0 var(--ink);
+    }
+
+    .bx-filter-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        padding: 12px 18px;
+        border-top: 1px dashed var(--rule);
+    }
+
+    @media (max-width: 768px) {
+        .bx-toolbar {
+            padding: 12px 14px;
+            gap: 8px;
+        }
+        .bx-toolbar-paginate {
+            flex: 1 0 100%;
+            justify-content: space-between;
+            margin-left: 0;
+        }
+        .bx-filter-sheet {
+            top: auto;
+            left: 0;
+            bottom: 0;
+            transform: translate(0, 0);
+            width: 100%;
+            max-height: 80vh;
+            border-radius: 6px 6px 0 0;
+            animation: bx-sheet-mobile-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        @keyframes bx-sheet-mobile-in {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
     }
 </style>

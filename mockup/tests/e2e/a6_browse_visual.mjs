@@ -177,15 +177,23 @@ try {
                 )?.trim() ?? "";
             await decks.first().click();
             await page.waitForTimeout(250);
-            queryAfterClick = await page
-                .locator('.toolbar input[type="search"]')
-                .inputValue();
+            // Phase A4-ζ: sidebar-click writes into `query`; the chip-bar
+            // renders that token as a bx-chip. Read the first chip text
+            // instead of the (now-bound-to-pendingInput) <input> value.
+            queryAfterClick =
+                (
+                    await page
+                        .locator('[data-testid="browse-toolbar-chip"]')
+                        .first()
+                        .textContent()
+                        .catch(() => "")
+                )?.trim() ?? "";
         }
         const expected = `deck:"${firstDeckName}"`;
         record(
             "2. sidebar deck click sets query to deck:\"<name>\"",
             deckCount >= 1 && queryAfterClick === expected,
-            `deck_count=${deckCount} clicked="${firstDeckName}" query=${JSON.stringify(queryAfterClick)}`,
+            `deck_count=${deckCount} clicked="${firstDeckName}" chip=${JSON.stringify(queryAfterClick)}`,
         );
         await page.close();
     }
