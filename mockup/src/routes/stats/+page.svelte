@@ -1,6 +1,6 @@
 <script lang="ts">
     import { onMount } from "svelte";
-    import Card from "$lib/components/Card.svelte";
+    import { Caption } from "$lib/components/ui";
     import {
         fetchStatsRecent,
         fetchAnswerButtons,
@@ -15,12 +15,19 @@
         "1Y": 365,
         ALL: 365,
     };
+    const RANGE_LABEL: Record<Range, string> = {
+        "1M": "past 30 days",
+        "3M": "past 90 days",
+        "1Y": "past 365 days",
+        ALL: "all time",
+    };
 
     let range = $state<Range>("1M");
 
     let history = $state<ApiDayCount[] | null>(null);
     let answerButtons = $state<ApiAnswerButtons | null>(null);
     let loadError = $state<string | null>(null);
+    let loaded = $state(false);
 
     async function load(days: number) {
         loadError = null;
@@ -35,6 +42,8 @@
             history = [];
             answerButtons = { days, again: 0, hard: 0, good: 0, easy: 0 };
             loadError = e instanceof Error ? e.message : "Couldn't load stats";
+        } finally {
+            loaded = true;
         }
     }
 
@@ -42,6 +51,7 @@
 
     function setRange(r: Range) {
         range = r;
+        loaded = false;
         load(RANGE_DAYS[r]);
     }
 
@@ -59,6 +69,12 @@
         return n;
     });
 
+    let activeDays = $derived(values.filter((v) => v > 0).length);
+    let avgPerActiveDay = $derived(
+        activeDays === 0 ? 0 : Math.round(totalReviews / activeDays),
+    );
+    let bestDay = $derived(values.length === 0 ? 0 : Math.max(...values));
+
     let answerEntries = $derived(
         answerButtons
             ? ([
@@ -70,323 +86,440 @@
             : [],
     );
     let totalAns = $derived(answerEntries.reduce((a, [, v]) => a + v, 0));
+
+    // Bar chart geometry — recomputed from the live history so the SVG
+    // stays viewBox-correct across range changes. We render the chart at
+    // a logical 520×140 viewBox and let CSS scale it; mobile shrinks the
+    // visible width via aspect-ratio so the bars never run off screen.
+    const CHART_W = 520;
+    const CHART_H = 140;
+    let barCount = $derived(Math.max(1, values.length));
+    let barUnit = $derived((CHART_W - 14) / barCount);
+    let bars = $derived(
+        values.map((v, i) => {
+            const x = i * barUnit + 4;
+            const h = (v / maxBar) * (CHART_H - 8);
+            return { x, h, w: Math.max(1, barUnit - 5), v };
+        }),
+    );
 </script>
 
 <svelte:head><title>Stats — Anki</title></svelte:head>
 
-<div class="page">
-    <header>
-        <div>
-            <h1>Statistics</h1>
-            <p class="subtitle">All decks · snapshot of your review behavior</p>
+<div class="sketch-skin grain page sx-page" data-testid="stats-root">
+    <header class="sx-head" data-testid="stats-head">
+        <div class="sx-head-left">
+            <Caption>the.ledger</Caption>
+            <h1 class="sx-title mono" data-testid="stats-title">
+                statistics
+                <span class="sx-title-hand hand" aria-hidden="true">{RANGE_LABEL[range]}</span>
+            </h1>
+            <p class="sx-subtitle mono">all decks · snapshot of your review behavior</p>
         </div>
-        <div class="range">
+        <div class="sx-range" role="tablist" aria-label="time range" data-testid="stats-range">
             {#each ["1M", "3M", "1Y", "ALL"] as r (r)}
                 <button
-                    class="range-opt"
+                    type="button"
+                    role="tab"
+                    aria-selected={range === r}
+                    class="sx-range-pill mono"
                     class:active={range === r}
-                    onclick={() => setRange(r as Range)}>{r}</button
-                >
+                    data-testid="stats-range-{r}"
+                    onclick={() => setRange(r as Range)}
+                >{r === "ALL" ? "all" : r}</button>
             {/each}
         </div>
     </header>
 
     {#if loadError}
-        <div class="error-banner">Couldn't load stats: {loadError}</div>
+        <div class="sx-error mono" role="alert" data-testid="stats-error">
+            // couldn't reach server — {loadError}
+        </div>
     {/if}
 
-    <div class="kpi-grid">
-        <Card padding="md">
-            <div class="kpi-label">Reviews</div>
-            <div class="kpi-value">{totalReviews.toLocaleString()}</div>
-            <div class="kpi-delta">last {RANGE_DAYS[range]} days</div>
-        </Card>
-        <Card padding="md">
-            <div class="kpi-label">Streak</div>
-            <div class="kpi-value">{streak}<span class="unit">days</span></div>
-            <div class="kpi-delta">consecutive non-zero days</div>
-        </Card>
-    </div>
+    <section class="sx-kpi-grid" data-testid="stats-kpi-grid">
+        <article class="sx-tile" data-testid="stats-tile-reviews">
+            <Caption>reviews</Caption>
+            <div class="sx-tile-value mono">
+                {totalReviews.toLocaleString()}<span class="sx-tile-unit">in {RANGE_DAYS[range]}d</span>
+            </div>
+        </article>
+        <article class="sx-tile sx-tile-accent" data-testid="stats-tile-streak">
+            <Caption>streak</Caption>
+            <div class="sx-tile-value mono">
+                {streak}<span class="sx-tile-unit">days</span>
+            </div>
+        </article>
+        <article class="sx-tile" data-testid="stats-tile-avg">
+            <Caption>avg / active day</Caption>
+            <div class="sx-tile-value mono">
+                {avgPerActiveDay.toLocaleString()}<span class="sx-tile-unit">cards</span>
+            </div>
+        </article>
+        <article class="sx-tile" data-testid="stats-tile-best">
+            <Caption>best day</Caption>
+            <div class="sx-tile-value mono">
+                {bestDay.toLocaleString()}<span class="sx-tile-unit">cards</span>
+            </div>
+        </article>
+    </section>
 
-    <div class="charts-grid">
-        <Card padding="lg">
-            <div class="card-head">
-                <h3>Daily reviews</h3>
-                <span class="subtle">last {RANGE_DAYS[range]} days</span>
-            </div>
-            <div class="bars" style:grid-template-columns="repeat({Math.max(1, values.length)}, 1fr)">
-                {#each values as v, i (i)}
-                    <div class="bar-col">
-                        <div class="bar" style:height="{(v / maxBar) * 100}%"></div>
-                    </div>
-                {/each}
-            </div>
-            <div class="x-axis">
-                <span>{RANGE_DAYS[range]}d ago</span>
-                <span>today</span>
-            </div>
-        </Card>
-
-        <Card padding="lg">
-            <div class="card-head">
-                <h3>Answer buttons</h3>
-                <span class="subtle">{totalAns} total</span>
-            </div>
-            {#if totalAns === 0}
-                <div class="empty">No reviews in this window.</div>
+    <section class="sx-charts" data-testid="stats-charts">
+        <article class="sx-panel" data-testid="stats-bars-panel">
+            <header class="sx-panel-head">
+                <Caption>reviews per day</Caption>
+                <span class="sx-panel-meta mono">last {RANGE_DAYS[range]}d</span>
+            </header>
+            {#if loaded && values.length === 0}
+                <div class="sx-empty mono" data-testid="stats-bars-empty">
+                    no reviews in this window.
+                </div>
             {:else}
-                <div class="ans-chart">
+                <svg
+                    class="sx-bars"
+                    data-testid="stats-bars-svg"
+                    viewBox="0 0 {CHART_W} {CHART_H + 26}"
+                    preserveAspectRatio="none"
+                    role="img"
+                    aria-label="reviews per day"
+                >
+                    <line
+                        x1="0"
+                        y1={CHART_H}
+                        x2={CHART_W}
+                        y2={CHART_H}
+                        stroke="var(--ink)"
+                        stroke-width="1.4"
+                    />
+                    {#each [0.25, 0.5, 0.75] as p, i (i)}
+                        <line
+                            x1="0"
+                            y1={CHART_H - CHART_H * p}
+                            x2={CHART_W}
+                            y2={CHART_H - CHART_H * p}
+                            stroke="var(--rule)"
+                            stroke-width="1"
+                            stroke-dasharray="2 4"
+                        />
+                    {/each}
+                    {#each bars as b, i (i)}
+                        <rect
+                            x={b.x}
+                            y={CHART_H - b.h}
+                            width={b.w}
+                            height={b.h}
+                            rx="1"
+                            fill="var(--accent-soft)"
+                            stroke="var(--ink)"
+                            stroke-width="1"
+                            data-testid="stats-bar-{i}"
+                        />
+                    {/each}
+                    <text x="0" y={CHART_H + 18} class="sx-axis mono">{RANGE_DAYS[range]}d ago</text>
+                    <text x={CHART_W - 36} y={CHART_H + 18} class="sx-axis mono">today</text>
+                </svg>
+            {/if}
+        </article>
+
+        <article class="sx-panel" data-testid="stats-answer-panel">
+            <header class="sx-panel-head">
+                <Caption>answer mix</Caption>
+                <span class="sx-panel-meta mono">{totalAns} total</span>
+            </header>
+            {#if totalAns === 0}
+                <div class="sx-empty mono" data-testid="stats-answer-empty">
+                    no answers in this window.
+                </div>
+            {:else}
+                <div class="sx-answer-list" data-testid="stats-answer-list">
                     {#each answerEntries as [k, v] (k)}
                         {@const pct = (v / totalAns) * 100}
-                        <div class="ans-row">
-                            <span class="ans-k ans-k-{k}">{k}</span>
-                            <div class="ans-bar">
-                                <div class="ans-fill ans-fill-{k}" style:width="{pct}%"></div>
+                        <div class="sx-answer-row" data-testid="stats-answer-{k}">
+                            <div class="sx-answer-head">
+                                <span class="sx-answer-key sx-answer-key-{k} mono">{k}</span>
+                                <span class="sx-answer-meta mono">{v} · {pct.toFixed(0)}%</span>
                             </div>
-                            <span class="ans-v">{v}</span>
-                            <span class="ans-pct">{pct.toFixed(0)}%</span>
+                            <div class="sx-answer-bar">
+                                <div
+                                    class="sx-answer-fill sx-answer-fill-{k}"
+                                    style:width="{pct}%"
+                                ></div>
+                            </div>
                         </div>
                     {/each}
                 </div>
             {/if}
-        </Card>
-    </div>
+        </article>
+    </section>
 </div>
 
 <style>
-    .page {
-        max-width: var(--content-max-wide);
+    .sx-page {
+        max-width: 1100px;
         margin: 0 auto;
-        padding: var(--space-10) var(--space-8) var(--space-16);
+        padding: var(--space-8) var(--space-6) var(--space-12);
         display: flex;
         flex-direction: column;
-        gap: var(--space-8);
-    }
-    /* Bar charts have N fixed-fr columns set inline; their intrinsic content
-       still forces a min width. Children declare min-width: 0 so the columns
-       can shrink below content size, and on phones the chart cards clip
-       horizontally and scroll internally rather than pushing the page wide. */
-    .bars > * {
-        min-width: 0;
-    }
-    @media (max-width: 640px) {
-        .page {
-            padding: var(--space-5) var(--space-3) var(--space-8);
-            gap: var(--space-5);
-            min-width: 0;
-        }
-        .charts-grid {
-            grid-template-columns: 1fr;
-            min-width: 0;
-        }
-        .charts-grid > :global(*) {
-            min-width: 0;
-            overflow-x: auto;
-        }
-        .bars {
-            height: 140px;
-        }
+        gap: var(--space-6);
     }
 
-    header {
+    /* ============== HEADER ============== */
+    .sx-head {
         display: flex;
         justify-content: space-between;
         align-items: flex-end;
         flex-wrap: wrap;
         gap: var(--space-4);
     }
-    h1 {
-        font-size: var(--text-3xl);
-        font-weight: 600;
-        letter-spacing: -0.02em;
-    }
-    .subtitle {
-        color: var(--text-muted);
-        font-size: var(--text-sm);
-        margin-top: var(--space-1);
-    }
-
-    .range {
+    .sx-head-left {
         display: flex;
-        padding: 2px;
-        gap: 2px;
-        background: var(--bg-subtle);
-        border-radius: var(--radius-md);
-        border: 1px solid var(--border);
+        flex-direction: column;
+        gap: 4px;
     }
-    .range-opt {
-        padding: 0.35rem 0.75rem;
-        font-size: var(--text-xs);
-        font-weight: 500;
-        color: var(--text-muted);
-        border-radius: var(--radius-sm);
-    }
-    .range-opt.active {
-        background: var(--bg-elevated);
-        color: var(--text);
-        box-shadow: var(--shadow-sm);
-    }
-
-    .kpi-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-        gap: var(--space-4);
-    }
-    .kpi-label {
-        font-size: 0.7rem;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: var(--text-subtle);
-        font-weight: 500;
-    }
-    .kpi-value {
-        font-size: var(--text-3xl);
+    .sx-title {
+        font-size: 28px;
         font-weight: 600;
         letter-spacing: -0.02em;
-        margin-top: var(--space-2);
+        margin: 4px 0 0;
+        color: var(--ink);
+        line-height: 1.05;
+    }
+    .sx-title-hand {
+        font-family: var(--font-hand);
+        color: var(--accent);
+        font-size: 22px;
+        margin-left: 12px;
+        letter-spacing: 0;
+        text-transform: lowercase;
+    }
+    .sx-subtitle {
+        font-size: 12px;
+        color: var(--ink-mute);
+        margin: 4px 0 0;
+        letter-spacing: 0.04em;
+    }
+
+    /* Range selector — paper pills, ink-bg + bg-fg when active. Matches
+       design_handoff_ferdinand/source/stats.jsx range strip (l. 162-171). */
+    .sx-range {
+        display: inline-flex;
+        gap: 6px;
+        padding: 0;
+    }
+    .sx-range-pill {
+        font-size: 11px;
+        padding: 6px 12px;
+        border: 1.2px solid var(--ink);
+        border-radius: 4px;
+        background: var(--paper);
+        color: var(--ink-soft);
+        letter-spacing: 0.06em;
+        text-transform: lowercase;
+        cursor: pointer;
+        transition: background-color 100ms ease, color 100ms ease;
+    }
+    .sx-range-pill:hover {
+        background: var(--bg-soft);
+    }
+    .sx-range-pill.active {
+        background: var(--ink);
+        color: var(--bg);
+    }
+    .sx-range-pill:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+    }
+
+    /* ============== ERROR BANNER ============== */
+    .sx-error {
+        padding: 10px 14px;
+        border: 1.5px solid var(--due);
+        background: color-mix(in oklch, var(--due) 10%, var(--paper));
+        color: var(--due);
+        border-radius: var(--radius-md);
+        font-size: 12px;
+    }
+
+    /* ============== KPI TILES ============== */
+    .sx-kpi-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 14px;
+    }
+    .sx-tile {
+        background: var(--paper);
+        border: 1.5px solid var(--ink);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-stamp-md);
+        padding: 18px 20px;
+    }
+    .sx-tile-value {
+        font-weight: 600;
+        font-size: 36px;
+        line-height: 1;
+        letter-spacing: -0.02em;
+        margin-top: 8px;
+        color: var(--ink);
         font-variant-numeric: tabular-nums;
     }
-    .kpi-value .unit {
-        font-size: var(--text-base);
-        color: var(--text-subtle);
+    .sx-tile-accent .sx-tile-value {
+        color: var(--accent);
+    }
+    .sx-tile-unit {
+        font-size: 12px;
         font-weight: 400;
-        margin-left: 2px;
-    }
-    .kpi-delta {
-        font-size: var(--text-xs);
-        color: var(--text-subtle);
-        margin-top: var(--space-1);
-    }
-    .kpi-delta.up {
-        color: var(--success);
-    }
-    .kpi-delta.down {
-        color: var(--danger);
+        color: var(--ink-mute);
+        margin-left: 8px;
+        letter-spacing: 0.02em;
     }
 
-    .error-banner {
-        padding: var(--space-3) var(--space-4);
-        border: 1px solid var(--border);
-        background: var(--bg-subtle);
-        border-radius: var(--radius-md);
-        font-size: var(--text-sm);
-        color: var(--danger);
-    }
-
-    .empty {
-        padding: var(--space-6) 0;
-        text-align: center;
-        color: var(--text-subtle);
-        font-size: var(--text-sm);
-    }
-
-    .charts-grid {
+    /* ============== CHARTS ============== */
+    .sx-charts {
         display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        gap: var(--space-4);
+        grid-template-columns: 1fr 1fr;
+        gap: 18px;
     }
-    .card-head {
+    .sx-panel {
+        background: var(--paper);
+        border: 1.5px solid var(--ink);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-stamp-md);
+        padding: 18px 22px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+    .sx-panel-head {
         display: flex;
         justify-content: space-between;
         align-items: baseline;
-        margin-bottom: var(--space-4);
     }
-    .card-head h3 {
-        font-size: var(--text-base);
-        font-weight: 600;
+    .sx-panel-meta {
+        font-size: 11px;
+        color: var(--ink-mute);
+        letter-spacing: 0.04em;
     }
-    .subtle {
-        color: var(--text-subtle);
-        font-size: var(--text-xs);
+    .sx-empty {
+        padding: 24px 0;
+        text-align: center;
+        font-size: 12px;
+        color: var(--ink-mute);
+        letter-spacing: 0.04em;
     }
 
-    .bars {
-        display: grid;
-        grid-template-columns: repeat(30, 1fr);
-        gap: 2px;
-        align-items: end;
-        height: 180px;
-    }
-    .bar-col {
-        height: 100%;
-        display: flex;
-        align-items: end;
-    }
-    .bar {
+    /* Bar chart — SVG fills container width; aspect-ratio keeps the
+       138-unit drawing area visible while the 26-unit axis row is drawn
+       below it. Mobile shrinks the chart height, never the bar count. */
+    .sx-bars {
         width: 100%;
-        background: var(--accent);
-        border-radius: 2px;
-        opacity: 0.85;
-        min-height: 2px;
+        height: auto;
+        display: block;
+        aspect-ratio: 520 / 166;
     }
-    .x-axis {
-        display: flex;
-        justify-content: space-between;
-        margin-top: var(--space-3);
-        font-size: var(--text-xs);
-        color: var(--text-subtle);
+    .sx-axis {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        fill: var(--ink-mute);
     }
 
-    .ans-chart {
+    /* ============== ANSWER MIX ============== */
+    .sx-answer-list {
         display: flex;
         flex-direction: column;
-        gap: var(--space-4);
-        padding: var(--space-3) 0;
+        gap: 12px;
     }
-    .ans-row {
-        display: grid;
-        grid-template-columns: 60px 1fr 48px 40px;
-        align-items: center;
-        gap: var(--space-3);
-        font-size: var(--text-sm);
+    .sx-answer-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        margin-bottom: 4px;
     }
-    .ans-k {
-        text-transform: capitalize;
+    .sx-answer-key {
+        font-size: 12px;
         font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
     }
-    .ans-k-again {
-        color: var(--again);
+    .sx-answer-key-again {
+        color: var(--due);
     }
-    .ans-k-hard {
-        color: var(--hard);
+    .sx-answer-key-hard {
+        color: var(--warn);
     }
-    .ans-k-good {
-        color: var(--good);
+    .sx-answer-key-good {
+        color: var(--accent);
     }
-    .ans-k-easy {
-        color: var(--easy);
+    .sx-answer-key-easy {
+        color: var(--easy, #4a6c8e);
     }
-    .ans-bar {
-        background: var(--bg-subtle);
+    .sx-answer-meta {
+        font-size: 11px;
+        color: var(--ink-mute);
+    }
+    .sx-answer-bar {
+        height: 10px;
+        background: var(--bg-soft);
+        border: 1px solid var(--ink);
         border-radius: 999px;
-        height: 8px;
         overflow: hidden;
     }
-    .ans-fill {
+    .sx-answer-fill {
         height: 100%;
         border-radius: 999px;
     }
-    .ans-fill-again {
-        background: var(--again);
+    .sx-answer-fill-again {
+        background: var(--due);
     }
-    .ans-fill-hard {
-        background: var(--hard);
+    .sx-answer-fill-hard {
+        background: var(--warn);
     }
-    .ans-fill-good {
-        background: var(--good);
+    .sx-answer-fill-good {
+        background: var(--accent);
     }
-    .ans-fill-easy {
-        background: var(--easy);
-    }
-    .ans-v {
-        font-variant-numeric: tabular-nums;
-        text-align: right;
-        color: var(--text);
-    }
-    .ans-pct {
-        font-size: var(--text-xs);
-        color: var(--text-subtle);
-        text-align: right;
+    .sx-answer-fill-easy {
+        background: var(--easy, #4a6c8e);
     }
 
+    /* ============== MOBILE (≤768px) ============== */
+    @media (max-width: 768px) {
+        .sx-page {
+            padding: var(--space-5) var(--space-4) var(--space-10);
+            gap: var(--space-5);
+        }
+        .sx-head {
+            align-items: flex-start;
+        }
+        .sx-title {
+            font-size: 22px;
+        }
+        .sx-title-hand {
+            font-size: 18px;
+            margin-left: 8px;
+        }
+        .sx-kpi-grid {
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+        }
+        .sx-tile {
+            padding: 12px 14px;
+        }
+        .sx-tile-value {
+            font-size: 26px;
+            margin-top: 4px;
+        }
+        .sx-tile-unit {
+            font-size: 10px;
+            margin-left: 4px;
+        }
+        .sx-charts {
+            grid-template-columns: 1fr;
+            gap: 12px;
+        }
+        .sx-panel {
+            padding: 14px 16px;
+        }
+        .sx-bars {
+            aspect-ratio: 520 / 200;
+        }
+    }
 </style>
