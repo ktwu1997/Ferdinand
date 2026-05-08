@@ -66,3 +66,6 @@ data/*/image_verified.jsonl
 data/*/image_map.json
 
 .claude/
+
+# Design handoff archive (reference material — keep zip local)
+anki-re.zip
