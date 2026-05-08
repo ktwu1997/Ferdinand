@@ -42,6 +42,12 @@ data/auth.db
 data/auth.db-shm
 data/auth.db-wal
 
+# Phase A3: local secrets (FERDINAND_SESSION_KEY, FERDINAND_TEST_PASSWORD,
+# FERDINAND_SEED_PASSWORD). .env.example is the template, .env is local-only.
+.env
+.env.*
+!.env.example
+
 # Per-deck pipeline runtime state (committed: wordlist.jsonl + cards.jsonl)
 data/*/done.txt
 data/*/ingested.txt

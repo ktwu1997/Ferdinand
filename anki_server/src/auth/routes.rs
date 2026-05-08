@@ -15,9 +15,13 @@
 //! plus `/api/auth/me` which is auth-gated). Login/register are skipped
 //! because you can't authenticate without first calling them.
 
-use axum::extract::State;
-use axum::http::StatusCode;
-use axum::response::IntoResponse;
+use std::net::SocketAddr;
+use std::time::Instant;
+
+use axum::extract::{ConnectInfo, State};
+use axum::http::header::RETRY_AFTER;
+use axum::http::{HeaderValue, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
@@ -25,7 +29,7 @@ use tower_sessions::Session;
 
 use super::middleware::AuthedUser;
 use super::SESSION_USER_KEY;
-use crate::error::{ApiResult, ServerError};
+use crate::error::{ApiError, ApiResult, ServerError};
 use crate::state::ServerState;
 
 #[derive(Debug, Deserialize)]
@@ -75,10 +79,30 @@ async fn register(
 
 async fn login(
     State(state): State<ServerState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     session: Session,
     Json(body): Json<CredentialsBody>,
-) -> ApiResult<impl IntoResponse> {
+) -> ApiResult<Response> {
     let username = validate_username(&body.username)?;
+    if body.password.is_empty() {
+        return Err(ServerError::bad_request("password must not be empty"));
+    }
+    // Phase A3: rate-limit before the password verify path. Both per-IP
+    // and per-username scopes are checked together; a 429 reply does not
+    // consume an additional slot.
+    if let Some(retry_secs) =
+        state
+            .login_limiter
+            .check_and_register(addr.ip(), &username, Instant::now())
+    {
+        tracing::warn!(
+            ip = %addr.ip(),
+            username = %username,
+            retry_after = retry_secs,
+            "login rate-limited",
+        );
+        return Ok(too_many_requests(retry_secs));
+    }
     let row = state
         .auth
         .find_user(&username)?
@@ -102,7 +126,22 @@ async fn login(
         Json(UserBody {
             username: row.username,
         }),
-    ))
+    )
+        .into_response())
+}
+
+/// Build the 429 response with `Retry-After`. Kept as a free function so the
+/// handler stays focused on the happy path.
+fn too_many_requests(retry_secs: u64) -> Response {
+    let body = ApiError {
+        status: StatusCode::TOO_MANY_REQUESTS.as_u16(),
+        message: "too many login attempts; try again later".to_string(),
+    };
+    let mut response = (StatusCode::TOO_MANY_REQUESTS, Json(body)).into_response();
+    if let Ok(value) = HeaderValue::from_str(&retry_secs.to_string()) {
+        response.headers_mut().insert(RETRY_AFTER, value);
+    }
+    response
 }
 
 async fn logout(session: Session) -> ApiResult<impl IntoResponse> {

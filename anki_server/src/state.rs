@@ -32,6 +32,7 @@ use tokio::sync::Mutex;
 
 use crate::auth::db::AuthDb;
 use crate::auth::middleware::AuthedUser;
+use crate::auth::rate_limit::LoginRateLimiter;
 use crate::error::ServerError;
 
 /// Router-wide state. Cheaply clonable.
@@ -39,6 +40,9 @@ use crate::error::ServerError;
 pub struct ServerState {
     pub auth: AuthDb,
     pub users_dir: Arc<PathBuf>,
+    /// In-memory rate limiter for `/api/auth/login`. Shared across requests
+    /// so a single attacker can't dodge it by fanning out connections.
+    pub login_limiter: Arc<LoginRateLimiter>,
     /// `username → AppState`. Inserted lazily on first use so a fresh user
     /// doesn't pay a cold-start penalty until they actually authenticate.
     users: Arc<StdMutex<HashMap<String, AppState>>>,
@@ -49,6 +53,7 @@ impl ServerState {
         Self {
             auth,
             users_dir: Arc::new(users_dir.into()),
+            login_limiter: Arc::new(LoginRateLimiter::new()),
             users: Arc::new(StdMutex::new(HashMap::new())),
         }
     }

@@ -24,10 +24,12 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use axum::Router;
+use base64::Engine as _;
 use clap::Parser;
 use time::Duration;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
+use tower_sessions::cookie::Key;
 use tower_sessions::{Expiry, SessionManagerLayer};
 use tracing_subscriber::EnvFilter;
 
@@ -130,17 +132,22 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     seed_user_if_requested(&auth)?;
 
     let session_store = SqliteSessionStore::new(&auth);
-    // Note: cookies are unsigned. The session id is a 128-bit random integer,
-    // so tampering doesn't yield anything useful. Signing would require
-    // pulling the `signed` feature plus a key-management surface that
-    // Phase A2 doesn't otherwise need (YAGNI). Caddy handles TLS in front;
-    // the cookie only ever crosses 127.0.0.1 in plaintext.
+    // Phase A3: cookies are signed with a key loaded from FERDINAND_SESSION_KEY.
+    // Loopback dev runs auto-generate an ephemeral key (warned on stdout);
+    // non-loopback binds *require* the env var so a restart doesn't quietly
+    // invalidate every active session, and so the operator has consciously
+    // provisioned a key that survives across hosts. `secure=true` follows
+    // the same loopback rule — Caddy terminates TLS in front so the browser
+    // sees HTTPS even though anki_server is plaintext on its loopback port.
+    let session_key = load_session_key(bind)
+        .with_context(|| "session key configuration rejected")?;
     let session_layer = SessionManagerLayer::new(session_store)
         .with_name(SESSION_COOKIE)
         .with_http_only(true)
-        .with_secure(false)
+        .with_secure(!bind.is_loopback())
         .with_same_site(tower_sessions::cookie::SameSite::Lax)
-        .with_expiry(Expiry::OnInactivity(Duration::days(30)));
+        .with_expiry(Expiry::OnInactivity(Duration::days(30)))
+        .with_signed(session_key);
 
     let server_state = ServerState::new(auth, PathBuf::from(&users_dir));
 
@@ -171,10 +178,66 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         tracing::warn!(%addr, "anki_server bound to non-loopback — auth required, ensure TLS in front");
     }
     tracing::info!(%addr, users_dir = %users_dir, "anki_server listening on {addr}");
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    // `into_make_service_with_connect_info` exposes the peer SocketAddr to
+    // handlers via `ConnectInfo<SocketAddr>` — needed by the login rate
+    // limiter to scope per source IP.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
     Ok(())
+}
+
+/// Load the signing key for tower-sessions cookies.
+///
+/// Resolution rules (intentional, documented for ops):
+///
+/// * `FERDINAND_SESSION_KEY` set → base64-decode + validate ≥64 bytes →
+///   build `Key`. This is the only path that lets sessions survive a
+///   process restart, so production deployments must set it.
+/// * Unset *and* `bind.is_loopback()` → generate an ephemeral key with a
+///   loud warning. Suitable for `cargo run` against 127.0.0.1; restarts
+///   will invalidate logged-in users, which is fine in dev.
+/// * Unset *and* non-loopback bind → refuse to start. Otherwise an
+///   operator who exposes the server to a LAN/VPS would silently get
+///   restart-on-each-deploy session loss.
+fn load_session_key(bind: IpAddr) -> anyhow::Result<Key> {
+    let raw = std::env::var("FERDINAND_SESSION_KEY")
+        .ok()
+        .filter(|s| !s.is_empty());
+    load_session_key_from(raw.as_deref(), bind)
+}
+
+fn load_session_key_from(env_value: Option<&str>, bind: IpAddr) -> anyhow::Result<Key> {
+    if let Some(value) = env_value {
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(value.trim())
+            .with_context(|| {
+                "FERDINAND_SESSION_KEY must be base64-encoded; \
+                 generate with `openssl rand -base64 64`"
+            })?;
+        if bytes.len() < 64 {
+            anyhow::bail!(
+                "FERDINAND_SESSION_KEY decoded to {} bytes; need at least 64",
+                bytes.len()
+            );
+        }
+        return Key::try_from(bytes.as_slice())
+            .map_err(|e| anyhow::anyhow!("FERDINAND_SESSION_KEY rejected: {e}"));
+    }
+    if !bind.is_loopback() {
+        anyhow::bail!(
+            "FERDINAND_SESSION_KEY is required when ANKI_BIND is non-loopback ({bind}); \
+             generate one with `openssl rand -base64 64` and re-export"
+        );
+    }
+    tracing::warn!(
+        "FERDINAND_SESSION_KEY not set — using an ephemeral key for this dev run; \
+         sessions will not survive restart"
+    );
+    Ok(Key::generate())
 }
 
 /// Resolve the auth-db path with the same precedence as `users-dir`:
@@ -225,4 +288,65 @@ fn seed_user_if_requested(auth: &AuthDb) -> anyhow::Result<()> {
 async fn shutdown_signal() {
     tokio::signal::ctrl_c().await.ok();
     tracing::info!("shutdown signal received");
+}
+
+#[cfg(test)]
+mod session_key_tests {
+    use super::*;
+
+    fn loopback() -> IpAddr {
+        IpAddr::V4(Ipv4Addr::LOCALHOST)
+    }
+
+    fn non_loopback() -> IpAddr {
+        "192.168.1.10".parse().unwrap()
+    }
+
+    fn b64(bytes: &[u8]) -> String {
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    }
+
+    #[test]
+    fn accepts_64_byte_base64_key() {
+        let value = b64(&[7u8; 64]);
+        load_session_key_from(Some(&value), loopback())
+            .expect("64-byte key should be accepted");
+    }
+
+    #[test]
+    fn rejects_short_base64_key() {
+        let value = b64(&[7u8; 32]);
+        let err = load_session_key_from(Some(&value), loopback())
+            .expect_err("32-byte key must be rejected");
+        assert!(
+            err.to_string().contains("at least 64"),
+            "expected length error, got: {err}",
+        );
+    }
+
+    #[test]
+    fn rejects_non_base64_input() {
+        let err = load_session_key_from(Some("not!!base64$$"), loopback())
+            .expect_err("non-base64 must be rejected");
+        assert!(
+            err.to_string().contains("base64"),
+            "expected base64 error, got: {err}",
+        );
+    }
+
+    #[test]
+    fn allows_missing_key_on_loopback() {
+        load_session_key_from(None, loopback())
+            .expect("missing key on loopback should auto-generate");
+    }
+
+    #[test]
+    fn refuses_missing_key_on_non_loopback() {
+        let err = load_session_key_from(None, non_loopback())
+            .expect_err("missing key on non-loopback must refuse");
+        assert!(
+            err.to_string().contains("FERDINAND_SESSION_KEY"),
+            "expected key-required message, got: {err}",
+        );
+    }
 }

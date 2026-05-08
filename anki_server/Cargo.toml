@@ -19,6 +19,7 @@ anki_proto = { path = "../rslib/proto" }
 anyhow.workspace = true
 argon2.workspace = true
 axum = { workspace = true }
+base64.workspace = true
 clap = { workspace = true }
 mime_guess = "2"
 regex.workspace = true
