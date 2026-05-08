@@ -283,7 +283,7 @@ try {
             const front = page.getByTestId("card-face-front");
             const frontVisible = await front.isVisible().catch(() => false);
             const revealDisabled = await page
-                .locator("button.reveal-btn")
+                .locator('[data-testid="reveal-btn"]')
                 .first()
                 .isDisabled()
                 .catch(() => false);
@@ -304,7 +304,7 @@ try {
     });
     await page.waitForTimeout(800);
     {
-        const revealBtn = page.locator("button.reveal-btn").first();
+        const revealBtn = page.locator('[data-testid="reveal-btn"]').first();
         await revealBtn.waitFor({ state: "visible", timeout: 5000 });
         for (let i = 0; i < 20 && (await revealBtn.isDisabled()); i++) {
             await page.waitForTimeout(150);
