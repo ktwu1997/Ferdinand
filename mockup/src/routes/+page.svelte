@@ -1,10 +1,24 @@
 <script lang="ts">
     import { onMount, tick } from "svelte";
-    import Card from "$lib/components/Card.svelte";
-    import Button from "$lib/components/Button.svelte";
-    import Sparkline from "$lib/components/Sparkline.svelte";
-    import Kbd from "$lib/components/Kbd.svelte";
-    import LiveIndicator from "$lib/components/LiveIndicator.svelte";
+    import {
+        Btn,
+        Caption,
+        Chip,
+        Panel,
+    } from "$lib/components/ui";
+    import {
+        SketchArrow,
+        SketchCardStack,
+        SketchPlant,
+        SketchPlus,
+        SketchSearch,
+        SketchFlame,
+        SketchClock,
+        SketchLeaf,
+        SketchUser,
+        FerdinandMark,
+    } from "$lib/components/sketch";
+    import { auth } from "$lib/auth.svelte";
     import {
         decks as fakeDecks,
         history as fakeHistory,
@@ -22,32 +36,12 @@
     } from "$lib/api";
 
     let liveDecks: Deck[] | null = $state(null);
-    // Phase 10-B: explicit error banner on fetch failure. Read-only page,
-    // so fake fallback is preserved (silent-degrade on the data) — but the
-    // banner tells the user their counts are stale, which a fully-silent
-    // path would hide. Distinct from 9-N3 stateful pages: those would
-    // also reject the user's edits; here, no edits to reject, just stale
-    // counts to acknowledge.
     let loadError = $state<string | null>(null);
-
-    // Phase 11-B: live last-30-days history from /api/stats/recent. Same
-    // banner-plus-fake fallback shape as the deck fetch — the page never
-    // blanks, but the user is told their counts are stale.
     let liveHistory: ApiDayCount[] | null = $state(null);
     let statsError = $state<string | null>(null);
-
-    // Phase 17-B: per-day forecast of review-due cards for the next 7
-    // days. Default 7-day window matches the desktop graphs page; the
-    // bar chart degrades silently to a hidden section when forecast
-    // load fails (no fake fallback — a synthetic forecast would
-    // mislead the user about real review load).
     let forecast: ApiForecastDay[] | null = $state(null);
     let forecastError: string | null = $state(null);
 
-    // Bars scale to the peak day in the window, not to the seven-day
-    // sum — same convention desktop graphs use. Floor of 1 keeps the
-    // CSS `height: ...%` calculation safe when the forecast is all
-    // zeros (no future reviews → no bars, but no NaN either).
     let forecastPeak: number = $derived(
         Math.max(
             1,
@@ -61,25 +55,12 @@
         ),
     );
 
-    // Phase 14-C: inline "+ New deck" form. Mirrors the settings-page
-    // "+ New preset" pattern (Phase 12-B): button reveals input, Enter
-    // commits, Escape cancels. liveDecks must be non-null to commit so
-    // we never lie about persisting against fake data — server-side
-    // 400s surface inline rather than as a global error banner so the
-    // create form keeps focus and the user can fix-and-retry without
-    // scrolling.
     let isCreatingDeck = $state(false);
     let newDeckName = $state("");
     let isMutatingNewDeck = $state(false);
     let newDeckError = $state<string | null>(null);
     let newDeckInput = $state<HTMLInputElement | null>(null);
 
-    // Phase 18-B: parallel "+ Filtered deck" form. Same start/cancel/
-    // commit lifecycle as "+ New deck" so users get one consistent
-    // affordance pattern, but accepts a name + search expression
-    // (Anki search syntax, e.g. `deck:Spanish is:due`). Limit and
-    // order use server defaults (100 / "due"); the v1 surface keeps
-    // the form to two inputs so it doesn't outgrow the section header.
     let isCreatingFilteredDeck = $state(false);
     let newFilteredName = $state("");
     let newFilteredSearch = $state("");
@@ -90,7 +71,6 @@
     onMount(async () => {
         try {
             const res = await fetchDecks();
-            // Flatten top-level only for the landing view; keep nested for later.
             liveDecks = res.decks
                 .filter((d) => d.id !== 0 && d.level >= 1)
                 .map((d) => ({
@@ -143,12 +123,6 @@
         newDeckError = null;
     }
 
-    // Commit a new deck. Empty inputs short-circuit to cancel so a
-    // mash-Enter on a fresh form doesn't pile up no-op POSTs. On
-    // success the deck list refetches because Anki may have created
-    // missing parents (e.g. "Spanish::Verbs::Irregular" auto-creates
-    // "Spanish" + "Spanish::Verbs") and the canonical sort comes from
-    // the server.
     async function commitCreateDeck(): Promise<void> {
         const trimmed = newDeckName.trim();
         if (trimmed === "") {
@@ -205,11 +179,6 @@
         newFilteredError = null;
     }
 
-    // Filtered-deck commit. Two required fields (name + search): both
-    // empty → cancel (mash-Enter no-op); only one filled → server-side
-    // 400 surfaces inline. On success the deck list refetches because
-    // a brand-new filtered deck appears at top level and we want it in
-    // the visible grid without a hard reload.
     async function commitCreateFilteredDeck(): Promise<void> {
         const trimmedName = newFilteredName.trim();
         const trimmedSearch = newFilteredSearch.trim();
@@ -249,635 +218,1183 @@
             isMutatingNewFilteredDeck = false;
         }
     }
+
+    async function handleLogout(): Promise<void> {
+        await auth.logout();
+    }
+
     let history = $derived(liveHistory ?? fakeHistory);
     let totalReviews = $derived(history.reduce((a, d) => a + d.reviews, 0));
     let totalDueAll = $derived(decks.reduce((a, d) => a + totalDue(d), 0));
-    let last7 = $derived(history.slice(-7).map((d) => d.reviews));
+    let activeDeckCount = $derived(
+        decks.filter((d) => totalDue(d) > 0).length,
+    );
 
-    const today = new Date().toLocaleDateString("en-US", {
-        weekday: "long",
-        month: "long",
-        day: "numeric",
-    });
+    // Derive 2-char glyph from deck name. Strips spaces + dots so "日文 N2"
+    // → "日文" and "Rust ownership" → "RU". Unicode-aware via Array.from
+    // so multi-byte CJK chars don't get split mid-codepoint.
+    function deriveGlyph(name: string): string {
+        const chars = Array.from(name.trim()).filter(
+            (c) => c !== " " && c !== "·" && c !== "_",
+        );
+        if (chars.length === 0) return "··";
+        const first = chars[0];
+        const second = chars[1] ?? first;
+        // Latin uppercase; CJK left as-is (toUpperCase is a no-op for them).
+        return (first + second).toUpperCase();
+    }
+
+    // Date label for the // caption. Locale matches the design exemplar
+    // (2026·05·08) — middle-dot separators read as a deliberate aesthetic
+    // choice rather than the default "May 8, 2026" prose.
+    const today = (() => {
+        const d = new Date();
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, "0");
+        const day = String(d.getDate()).padStart(2, "0");
+        return `${y}·${m}·${day}`;
+    })();
+
+    let greetingName = $derived(auth.user?.username ?? "friend");
+    let resumeGlyph = $derived(deriveGlyph(resume.name));
+    let resumeDue = $derived(totalDue(resume));
 </script>
 
 <svelte:head><title>Today — Anki</title></svelte:head>
 
-<div class="page">
-    <header>
-        <div class="date-row">
-            <span class="date">{today}</span>
-            <LiveIndicator />
-        </div>
-        <div class="actions">
-            <Button variant="ghost" size="sm" href="/notes/new">
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
-                Add note
-                <Kbd>A</Kbd>
-            </Button>
-        </div>
-    </header>
-
-    {#if loadError}
-        <div class="error-banner" role="alert">
-            Couldn't reach server — showing cached counts. ({loadError})
-        </div>
-    {/if}
-
-    <h1>{totalDueAll} cards to review</h1>
-    <p class="subtitle">
-        Across {decks.filter((d) => totalDue(d) > 0).length} active decks ·
-        <span class="subtle">estimated 18 minutes</span>
-    </p>
-
-    <Card variant="primary" padding="lg">
-        <div class="resume">
-            <div class="resume-meta">
-                <span class="eyebrow">Resume where you left off</span>
-                <h2>{resume.emoji} {resume.name}</h2>
-                <p class="resume-stats">
-                    <span><strong>{resume.new}</strong> new</span>
-                    <span class="dot">·</span>
-                    <span><strong>{resume.learning}</strong> learning</span>
-                    <span class="dot">·</span>
-                    <span><strong>{resume.review}</strong> to review</span>
+<div class="sketch-skin grain page" data-testid="dash-root">
+    <!-- ============== DESKTOP V2 (today-focused) ============== -->
+    <div class="dash-desktop">
+        <header class="dash-head">
+            <div class="dash-head-left">
+                <Caption>{today}</Caption>
+                <h1 class="greeting" data-testid="dash-greeting">
+                    morning, {greetingName}.
+                    <span class="hand sun" aria-hidden="true">☉</span>
+                </h1>
+                <p class="dash-subtitle">
+                    you have <strong>{totalDueAll} cards</strong> due across {activeDeckCount} active deck{activeDeckCount === 1 ? "" : "s"}.
                 </p>
             </div>
-            <div class="resume-cta">
-                <Button variant="primary" size="lg" href="/study/{resume.id}">
-                    Start studying
-                    <Kbd>↵</Kbd>
-                </Button>
+            <div class="dash-head-right">
+                <div class="streak">
+                    <Caption>streak</Caption>
+                    <div class="streak-value mono">
+                        14d <SketchFlame size={14} />
+                    </div>
+                </div>
+                <div class="vrule" role="presentation"></div>
+                <SketchPlant size={56} />
+                {#if auth.user}
+                    <Btn kind="ghost" size="sm" onclick={handleLogout}>
+                        {#snippet leading()}<SketchUser size={12} />{/snippet}
+                        logout
+                    </Btn>
+                {/if}
             </div>
-        </div>
-    </Card>
+        </header>
 
-    <section class="section">
-        <div class="section-head">
-            <h3>All decks</h3>
-            <div class="head-actions">
-                {#if isCreatingDeck}
+        {#if loadError}
+            <div class="error-banner mono" role="alert">
+                couldn't reach server — showing cached counts. ({loadError})
+            </div>
+        {/if}
+
+        <!-- big "continue" CTA card (accent ground) -->
+        <a class="hero-cta" href="/study/{resume.id}" data-testid="dash-hero-cta">
+            <div class="hero-text">
+                <div class="hero-eye mono">// start where you left off</div>
+                <div class="hero-title mono">
+                    <span class="hero-glyph">{resumeGlyph}</span>
+                    <span class="hero-name">{resume.name}</span>
+                </div>
+                <div class="hero-stats mono">
+                    {resume.new} new · {resume.learning} learning · {resume.review} review{resumeDue > 0 ? ` · ~${Math.max(1, Math.round(resumeDue * 0.45))} min` : " · all clear"}
+                </div>
+            </div>
+            <div class="hero-arrow" aria-hidden="true">
+                <SketchArrow size={28} />
+            </div>
+            <div class="hero-deco" aria-hidden="true">
+                <SketchCardStack size={140} />
+            </div>
+        </a>
+
+        <!-- all decks -->
+        <section class="deck-section">
+            <div class="section-head">
+                <Caption>all decks</Caption>
+                <div class="section-actions">
+                    {#if !isCreatingDeck && !isCreatingFilteredDeck}
+                        <Btn
+                            kind="ghost"
+                            size="sm"
+                            onclick={startCreateDeck}
+                            disabled={liveDecks === null}
+                            aria-label="Create new deck"
+                        >
+                            {#snippet leading()}<SketchPlus size={12} />{/snippet}
+                            new deck
+                        </Btn>
+                        <Btn
+                            kind="paper"
+                            size="sm"
+                            onclick={startCreateFilteredDeck}
+                            disabled={liveDecks === null}
+                            aria-label="Create new filtered deck"
+                        >
+                            {#snippet leading()}<SketchSearch size={12} />{/snippet}
+                            filtered
+                        </Btn>
+                        <a class="ghost-link mono" href="/browse">browse all →</a>
+                    {/if}
+                </div>
+            </div>
+
+            {#if isCreatingDeck}
+                <Panel padding="16px 18px">
+                    <div class="inline-form">
+                        <input
+                            bind:this={newDeckInput}
+                            bind:value={newDeckName}
+                            class="inline-input"
+                            type="text"
+                            placeholder="Spanish::Verbs::Irregular"
+                            disabled={isMutatingNewDeck}
+                            aria-label="New deck name"
+                            onkeydown={(e) => {
+                                if (e.key === "Enter") commitCreateDeck();
+                                else if (e.key === "Escape")
+                                    cancelCreateDeck();
+                            }}
+                        />
+                        <Btn
+                            kind="primary"
+                            size="sm"
+                            onclick={commitCreateDeck}
+                            disabled={isMutatingNewDeck}
+                        >
+                            save
+                        </Btn>
+                        <Btn
+                            kind="ghost"
+                            size="sm"
+                            onclick={cancelCreateDeck}
+                            disabled={isMutatingNewDeck}
+                        >
+                            cancel
+                        </Btn>
+                    </div>
+                </Panel>
+            {/if}
+
+            {#if isCreatingFilteredDeck}
+                <Panel padding="16px 18px">
+                    <div class="inline-form inline-form-2col">
+                        <input
+                            bind:this={newFilteredNameInput}
+                            bind:value={newFilteredName}
+                            class="inline-input"
+                            type="text"
+                            placeholder="cram session"
+                            disabled={isMutatingNewFilteredDeck}
+                            aria-label="New filtered deck name"
+                            onkeydown={(e) => {
+                                if (e.key === "Enter")
+                                    commitCreateFilteredDeck();
+                                else if (e.key === "Escape")
+                                    cancelCreateFilteredDeck();
+                            }}
+                        />
+                        <input
+                            bind:value={newFilteredSearch}
+                            class="inline-input mono"
+                            type="text"
+                            placeholder="deck:Spanish is:due"
+                            disabled={isMutatingNewFilteredDeck}
+                            aria-label="Filtered deck search expression"
+                            onkeydown={(e) => {
+                                if (e.key === "Enter")
+                                    commitCreateFilteredDeck();
+                                else if (e.key === "Escape")
+                                    cancelCreateFilteredDeck();
+                            }}
+                        />
+                        <Btn
+                            kind="primary"
+                            size="sm"
+                            onclick={commitCreateFilteredDeck}
+                            disabled={isMutatingNewFilteredDeck}
+                        >
+                            save
+                        </Btn>
+                        <Btn
+                            kind="ghost"
+                            size="sm"
+                            onclick={cancelCreateFilteredDeck}
+                            disabled={isMutatingNewFilteredDeck}
+                        >
+                            cancel
+                        </Btn>
+                    </div>
+                </Panel>
+            {/if}
+
+            {#if newDeckError}
+                <div class="error-banner mono" role="alert">{newDeckError}</div>
+            {/if}
+            {#if newFilteredError}
+                <div class="error-banner mono" role="alert">{newFilteredError}</div>
+            {/if}
+
+            <div class="deck-grid" data-testid="deck-grid">
+                {#each decks as deck, i (deck.id)}
+                    {@const due = totalDue(deck)}
+                    {@const glyph = deriveGlyph(deck.name)}
+                    <a
+                        class="deck-card"
+                        data-tilt={i % 3}
+                        data-testid="deck-card"
+                        data-deck-id={deck.id}
+                        data-deck-name={deck.name}
+                        href="/study/{deck.id}"
+                    >
+                        <div class="deck-card-head">
+                            <span class="deck-card-eye mono">
+                                {String(i + 1).padStart(2, "0")} · {glyph}
+                            </span>
+                            {#if due > 0}
+                                <Chip color="var(--due)" bg="color-mix(in oklch, var(--due) 12%, transparent)">{due} due</Chip>
+                            {:else}
+                                <Chip color="var(--ink-mute)" bg="transparent">resting</Chip>
+                            {/if}
+                        </div>
+
+                        <div class="deck-card-body">
+                            <div class="deck-card-name mono">{deck.name}</div>
+                            <div class="deck-card-sub mono">
+                                {deck.totalCards.toLocaleString()} cards
+                            </div>
+                        </div>
+
+                        <div class="deck-card-counters">
+                            <div class="counter">
+                                <div class="mono counter-label">new</div>
+                                <div
+                                    class="mono counter-value"
+                                    class:has={deck.new > 0}
+                                    style="--counter-color: var(--due)"
+                                >{deck.new}</div>
+                            </div>
+                            <div class="counter">
+                                <div class="mono counter-label">learn</div>
+                                <div
+                                    class="mono counter-value"
+                                    class:has={deck.learning > 0}
+                                    style="--counter-color: var(--warn)"
+                                >{deck.learning}</div>
+                            </div>
+                            <div class="counter">
+                                <div class="mono counter-label">review</div>
+                                <div
+                                    class="mono counter-value"
+                                    class:has={deck.review > 0}
+                                    style="--counter-color: var(--accent)"
+                                >{deck.review}</div>
+                            </div>
+                        </div>
+
+                        <div class="deck-card-foot">
+                            <span class="mono deck-card-meta">
+                                <SketchClock size={11} />
+                                {deck.totalCards.toLocaleString()}
+                            </span>
+                            <span
+                                class="mono deck-card-cta"
+                                class:has-due={due > 0}
+                            >
+                                {due > 0 ? "study" : "review"}
+                                <SketchArrow size={12} />
+                            </span>
+                        </div>
+                    </a>
+                {/each}
+
+                <button
+                    type="button"
+                    class="deck-card-new"
+                    onclick={startCreateDeck}
+                    disabled={liveDecks === null}
+                    aria-label="Create new deck"
+                >
+                    <SketchPlus size={28} />
+                    <div class="mono">new deck</div>
+                    <div class="hand new-deck-prompt">
+                        what do you want to remember?
+                    </div>
+                </button>
+            </div>
+        </section>
+
+        <!-- forecast: real data, design didn't show it but kept for product completeness -->
+        {#if forecast}
+            <section class="forecast-section">
+                <div class="section-head">
+                    <Caption>next 7 days</Caption>
+                    <span class="ghost-link mono" aria-hidden="true">forecast</span>
+                </div>
+                {#if forecastError}
+                    <div class="error-banner mono" role="alert">
+                        couldn't load forecast — chart hidden. ({forecastError})
+                    </div>
+                {/if}
+                <Panel padding="22px 24px">
+                    <div class="forecast-head">
+                        <div>
+                            <div class="forecast-total mono">
+                                {forecastTotal.toLocaleString()}
+                            </div>
+                            <div class="mono forecast-label">cards due</div>
+                        </div>
+                        <div class="mono forecast-meta">
+                            bars scale to peak day in window.
+                        </div>
+                    </div>
+                    <div class="forecast-grid" data-testid="forecast-grid" role="img" aria-label="Per-day review forecast">
+                        {#each forecast as day (day.offset)}
+                            <div class="forecast-col">
+                                <div class="forecast-track">
+                                    <div
+                                        class="forecast-bar"
+                                        class:zero={day.reviews === 0}
+                                        style="height: {(day.reviews / forecastPeak) * 100}%"
+                                        title={day.offset === 0
+                                            ? `Today: ${day.reviews} due`
+                                            : `+${day.offset}d: ${day.reviews} due`}
+                                    ></div>
+                                </div>
+                                <div class="mono forecast-count">{day.reviews}</div>
+                                <div class="mono forecast-day">
+                                    {day.offset === 0 ? "today" : `+${day.offset}d`}
+                                </div>
+                            </div>
+                        {/each}
+                    </div>
+                </Panel>
+            </section>
+        {:else if forecastError}
+            <section class="forecast-section">
+                <div class="section-head">
+                    <Caption>next 7 days</Caption>
+                </div>
+                <div class="error-banner mono" role="alert">
+                    couldn't load forecast. ({forecastError})
+                </div>
+            </section>
+        {/if}
+
+        <!-- last 30 days -->
+        <section class="recent-section">
+            <div class="section-head">
+                <Caption>last 30 days</Caption>
+                <a class="ghost-link mono" href="/stats">see full stats →</a>
+            </div>
+            {#if statsError}
+                <div class="error-banner mono" role="alert">
+                    couldn't load review history — showing cached values. ({statsError})
+                </div>
+            {/if}
+            <Panel padding="22px 24px">
+                <div class="recent-row">
+                    <div>
+                        <div class="recent-total mono">
+                            {totalReviews.toLocaleString()}
+                        </div>
+                        <div class="mono recent-label">reviews</div>
+                    </div>
+                    <div class="recent-foot mono">
+                        <SketchLeaf size={20} />
+                        <span class="hand">steady wins.</span>
+                    </div>
+                </div>
+            </Panel>
+        </section>
+    </div>
+
+    <!-- ============== MOBILE (≤640px) ============== -->
+    <div class="dash-mobile">
+        <header class="m-head">
+            <div class="m-head-brand">
+                <FerdinandMark size={22} />
+                <span class="mono m-brand-label">ferdinand</span>
+            </div>
+            {#if auth.user}
+                <Btn kind="ghost" size="sm" onclick={handleLogout}>
+                    {#snippet leading()}<SketchUser size={12} />{/snippet}
+                    logout
+                </Btn>
+            {/if}
+        </header>
+
+        <Caption>{today}</Caption>
+        <h1 class="m-greeting">morning, {greetingName}.</h1>
+        <p class="m-sub mono">
+            <strong>{totalDueAll}</strong> due · 14d streak
+            <SketchFlame size={11} />
+        </p>
+
+        {#if loadError}
+            <div class="error-banner mono" role="alert">
+                couldn't reach server. ({loadError})
+            </div>
+        {/if}
+
+        <a class="m-hero" href="/study/{resume.id}">
+            <div>
+                <div class="mono m-hero-eye">// continue</div>
+                <div class="mono m-hero-title">{resume.name}</div>
+                <div class="mono m-hero-meta">
+                    {resumeDue} due · ~{Math.max(1, Math.round(resumeDue * 0.45))} min
+                </div>
+            </div>
+            <SketchArrow size={20} />
+        </a>
+
+        <Caption>decks</Caption>
+
+        <div class="m-deck-list">
+            {#each decks as deck, i (deck.id)}
+                {@const due = totalDue(deck)}
+                {@const glyph = deriveGlyph(deck.name)}
+                <a class="m-deck-row" href="/study/{deck.id}">
+                    <div class="m-deck-head">
+                        <div>
+                            <div class="mono m-deck-eye">
+                                {String(i + 1).padStart(2, "0")} · {glyph}
+                            </div>
+                            <div class="mono m-deck-name">{deck.name}</div>
+                        </div>
+                        {#if due > 0}
+                            <Chip color="var(--due)" bg="color-mix(in oklch, var(--due) 12%, transparent)">{due} due</Chip>
+                        {:else}
+                            <Chip color="var(--ink-mute)" bg="transparent">rest</Chip>
+                        {/if}
+                    </div>
+                    <div class="mono m-deck-meta">
+                        <span>{deck.new} new · {deck.learning} learn · {deck.review} rev</span>
+                        <span>{deck.totalCards.toLocaleString()}</span>
+                    </div>
+                </a>
+            {/each}
+
+            <button
+                type="button"
+                class="m-deck-new"
+                onclick={startCreateDeck}
+                disabled={liveDecks === null}
+            >
+                <SketchPlus size={20} />
+                <span class="mono">new deck</span>
+            </button>
+        </div>
+
+        {#if isCreatingDeck}
+            <Panel padding="14px 16px">
+                <div class="inline-form-mobile">
                     <input
-                        bind:this={newDeckInput}
                         bind:value={newDeckName}
-                        class="new-deck-input"
+                        class="inline-input"
                         type="text"
-                        placeholder="Spanish::Verbs::Irregular"
+                        placeholder="Spanish::Verbs"
                         disabled={isMutatingNewDeck}
-                        aria-label="New deck name"
                         onkeydown={(e) => {
                             if (e.key === "Enter") commitCreateDeck();
                             else if (e.key === "Escape") cancelCreateDeck();
                         }}
                     />
-                    <button
-                        type="button"
-                        class="ghost-link"
-                        disabled={isMutatingNewDeck}
-                        onclick={commitCreateDeck}
-                    >Save</button>
-                    <button
-                        type="button"
-                        class="ghost-link subtle-link"
-                        disabled={isMutatingNewDeck}
-                        onclick={cancelCreateDeck}
-                    >Cancel</button>
-                {:else if isCreatingFilteredDeck}
-                    <input
-                        bind:this={newFilteredNameInput}
-                        bind:value={newFilteredName}
-                        class="new-deck-input"
-                        type="text"
-                        placeholder="Cram session"
-                        disabled={isMutatingNewFilteredDeck}
-                        aria-label="New filtered deck name"
-                        onkeydown={(e) => {
-                            if (e.key === "Enter") commitCreateFilteredDeck();
-                            else if (e.key === "Escape") cancelCreateFilteredDeck();
-                        }}
-                    />
-                    <input
-                        bind:value={newFilteredSearch}
-                        class="new-filtered-search-input"
-                        type="text"
-                        placeholder="deck:Spanish is:due"
-                        disabled={isMutatingNewFilteredDeck}
-                        aria-label="Filtered deck search expression"
-                        onkeydown={(e) => {
-                            if (e.key === "Enter") commitCreateFilteredDeck();
-                            else if (e.key === "Escape") cancelCreateFilteredDeck();
-                        }}
-                    />
-                    <button
-                        type="button"
-                        class="ghost-link"
-                        disabled={isMutatingNewFilteredDeck}
-                        onclick={commitCreateFilteredDeck}
-                    >Save</button>
-                    <button
-                        type="button"
-                        class="ghost-link subtle-link"
-                        disabled={isMutatingNewFilteredDeck}
-                        onclick={cancelCreateFilteredDeck}
-                    >Cancel</button>
-                {:else}
-                    <button
-                        type="button"
-                        class="ghost-link new-deck-btn"
-                        disabled={liveDecks === null}
-                        onclick={startCreateDeck}
-                        aria-label="Create new deck"
-                    >+ New deck</button>
-                    <button
-                        type="button"
-                        class="ghost-link new-filtered-deck-btn"
-                        disabled={liveDecks === null}
-                        onclick={startCreateFilteredDeck}
-                        aria-label="Create new filtered deck"
-                    >+ Filtered</button>
-                {/if}
-                <a class="ghost-link" href="/browse">Browse all →</a>
-            </div>
-        </div>
+                    <div class="inline-form-mobile-row">
+                        <Btn
+                            kind="primary"
+                            size="sm"
+                            onclick={commitCreateDeck}
+                            disabled={isMutatingNewDeck}
+                            block
+                        >
+                            save
+                        </Btn>
+                        <Btn
+                            kind="ghost"
+                            size="sm"
+                            onclick={cancelCreateDeck}
+                            disabled={isMutatingNewDeck}
+                            block
+                        >
+                            cancel
+                        </Btn>
+                    </div>
+                </div>
+            </Panel>
+        {/if}
         {#if newDeckError}
-            <div class="error-banner" role="alert">{newDeckError}</div>
+            <div class="error-banner mono" role="alert">{newDeckError}</div>
         {/if}
-        {#if newFilteredError}
-            <div class="error-banner" role="alert">{newFilteredError}</div>
-        {/if}
-        <div class="deck-grid">
-            {#each decks as deck (deck.id)}
-                {@const due = totalDue(deck)}
-                <Card as="a" href="/study/{deck.id}" interactive padding="md">
-                    <div class="deck-row">
-                        <span class="deck-emoji">{deck.emoji}</span>
-                        <div class="deck-body">
-                            <div class="deck-name">{deck.name}</div>
-                            <div class="deck-sub">
-                                {deck.totalCards.toLocaleString()} cards
-                            </div>
-                        </div>
-                        <div class="deck-due" class:has-due={due > 0}>
-                            {#if due > 0}
-                                <span class="due-count">{due}</span>
-                                <span class="due-label">due</span>
-                            {:else}
-                                <span class="subtle">—</span>
-                            {/if}
-                        </div>
-                    </div>
-                </Card>
-            {/each}
-        </div>
-    </section>
 
-    {#if forecast}
-        <section class="section forecast-section" aria-labelledby="forecast-heading">
-            <div class="section-head">
-                <h3 id="forecast-heading">Next 7 days</h3>
-                <span class="ghost-link" aria-hidden="true">forecast</span>
-            </div>
-            {#if forecastError}
-                <div class="stats-error-banner" role="alert">
-                    Couldn't load forecast — chart hidden. ({forecastError})
-                </div>
-            {/if}
-            <Card padding="lg">
-                <div class="forecast-head">
-                    <div>
-                        <div class="forecast-total">{forecastTotal.toLocaleString()}</div>
-                        <div class="stat-label">cards due</div>
-                    </div>
-                    <div class="forecast-meta">
-                        Bars scale to peak day in window.
-                    </div>
-                </div>
-                <div class="forecast-grid" role="img" aria-label="Per-day review forecast">
+        {#if forecast}
+            <Caption>next 7 days</Caption>
+            <Panel padding="16px 18px">
+                <div class="m-forecast-grid">
                     {#each forecast as day (day.offset)}
                         <div class="forecast-col">
-                            <div class="forecast-bar-track">
+                            <div class="forecast-track m-forecast-track">
                                 <div
                                     class="forecast-bar"
                                     class:zero={day.reviews === 0}
                                     style="height: {(day.reviews / forecastPeak) * 100}%"
-                                    title={day.offset === 0
-                                        ? `Today: ${day.reviews} due`
-                                        : `+${day.offset}d: ${day.reviews} due`}
                                 ></div>
                             </div>
-                            <div class="forecast-count">{day.reviews}</div>
-                            <div class="forecast-label">
-                                {day.offset === 0 ? "Today" : `+${day.offset}d`}
+                            <div class="mono forecast-count">{day.reviews}</div>
+                            <div class="mono forecast-day">
+                                {day.offset === 0 ? "tdy" : `+${day.offset}`}
                             </div>
                         </div>
                     {/each}
                 </div>
-            </Card>
-        </section>
-    {:else if forecastError}
-        <section class="section forecast-section">
-            <div class="section-head">
-                <h3>Next 7 days</h3>
-            </div>
-            <div class="stats-error-banner" role="alert">
-                Couldn't load forecast. ({forecastError})
-            </div>
-        </section>
-    {/if}
-
-    <section class="section">
-        <div class="section-head">
-            <h3>Last 30 days</h3>
-            <a class="ghost-link" href="/stats">See full stats →</a>
-        </div>
-        {#if statsError}
-            <div class="stats-error-banner" role="alert">
-                Couldn't load review history — showing cached values. ({statsError})
-            </div>
+            </Panel>
         {/if}
-        <Card padding="lg">
-            <div class="stat-head">
-                <div>
-                    <div class="stat-value">{totalReviews.toLocaleString()}</div>
-                    <div class="stat-label">reviews</div>
-                </div>
-                <div class="week">
-                    <div class="week-label">Past week</div>
-                    <Sparkline values={last7} height={36} />
-                </div>
-            </div>
-        </Card>
-    </section>
+
+        <div class="m-foot">
+            <SketchLeaf size={18} />
+        </div>
+    </div>
 </div>
 
 <style>
     .page {
-        max-width: var(--content-max);
+        max-width: 1200px;
         margin: 0 auto;
-        padding: var(--space-12) var(--space-8) var(--space-16);
-        display: flex;
-        flex-direction: column;
-        gap: var(--space-8);
+        padding: 40px 48px 56px;
+    }
+
+    /* — desktop / mobile gate ————————————————— */
+    .dash-desktop {
+        display: block;
+    }
+    .dash-mobile {
+        display: none;
     }
     @media (max-width: 640px) {
         .page {
-            padding: var(--space-6) var(--space-4) var(--space-8);
-            gap: var(--space-6);
+            padding: 16px 18px 24px;
+        }
+        .dash-desktop {
+            display: none;
+        }
+        .dash-mobile {
+            display: block;
         }
     }
 
-    header {
+    /* — desktop header ————————————————————— */
+    .dash-head {
         display: flex;
         justify-content: space-between;
-        align-items: center;
+        align-items: flex-start;
+        gap: 24px;
+        margin-bottom: 28px;
     }
-    .date-row {
-        display: flex;
-        align-items: center;
-        gap: var(--space-3);
+    .dash-head-left {
+        flex: 1;
+        min-width: 0;
     }
-    .date {
-        font-size: var(--text-sm);
-        color: var(--text-muted);
-        font-variant-numeric: tabular-nums;
-    }
-    .actions :global(kbd) {
-        margin-left: 2px;
-    }
-
-    h1 {
-        font-size: var(--text-display);
-        font-weight: 600;
-        line-height: 1.05;
-        letter-spacing: -0.025em;
-        color: var(--text);
-    }
-    .subtitle {
-        color: var(--text-muted);
-        margin-top: calc(var(--space-4) * -1);
-        font-size: var(--text-lg);
-    }
-    .subtitle .subtle {
-        color: var(--text-subtle);
-    }
-
-    .resume {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: var(--space-8);
-        flex-wrap: wrap;
-        padding: var(--space-4);
-        background: #ffffff;
-        border-radius: var(--radius-md);
-        transition:
-            background var(--duration-fast) var(--ease),
-            box-shadow var(--duration-fast) var(--ease);
-    }
-    :global([data-theme="dark"]) .resume {
-        background: var(--bg-elevated);
-    }
-    .resume:hover {
-        box-shadow: var(--shadow-sm);
-    }
-    .resume:focus-within {
-        box-shadow: var(--shadow-sm);
-    }
-    .resume-meta {
-        display: flex;
-        flex-direction: column;
-        gap: var(--space-2);
-    }
-    .eyebrow {
-        font-size: var(--text-xs);
-        text-transform: uppercase;
-        letter-spacing: 0.1em;
-        color: var(--accent);
+    .greeting {
+        font-family: var(--font-mono);
+        font-size: 32px;
         font-weight: 500;
+        letter-spacing: -0.01em;
+        margin: 6px 0 0;
+        line-height: 1.15;
     }
-    .resume h2 {
-        font-size: var(--text-2xl);
+    .greeting .sun {
+        color: var(--accent);
+        font-size: 24px;
+        margin-left: 12px;
+    }
+    .dash-subtitle {
+        font-size: 14px;
+        color: var(--ink-soft);
+        margin: 8px 0 0;
+    }
+    .dash-subtitle strong {
+        color: var(--due);
         font-weight: 600;
-        letter-spacing: -0.015em;
-    }
-    .resume-stats {
-        color: var(--text-muted);
-        font-size: var(--text-sm);
-        display: flex;
-        gap: var(--space-3);
-        align-items: center;
-        flex-wrap: wrap;
-    }
-    .resume-stats strong {
-        color: var(--text);
-        font-weight: 600;
-        font-variant-numeric: tabular-nums;
-    }
-    .resume-stats .dot {
-        color: var(--text-subtle);
     }
 
-    .section {
+    .dash-head-right {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        flex-shrink: 0;
+    }
+    .streak {
         display: flex;
         flex-direction: column;
-        gap: var(--space-4);
+        gap: 2px;
+    }
+    .streak-value {
+        font-size: 22px;
+        font-weight: 500;
+        color: var(--warn);
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .vrule {
+        width: 1px;
+        height: 40px;
+        background: var(--rule);
+    }
+
+    /* — hero CTA card ————————————————————— */
+    .hero-cta {
+        position: relative;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 24px;
+        margin: 0 0 32px;
+        padding: 26px 32px;
+        background: var(--accent);
+        color: var(--bg);
+        border: var(--border-w) solid var(--ink);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-stamp-lg);
+        text-decoration: none;
+        overflow: hidden;
+        transition:
+            transform 120ms ease,
+            box-shadow 120ms ease;
+    }
+    .hero-cta:hover {
+        transform: translate(-1px, -1px);
+        box-shadow: 6px 6px 0 var(--ink);
+    }
+    .hero-cta:active {
+        transform: translate(2px, 2px);
+        box-shadow: 3px 3px 0 var(--ink);
+    }
+    .hero-cta:focus-visible {
+        outline: 2px solid var(--bg);
+        outline-offset: 4px;
+    }
+    .hero-text {
+        position: relative;
+        z-index: 1;
+        min-width: 0;
+    }
+    .hero-eye {
+        font-size: 11px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        opacity: 0.85;
+    }
+    .hero-title {
+        font-size: 26px;
+        font-weight: 600;
+        margin: 6px 0 4px;
+        display: inline-flex;
+        align-items: baseline;
+        gap: 12px;
+    }
+    .hero-glyph {
+        font-size: 15px;
+        font-weight: 500;
+        opacity: 0.85;
+        letter-spacing: 0.06em;
+    }
+    .hero-stats {
+        font-size: 12px;
+        opacity: 0.9;
+    }
+    .hero-arrow {
+        position: relative;
+        z-index: 1;
+        flex-shrink: 0;
+        color: var(--bg);
+    }
+    .hero-deco {
+        position: absolute;
+        right: -12px;
+        top: -16px;
+        opacity: 0.18;
+        z-index: 0;
+        color: var(--bg);
+        pointer-events: none;
+    }
+
+    /* — sections ————————————————————————— */
+    .deck-section,
+    .forecast-section,
+    .recent-section {
+        margin-bottom: 32px;
     }
     .section-head {
         display: flex;
         justify-content: space-between;
-        align-items: baseline;
+        align-items: center;
+        margin-bottom: 14px;
     }
-    .section-head h3 {
-        font-size: var(--text-lg);
-        font-weight: 600;
-        letter-spacing: -0.01em;
+    .section-actions {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
     }
     .ghost-link {
-        color: var(--text-muted);
-        font-size: var(--text-sm);
+        font-size: 12px;
+        color: var(--ink-mute);
+        text-decoration: none;
+        letter-spacing: 0.04em;
     }
     .ghost-link:hover {
         color: var(--accent);
     }
-    .ghost-link:disabled {
-        opacity: 0.4;
-        cursor: not-allowed;
-    }
-    /* Phase 14-C: + New deck button + inline form share the section
-       header row so the action lives next to "Browse all →". The form
-       uses the same ghost-link tokens for visual continuity. */
-    .head-actions {
-        display: inline-flex;
-        align-items: center;
-        gap: var(--space-3);
-    }
-    .new-deck-btn {
-        font-size: var(--text-sm);
-        color: var(--text-muted);
-        padding: 2px 8px;
-        border: 1px dashed var(--border);
-        border-radius: var(--radius-sm);
-        transition:
-            color var(--duration-fast) var(--ease),
-            border-color var(--duration-fast) var(--ease);
-    }
-    .new-deck-btn:hover {
-        color: var(--accent);
-        border-color: var(--accent);
-    }
-    .new-deck-input {
-        font-size: var(--text-sm);
-        padding: 2px 8px;
-        border: 1px solid var(--accent);
-        border-radius: var(--radius-sm);
-        background: transparent;
-        color: var(--text);
-        outline: none;
-        min-width: 220px;
-    }
-    .new-filtered-search-input {
-        font-size: var(--text-sm);
-        padding: 2px 8px;
-        border: 1px solid var(--accent);
-        border-radius: var(--radius-sm);
-        background: transparent;
-        color: var(--text);
-        outline: none;
-        min-width: 200px;
-        font-family: var(--font-mono, monospace);
-    }
-    .new-filtered-deck-btn {
-        font-size: var(--text-sm);
-        color: var(--text-muted);
-        padding: 2px 8px;
-        border: 1px dashed var(--border);
-        border-radius: var(--radius-sm);
-        transition:
-            color var(--duration-fast) var(--ease),
-            border-color var(--duration-fast) var(--ease);
-    }
-    .new-filtered-deck-btn:hover {
-        color: var(--accent);
-        border-color: var(--accent);
-    }
-    .subtle-link {
-        opacity: 0.7;
-    }
 
-    .deck-grid {
-        display: grid;
-        grid-template-columns: 1fr;
-        gap: var(--space-3);
-    }
-
-    .deck-row {
+    /* — inline create form ———————————————— */
+    .inline-form {
         display: flex;
+        gap: 12px;
         align-items: center;
-        gap: var(--space-4);
     }
-    .deck-emoji {
-        font-size: 1.5rem;
-        width: 36px;
-        height: 36px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        background: var(--bg-subtle);
-        border-radius: var(--radius-sm);
-        flex-shrink: 0;
-        transition:
-            background var(--duration-fast) var(--ease),
-            color var(--duration-fast) var(--ease);
+    .inline-form-2col .inline-input:nth-of-type(2) {
+        flex: 1.4;
     }
-    .deck-row:hover .deck-emoji {
-        background: var(--bg-hover);
-    }
-    .deck-body {
+    .inline-input {
         flex: 1;
+        background: transparent;
+        border: 0;
+        border-bottom: 1.5px solid var(--ink);
+        padding: 6px 4px;
+        font-family: var(--font-sans);
+        font-size: 14px;
+        color: var(--ink);
+        outline: none;
         min-width: 0;
     }
-    .deck-name {
-        font-size: var(--text-base);
-        font-weight: 500;
-        color: var(--text);
-        transition: color var(--duration-fast) var(--ease);
+    .inline-input.mono {
+        font-family: var(--font-mono);
     }
-    .deck-row:hover .deck-name {
-        color: var(--accent);
+    .inline-input::placeholder {
+        color: var(--ink-mute);
     }
-    .deck-sub {
-        font-size: var(--text-xs);
-        color: var(--text-subtle);
-        margin-top: 2px;
-    }
-    .deck-due {
-        text-align: right;
-        font-variant-numeric: tabular-nums;
-    }
-    .deck-due.has-due .due-count {
-        font-size: var(--text-lg);
-        font-weight: 600;
-        color: var(--text);
-        transition: color var(--duration-fast) var(--ease);
-    }
-    .deck-row:hover .deck-due.has-due .due-count {
-        color: var(--accent);
-    }
-    .deck-due.has-due .due-label {
-        display: block;
-        font-size: var(--text-xs);
-        color: var(--text-subtle);
-    }
-    .subtle {
-        color: var(--text-subtle);
+    .inline-input:focus {
+        border-bottom-color: var(--accent);
     }
 
-    .stat-head {
+    /* — deck grid ————————————————————————— */
+    .deck-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 18px;
+    }
+    @media (max-width: 1024px) {
+        .deck-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+
+    .deck-card {
+        position: relative;
         display: flex;
-        align-items: flex-end;
+        flex-direction: column;
+        gap: 12px;
+        padding: 20px 22px 18px;
+        background: var(--paper);
+        border: var(--border-w) solid var(--ink);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow-stamp-md);
+        text-decoration: none;
+        color: var(--ink);
+        min-height: 200px;
+        transition:
+            transform 120ms ease,
+            box-shadow 120ms ease;
+    }
+    .deck-card[data-tilt="0"] { transform: rotate(-0.2deg); }
+    .deck-card[data-tilt="1"] { transform: rotate(0.4deg); }
+    .deck-card[data-tilt="2"] { transform: rotate(-0.6deg); }
+    .deck-card:hover {
+        transform: rotate(0deg) translate(-1px, -1px);
+        box-shadow: 5px 5px 0 var(--ink);
+    }
+    .deck-card:active {
+        transform: rotate(0deg) translate(2px, 2px);
+        box-shadow: 1px 1px 0 var(--ink);
+    }
+    .deck-card:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 3px;
+    }
+
+    .deck-card-head {
+        display: flex;
         justify-content: space-between;
-        gap: var(--space-6);
+        align-items: flex-start;
+        gap: 12px;
     }
-    .stat-value {
-        font-size: var(--text-3xl);
+    .deck-card-eye {
+        font-size: 10px;
+        color: var(--ink-mute);
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+    }
+    .deck-card-name {
+        font-size: 19px;
         font-weight: 600;
-        letter-spacing: -0.02em;
-        font-variant-numeric: tabular-nums;
+        word-break: break-word;
     }
-    .stat-label {
-        color: var(--text-subtle);
-        font-size: var(--text-sm);
+    .deck-card-sub {
+        font-size: 11px;
+        color: var(--ink-mute);
         margin-top: 2px;
     }
-    .week {
-        flex: 1;
-        max-width: 260px;
-    }
-    .week-label {
-        font-size: var(--text-xs);
-        color: var(--text-subtle);
-        text-align: right;
-        margin-bottom: var(--space-2);
-    }
 
-    /* Phase 10-B: cached-counts banner. Same token vocabulary as the
-       browse page banner so disabled/danger UI feels consistent. */
-    .error-banner,
-    .stats-error-banner {
-        font-size: var(--text-xs);
-        color: var(--danger);
-        background: color-mix(in oklch, var(--danger) 10%, transparent);
-        border: 1px solid color-mix(in oklch, var(--danger) 30%, transparent);
-        border-radius: var(--radius-sm);
-        padding: 0.4rem 0.6rem;
-        margin-bottom: var(--space-3);
+    .deck-card-counters {
+        display: flex;
+        gap: 18px;
+        margin-top: 4px;
     }
-
-    /* Phase 17-B forecast bar chart. 7-column grid with absolute-
-       positioned bars inside a fixed-height track. Uses the same
-       --accent gradient as the rest of the home page so the chart
-       reads as one piece with the deck cards. .forecast-total is
-       deliberately distinct from .stat-value so the existing
-       Last-30-days assertions on .stat-value stay scoped. */
-    .forecast-total {
-        font-size: var(--text-display);
-        line-height: 1;
-        font-weight: 600;
+    .counter-label {
+        font-size: 10px;
+        color: var(--ink-mute);
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+    }
+    .counter-value {
+        font-size: 18px;
+        color: var(--ink-mute);
+        font-weight: 400;
         font-variant-numeric: tabular-nums;
     }
+    .counter-value.has {
+        color: var(--counter-color);
+        font-weight: 600;
+    }
+
+    .deck-card-foot {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-top: auto;
+        padding-top: 10px;
+        border-top: 1px dashed var(--rule);
+    }
+    .deck-card-meta {
+        font-size: 10px;
+        color: var(--ink-mute);
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+    }
+    .deck-card-cta {
+        font-size: 11px;
+        color: var(--ink-mute);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+    }
+    .deck-card-cta.has-due {
+        color: var(--accent);
+    }
+
+    .deck-card-new {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        padding: 22px;
+        background: transparent;
+        border: 1.5px dashed var(--rule);
+        border-radius: var(--radius);
+        color: var(--ink-soft);
+        cursor: pointer;
+        min-height: 200px;
+        font-family: inherit;
+        transition:
+            border-color 120ms ease,
+            color 120ms ease;
+    }
+    .deck-card-new:hover:not(:disabled) {
+        border-color: var(--accent);
+        color: var(--accent);
+    }
+    .deck-card-new:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+    }
+    .new-deck-prompt {
+        color: var(--accent);
+        font-size: 18px;
+        margin-top: 4px;
+    }
+
+    /* — forecast bar chart ————————————————— */
     .forecast-head {
         display: flex;
         justify-content: space-between;
         align-items: flex-end;
-        margin-bottom: var(--space-4);
+        margin-bottom: 16px;
+    }
+    .forecast-total {
+        font-size: 38px;
+        font-weight: 600;
+        line-height: 1;
+        letter-spacing: -0.02em;
+        color: var(--ink);
+        font-variant-numeric: tabular-nums;
+    }
+    .forecast-label,
+    .recent-label {
+        font-size: 11px;
+        color: var(--ink-mute);
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        margin-top: 4px;
     }
     .forecast-meta {
-        font-size: var(--text-xs);
-        color: var(--text-subtle);
+        font-size: 11px;
+        color: var(--ink-mute);
     }
     .forecast-grid {
         display: grid;
         grid-template-columns: repeat(7, 1fr);
-        gap: var(--space-2);
+        gap: 10px;
         align-items: end;
     }
     .forecast-col {
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 0.35rem;
+        gap: 6px;
     }
-    .forecast-bar-track {
+    .forecast-track {
         width: 100%;
-        height: 6rem;
+        height: 96px;
         display: flex;
         align-items: flex-end;
         background: color-mix(in oklch, var(--accent) 8%, transparent);
-        border-radius: var(--radius-sm);
+        border: 1px dashed var(--rule);
+        border-radius: var(--radius);
         overflow: hidden;
     }
     .forecast-bar {
         width: 100%;
-        background: linear-gradient(
-            to top,
-            var(--accent),
-            color-mix(in oklch, var(--accent) 70%, white)
-        );
-        border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+        background: var(--accent);
+        border-radius: var(--radius) var(--radius) 0 0;
         min-height: 2px;
-        transition: height var(--duration-normal) var(--ease);
+        transition: height 240ms ease;
     }
     .forecast-bar.zero {
         background: transparent;
         min-height: 0;
     }
     .forecast-count {
-        font-size: var(--text-xs);
-        color: var(--text);
+        font-size: 11px;
+        color: var(--ink);
         font-variant-numeric: tabular-nums;
     }
-    .forecast-label {
-        font-size: var(--text-xs);
-        color: var(--text-subtle);
+    .forecast-day {
+        font-size: 10px;
+        color: var(--ink-mute);
+        letter-spacing: 0.04em;
+    }
+
+    /* — last 30 days panel ———————————————— */
+    .recent-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        gap: 24px;
+    }
+    .recent-total {
+        font-size: 38px;
+        font-weight: 600;
+        line-height: 1;
+        letter-spacing: -0.02em;
+        font-variant-numeric: tabular-nums;
+    }
+    .recent-foot {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--accent);
+    }
+    .recent-foot .hand {
+        font-size: 18px;
+    }
+
+    /* — error banner ————————————————————— */
+    .error-banner {
+        font-size: 12px;
+        color: var(--due);
+        background: color-mix(in oklch, var(--due) 10%, transparent);
+        border: 1px solid color-mix(in oklch, var(--due) 30%, transparent);
+        border-radius: var(--radius);
+        padding: 8px 12px;
+        margin: 0 0 14px;
+    }
+
+    /* ============== MOBILE ============== */
+    .m-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding-bottom: 14px;
+        border-bottom: 1px dashed var(--rule);
+        margin-bottom: 14px;
+    }
+    .m-head-brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .m-brand-label {
+        font-size: 12px;
+        font-weight: 600;
+    }
+    .m-greeting {
+        font-family: var(--font-mono);
+        font-size: 22px;
+        font-weight: 500;
+        margin: 6px 0 0;
+        letter-spacing: -0.01em;
+    }
+    .m-sub {
+        font-size: 12px;
+        color: var(--ink-soft);
+        margin: 6px 0 18px;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+    }
+    .m-sub strong {
+        color: var(--due);
+        font-weight: 600;
+    }
+
+    .m-hero {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 14px 16px;
+        background: var(--accent);
+        color: var(--bg);
+        border: 1.4px solid var(--ink);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-stamp-md);
+        text-decoration: none;
+        margin-bottom: 22px;
+    }
+    .m-hero-eye {
+        font-size: 9px;
+        letter-spacing: 0.18em;
+        opacity: 0.85;
+    }
+    .m-hero-title {
+        font-size: 16px;
+        font-weight: 600;
+        margin-top: 4px;
+    }
+    .m-hero-meta {
+        font-size: 10px;
+        opacity: 0.85;
+    }
+
+    .m-deck-list {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin: 8px 0 22px;
+    }
+    .m-deck-row {
+        display: block;
+        padding: 12px 14px;
+        border: 1.2px solid var(--ink);
+        border-radius: var(--radius);
+        background: var(--paper);
+        box-shadow: var(--shadow-stamp-sm);
+        text-decoration: none;
+        color: var(--ink);
+    }
+    .m-deck-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 10px;
+    }
+    .m-deck-eye {
+        font-size: 9px;
+        color: var(--ink-mute);
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+    }
+    .m-deck-name {
+        font-size: 14px;
+        font-weight: 600;
+        margin-top: 2px;
+    }
+    .m-deck-meta {
+        margin-top: 8px;
+        font-size: 10px;
+        color: var(--ink-mute);
+        display: flex;
+        justify-content: space-between;
+    }
+
+    .m-deck-new {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 12px;
+        background: transparent;
+        border: 1.2px dashed var(--rule);
+        border-radius: var(--radius);
+        color: var(--ink-soft);
+        cursor: pointer;
+        font-family: inherit;
+        font-size: 12px;
+    }
+    .m-deck-new:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+    }
+
+    .inline-form-mobile {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+    .inline-form-mobile-row {
+        display: flex;
+        gap: 8px;
+    }
+
+    .m-forecast-grid {
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        gap: 6px;
+        align-items: end;
+    }
+    .m-forecast-track {
+        height: 56px;
+    }
+
+    .m-foot {
+        display: flex;
+        justify-content: center;
+        margin: 16px 0 8px;
+        color: var(--accent);
     }
 </style>
