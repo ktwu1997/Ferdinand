@@ -3,6 +3,7 @@ pub mod cards;
 pub mod deck_config;
 pub mod decks;
 pub mod fsrs;
+pub mod import;
 pub mod media;
 pub mod notes;
 pub mod notetype_fields;
@@ -122,6 +123,10 @@ pub fn router() -> Router<ServerState> {
             "/api/cards/{id}/reset_to_new",
             post(burn_recovery::post_reset_to_new),
         )
+        // Phase B3a: self-service .apkg import. Authed-only (sits behind
+        // require_auth via the protected_router merge), no admin gate —
+        // any user can ingest their own deck export.
+        .route("/api/import/apkg", post(import::import_apkg))
 }
 
 #[derive(Serialize, utoipa::ToSchema)]

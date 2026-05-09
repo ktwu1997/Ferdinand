@@ -944,6 +944,53 @@ export async function postMedia(file: File): Promise<ApiMediaUploadResponse> {
     return (await res.json()) as ApiMediaUploadResponse;
 }
 
+/**
+ * Phase B3a: response shape for POST /api/import/apkg. Mirrors rslib's
+ * NoteLog. `imported_card_count` is intentionally `null` in v1 — the
+ * import endpoint doesn't yet surface per-card counts (rslib's NoteLog
+ * is note-level only); B3b's UI falls back to a note-only toast. Keeping
+ * the field in the schema so a future backend bump can populate it
+ * without a typed-client breaking change.
+ */
+export interface ApiImportResult {
+    imported_note_count: number;
+    updated_note_count: number;
+    skipped_count: number;
+    imported_card_count: number | null;
+    log_summary: string;
+}
+
+/**
+ * Phase B3a: upload a `.apkg` file into the authenticated user's
+ * collection. Multipart with a single `file` field. Server caps at
+ * `ANKI_IMPORT_MAX_BYTES` (default 100 MiB) and runs rslib's
+ * `import_apkg` synchronously inside `spawn_blocking`, so the request
+ * stays open for the duration of the import. UI is wired in B3b
+ * (file picker + drag-drop on `/notes/new`).
+ */
+export async function postImportApkg(file: File): Promise<ApiImportResult> {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    const path = "/api/import/apkg";
+    const res = await fetch(`${apiBase()}${path}`, {
+        method: "POST",
+        credentials: "include",
+        body: form,
+    });
+    if (!res.ok) {
+        if (res.status === 401) fireOnUnauthorized(path);
+        let detail = res.statusText;
+        try {
+            const parsed = (await res.json()) as { message?: string };
+            if (parsed?.message) detail = parsed.message;
+        } catch {
+            // body wasn't JSON — fall through with statusText
+        }
+        throw new Error(`${res.status} ${detail}`);
+    }
+    return (await res.json()) as ApiImportResult;
+}
+
 export async function putFsrsHealthCheck(
     req: ApiFsrsHealthCheck,
 ): Promise<ApiFsrsHealthCheck> {

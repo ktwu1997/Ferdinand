@@ -152,7 +152,17 @@ impl AppState {
         std::fs::create_dir_all(&user_dir)
             .with_context(|| format!("create user dir {}", user_dir.display()))?;
         let col_path = user_dir.join("collection.anki2");
+        // Phase B3a: wire up the desktop-style media paths
+        // (`<col_path>.media/` + `<col_path>.mdb`) so rslib's media
+        // manager has somewhere to store imported attachments. Without
+        // these set, `Collection::import_apkg` fails with
+        // `InvalidInput("attempted media operation without media folder
+        // set")` even when the .apkg has no media. The .media dir
+        // resolved here matches the canonical sibling that
+        // `ensure_media_dir` produces below — they're the same path,
+        // so this isn't a divergence.
         let mut col = CollectionBuilder::new(&col_path)
+            .with_desktop_media_paths()
             .build()
             .with_context(|| format!("open collection at {}", col_path.display()))?;
         crate::bootstrap::seed_if_requested(&mut col)?;
