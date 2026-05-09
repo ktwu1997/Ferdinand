@@ -265,14 +265,15 @@
 <div class="sketch-skin grain page" data-testid="dash-root">
     <!-- ============== DESKTOP V2 (today-focused) ============== -->
     <div class="dash-desktop">
-        <header class="dash-head">
+        <header class="dash-head" data-testid="dash-hero">
             <div class="dash-head-left">
                 <Caption>{today}</Caption>
                 <h1 class="greeting" data-testid="dash-greeting">
                     morning, {greetingName}.
-                    <span class="hand sun" aria-hidden="true">☉</span>
+                    <span class="dash-title-hand hand">another round</span>
+                    <span class="sun" aria-hidden="true">☉</span>
                 </h1>
-                <p class="dash-subtitle">
+                <p class="dash-subtitle mono">
                     you have <strong>{totalDueAll} cards</strong> due across {activeDeckCount} active deck{activeDeckCount === 1 ? "" : "s"}.
                 </p>
             </div>
@@ -818,6 +819,14 @@
         color: var(--accent);
         font-size: 24px;
         margin-left: 12px;
+    }
+    .dash-title-hand {
+        font-family: var(--font-hand);
+        color: var(--accent);
+        font-size: 22px;
+        margin-left: 12px;
+        letter-spacing: 0;
+        text-transform: lowercase;
     }
     .dash-subtitle {
         font-size: 14px;
