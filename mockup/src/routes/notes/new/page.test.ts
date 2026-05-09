@@ -111,7 +111,7 @@ describe("AddNote page contract (Phase 12-C)", () => {
             await settle();
 
             const select = container.querySelector(
-                "#deck-select",
+                "#nx-deck-select",
             ) as HTMLSelectElement | null;
             expect(select).not.toBeNull();
             const options = Array.from(
@@ -139,17 +139,17 @@ describe("AddNote page contract (Phase 12-C)", () => {
             await settle();
 
             const f0 = container.querySelector(
-                "#field-input-0",
+                "#nx-field-0",
             ) as HTMLTextAreaElement;
             f0.value = "森林";
             f0.dispatchEvent(new Event("input", { bubbles: true }));
             const f1 = container.querySelector(
-                "#field-input-1",
+                "#nx-field-1",
             ) as HTMLTextAreaElement;
             f1.value = "shinrin — forest";
             f1.dispatchEvent(new Event("input", { bubbles: true }));
             const tags = container.querySelector(
-                "#tags-input",
+                "#nx-tags-input",
             ) as HTMLInputElement;
             // Mixed comma + whitespace separators — server-side trim/drop
             // should give us [vocab, nature], not [vocab, "", nature].
@@ -192,7 +192,7 @@ describe("AddNote page contract (Phase 12-C)", () => {
             // but the server-side guard is the source of truth — we
             // still want to verify what happens when the request lands.
             const f0 = container.querySelector(
-                "#field-input-0",
+                "#nx-field-0",
             ) as HTMLTextAreaElement;
             f0.value = "x"; // bypass client guard so we hit postNote
             f0.dispatchEvent(new Event("input", { bubbles: true }));
@@ -210,7 +210,7 @@ describe("AddNote page contract (Phase 12-C)", () => {
             // No redirect — user stays on the form to fix and retry.
             expect(gotoMock).not.toHaveBeenCalled();
             // Error rendered inline.
-            const errBox = container.querySelector(".field-error");
+            const errBox = container.querySelector(".nx-field-error");
             expect(errBox).not.toBeNull();
             expect(errBox?.textContent).toContain(
                 "first field must not be empty",
@@ -229,11 +229,11 @@ describe("AddNote page contract (Phase 12-C)", () => {
         try {
             await settle();
 
-            const banner = container.querySelector(".error-banner");
+            const banner = container.querySelector(".nx-error");
             expect(banner).not.toBeNull();
             expect(banner?.textContent).toContain("decks unreachable");
             // No deck select rendered (decks=null after rejection).
-            expect(container.querySelector("#deck-select")).toBeNull();
+            expect(container.querySelector("#nx-deck-select")).toBeNull();
         } finally {
             unmount(instance);
         }
@@ -262,7 +262,7 @@ describe("AddNote notetype picker (Phase 13-C)", () => {
             await settle();
 
             const select = container.querySelector(
-                "#notetype-select",
+                "#nx-notetype-select",
             ) as HTMLSelectElement | null;
             expect(select).not.toBeNull();
             const options = Array.from(
@@ -271,21 +271,32 @@ describe("AddNote notetype picker (Phase 13-C)", () => {
             // 3 options, all in server-returned order (Basic / Reverse / Cloze).
             expect(options.length).toBe(3);
             const labels = options.map((o) => o.textContent?.trim());
+            // Sketch-skin option label format: "{name} · {n} field(s)"
+            // (was "{name} ({n} fields)" pre-A4-ε₂.b).
             expect(labels).toEqual([
-                "Basic (2 fields)",
-                "Basic (and reversed card) (2 fields)",
-                "Cloze (2 fields)",
+                "Basic · 2 fields",
+                "Basic (and reversed card) · 2 fields",
+                "Cloze · 2 fields",
             ]);
             // "Basic" preselected by name (server-side fallback parity).
             expect(select?.value).toBe(String(BASIC_ID));
 
             // Default field labels reflect Basic's "Front" / "Back".
-            const labels0 = container.querySelector(
-                'label[for="field-input-0"]',
-            )?.textContent?.trim();
-            const labels1 = container.querySelector(
-                'label[for="field-input-1"]',
-            )?.textContent?.trim();
+            // Sketch-skin uses <Caption> (auto-prepends "// ") inside the
+            // .nx-field wrapper instead of a <label for=...> — strip the
+            // mono-prefix to compare the bare field name.
+            const stripCaption = (raw: string | null | undefined): string =>
+                (raw ?? "").replace(/^\/\/\s*/, "").trim();
+            const labels0 = stripCaption(
+                container.querySelector(
+                    '[data-testid="notes-new-field-0"] .caption',
+                )?.textContent,
+            );
+            const labels1 = stripCaption(
+                container.querySelector(
+                    '[data-testid="notes-new-field-1"] .caption',
+                )?.textContent,
+            );
             expect(labels0).toBe("Front");
             expect(labels1).toBe("Back");
         } finally {
@@ -301,7 +312,7 @@ describe("AddNote notetype picker (Phase 13-C)", () => {
             // Type something into Basic's Front so we can verify the
             // reset on notetype switch.
             const f0 = container.querySelector(
-                "#field-input-0",
+                "#nx-field-0",
             ) as HTMLTextAreaElement;
             f0.value = "森林";
             f0.dispatchEvent(new Event("input", { bubbles: true }));
@@ -309,27 +320,33 @@ describe("AddNote notetype picker (Phase 13-C)", () => {
 
             // Flip to Cloze.
             const select = container.querySelector(
-                "#notetype-select",
+                "#nx-notetype-select",
             ) as HTMLSelectElement;
             select.value = String(CLOZE_ID);
             select.dispatchEvent(new Event("change", { bubbles: true }));
             await settle();
 
-            // Labels updated.
+            // Labels updated. Same Caption auto-prefix as above.
+            const stripCaption = (raw: string | null | undefined): string =>
+                (raw ?? "").replace(/^\/\/\s*/, "").trim();
             expect(
-                container
-                    .querySelector('label[for="field-input-0"]')
-                    ?.textContent?.trim(),
+                stripCaption(
+                    container.querySelector(
+                        '[data-testid="notes-new-field-0"] .caption',
+                    )?.textContent,
+                ),
             ).toBe("Text");
             expect(
-                container
-                    .querySelector('label[for="field-input-1"]')
-                    ?.textContent?.trim(),
+                stripCaption(
+                    container.querySelector(
+                        '[data-testid="notes-new-field-1"] .caption',
+                    )?.textContent,
+                ),
             ).toBe("Back Extra");
 
             // Field 0 cleared — desktop Add-Card parity (no carry-over).
             const reset0 = container.querySelector(
-                "#field-input-0",
+                "#nx-field-0",
             ) as HTMLTextAreaElement;
             expect(reset0.value).toBe("");
         } finally {
@@ -349,7 +366,7 @@ describe("AddNote notetype picker (Phase 13-C)", () => {
 
             // Switch to Cloze first.
             const select = container.querySelector(
-                "#notetype-select",
+                "#nx-notetype-select",
             ) as HTMLSelectElement;
             select.value = String(CLOZE_ID);
             select.dispatchEvent(new Event("change", { bubbles: true }));
@@ -357,12 +374,12 @@ describe("AddNote notetype picker (Phase 13-C)", () => {
 
             // Fill the Cloze fields.
             const f0 = container.querySelector(
-                "#field-input-0",
+                "#nx-field-0",
             ) as HTMLTextAreaElement;
             f0.value = "The capital of {{c1::France}} is {{c2::Paris}}.";
             f0.dispatchEvent(new Event("input", { bubbles: true }));
             const f1 = container.querySelector(
-                "#field-input-1",
+                "#nx-field-1",
             ) as HTMLTextAreaElement;
             f1.value = "Geography fact.";
             f1.dispatchEvent(new Event("input", { bubbles: true }));
@@ -451,7 +468,7 @@ describe("AddNote drag-drop image upload (Phase 15-C)", () => {
             const file = new File([new Uint8Array([1, 2, 3])], "shot.png", {
                 type: "image/png",
             });
-            const fields = container.querySelectorAll(".field-droppable");
+            const fields = container.querySelectorAll('[data-testid^="notes-new-field-"]');
             expect(fields.length).toBeGreaterThanOrEqual(2);
             dispatchDrop(fields[0]!, file);
             await settle();
@@ -465,7 +482,7 @@ describe("AddNote drag-drop image upload (Phase 15-C)", () => {
             // NOT the upload-side `shot.png`. Critical: the dedupe
             // suffix would otherwise be lost.
             const ta = container.querySelector<HTMLTextAreaElement>(
-                "#field-input-0",
+                "#nx-field-0",
             );
             expect(ta?.value).toBe('<img src="/media/screenshot.png">');
         } finally {
@@ -481,18 +498,18 @@ describe("AddNote drag-drop image upload (Phase 15-C)", () => {
             const file = new File(["some text"], "notes.txt", {
                 type: "text/plain",
             });
-            const fields = container.querySelectorAll(".field-droppable");
+            const fields = container.querySelectorAll('[data-testid^="notes-new-field-"]');
             dispatchDrop(fields[0]!, file);
             await settle();
 
             expect(vi.mocked(postMedia)).not.toHaveBeenCalled();
             const errors = Array.from(
-                container.querySelectorAll(".field-error"),
+                container.querySelectorAll(".nx-field-error"),
             ).map((e) => e.textContent ?? "");
             // Phase 16-C: error copy now mentions both image AND audio.
             expect(errors.some((t) => t.includes("image") && t.includes("audio"))).toBe(true);
             const ta = container.querySelector<HTMLTextAreaElement>(
-                "#field-input-0",
+                "#nx-field-0",
             );
             expect(ta?.value ?? "").toBe("");
         } finally {
@@ -512,17 +529,17 @@ describe("AddNote drag-drop image upload (Phase 15-C)", () => {
             const file = new File([new Uint8Array([0xff, 0xd8, 0xff])], "big.jpg", {
                 type: "image/jpeg",
             });
-            const fields = container.querySelectorAll(".field-droppable");
+            const fields = container.querySelectorAll('[data-testid^="notes-new-field-"]');
             dispatchDrop(fields[0]!, file);
             await settle();
 
             expect(vi.mocked(postMedia)).toHaveBeenCalledTimes(1);
             const errors = Array.from(
-                container.querySelectorAll(".field-error"),
+                container.querySelectorAll(".nx-field-error"),
             ).map((e) => e.textContent ?? "");
             expect(errors.some((t) => t.includes("file too large"))).toBe(true);
             const ta = container.querySelector<HTMLTextAreaElement>(
-                "#field-input-0",
+                "#nx-field-0",
             );
             expect(ta?.value ?? "").toBe("");
         } finally {
@@ -580,7 +597,7 @@ describe("AddNote drag-drop audio upload (Phase 16-C)", () => {
             const file = new File([new Uint8Array([0xff, 0xfb, 0x90])], "shinrin.mp3", {
                 type: "audio/mpeg",
             });
-            const fields = container.querySelectorAll(".field-droppable");
+            const fields = container.querySelectorAll('[data-testid^="notes-new-field-"]');
             expect(fields.length).toBeGreaterThanOrEqual(2);
             dispatchDrop(fields[0]!, file);
             await settle();
@@ -595,7 +612,7 @@ describe("AddNote drag-drop audio upload (Phase 16-C)", () => {
             // " (N)" dedupe suffix — must round-trip through, otherwise
             // the playback URL would 404.
             const ta = container.querySelector<HTMLTextAreaElement>(
-                "#field-input-0",
+                "#nx-field-0",
             );
             expect(ta?.value).toBe("[sound:pronounce-森林.mp3]");
         } finally {
@@ -621,20 +638,20 @@ describe("AddNote drag-drop audio upload (Phase 16-C)", () => {
             const file = new File([new Uint8Array([0xff, 0xfb])], "lecture.mp3", {
                 type: "audio/mpeg",
             });
-            const fields = container.querySelectorAll(".field-droppable");
+            const fields = container.querySelectorAll('[data-testid^="notes-new-field-"]');
             dispatchDrop(fields[0]!, file);
             await settle();
 
             expect(vi.mocked(postMedia)).toHaveBeenCalledTimes(1);
             const errors = Array.from(
-                container.querySelectorAll(".field-error"),
+                container.querySelectorAll(".nx-field-error"),
             ).map((e) => e.textContent ?? "");
             expect(errors.some((t) => t.includes("file too large"))).toBe(true);
             // Server rejected — the field stays empty so the user can
             // retry with a smaller clip without manually deleting a
             // half-written token.
             const ta = container.querySelector<HTMLTextAreaElement>(
-                "#field-input-0",
+                "#nx-field-0",
             );
             expect(ta?.value ?? "").toBe("");
         } finally {
