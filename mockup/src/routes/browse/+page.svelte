@@ -2703,13 +2703,6 @@
         padding: 0 var(--space-2);
         margin-bottom: var(--space-3);
     }
-    .tree-head .label {
-        font-size: 0.65rem;
-        font-weight: 500;
-        color: var(--text-subtle);
-        letter-spacing: 0.1em;
-        text-transform: uppercase;
-    }
     .plus {
         width: 20px;
         height: 20px;
@@ -2782,13 +2775,6 @@
         display: flex;
         align-items: center;
     }
-    .item-wrap:hover .delete-x,
-    .item-wrap:focus-within .delete-x {
-        opacity: 1;
-    }
-    .item-wrap .item {
-        padding-right: 1.6rem;
-    }
     .delete-x {
         position: absolute;
         right: var(--space-1);
@@ -2841,13 +2827,6 @@
         font-size: 0.7rem;
         font-family: var(--font-mono);
         font-variant-numeric: tabular-nums;
-    }
-    .tag-item .hash {
-        color: var(--text-subtle);
-        font-family: var(--font-mono);
-    }
-    .saved svg {
-        color: var(--text-subtle);
     }
 
     /* Results */
@@ -3524,13 +3503,6 @@
        create form below the list. */
     .saved-row {
         position: relative;
-    }
-    .saved-row:hover .saved-delete-btn,
-    .saved-row:focus-within .saved-delete-btn {
-        opacity: 1;
-    }
-    .saved-row .item {
-        padding-right: 1.6rem;
     }
     .saved-delete-btn {
         position: absolute;
