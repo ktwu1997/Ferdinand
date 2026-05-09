@@ -1,6 +1,20 @@
 <script lang="ts">
     import { onMount } from "svelte";
-    import Card from "$lib/components/Card.svelte";
+    import { auth } from "$lib/auth.svelte";
+    import { Caption } from "$lib/components/ui";
+    import {
+        SketchGear,
+        SketchUser,
+        SketchClock,
+        SketchSpark,
+        SketchCardStack,
+        SketchFlame,
+        SketchGlobe,
+        SketchLeaf,
+        SketchLock,
+        SketchPlus,
+        SketchCheck,
+    } from "$lib/components/sketch";
     import {
         getThemeChoice,
         setThemeChoice,
@@ -758,409 +772,535 @@
 
 <svelte:head><title>Settings — Anki</title></svelte:head>
 
-<div class="wrap">
-    <nav class="settings-nav">
-        {#each sections as s (s.id)}
-            <button
-                class="nav-item"
-                class:active={active === s.id}
-                onclick={() => (active = s.id)}
-            >
-                {s.label}
-            </button>
-        {/each}
-    </nav>
-
-    <div class="content">
-        <header>
-            <h1>{sections.find((s) => s.id === active)?.label}</h1>
-            <p class="subtitle">
-                {#if active === "fsrs"}
-                    Tune the FSRS v5 scheduler to match your memory.
-                {:else}
-                    Configure how this collection behaves.
-                {/if}
+<div class="sketch-skin grain page tx-page" data-testid="settings-root">
+    <header class="tx-head" data-testid="settings-hero">
+        <div class="tx-head-left">
+            <Caption>// settings</Caption>
+            <h1 class="tx-title mono" data-testid="settings-title">
+                preferences
+                <span class="tx-title-hand hand" aria-hidden="true">tune your tools</span>
+            </h1>
+            <p class="tx-subtitle mono">
+                configure how this collection behaves
+                <span class="tx-subtitle-kbd mono">data layer wired live</span>
             </p>
-        </header>
+        </div>
+        <div class="tx-head-right" aria-hidden="true">
+            <SketchGear size={56} />
+        </div>
+    </header>
 
-        {#if active === "fsrs"}
-            {#if loadError}
-                <div class="error-banner" role="alert">
-                    <strong>Couldn't reach Anki server.</strong>
-                    Settings shown are unsaved defaults — changes won't persist
-                    until reconnected.
-                </div>
-            {/if}
-            <p class="disclaimer">
-                Editing presets directly. Per-deck assignment (which deck uses
-                which preset) comes in a later release.
-            </p>
-            {#if presets.length > 0}
-                <div class="preset-row">
-                    <label for="preset-select">Preset</label>
-                    <select
-                        id="preset-select"
-                        class="preset-select"
-                        value={selectedPresetId}
-                        onchange={(e) => {
-                            const next = Number((e.target as HTMLSelectElement).value);
-                            if (!Number.isNaN(next)) switchPreset(next);
-                        }}
-                        disabled={loading || loadError !== null || switchingPreset}
+    <section class="tx-shell" data-testid="settings-shell">
+        <aside class="tx-sidebar" data-testid="settings-sidebar">
+            <div class="tx-sidebar-block">
+                <Caption>// sections</Caption>
+                <nav class="tx-nav" aria-label="Settings sections">
+                    {#each sections as s (s.id)}
+                        <button
+                            type="button"
+                            class="tx-nav-item mono"
+                            class:tx-nav-item-active={active === s.id}
+                            data-testid="settings-nav-{s.id}"
+                            aria-current={active === s.id ? "page" : undefined}
+                            onclick={() => (active = s.id)}
+                        >
+                            <span class="tx-nav-icon" aria-hidden="true">
+                                {#if s.id === "profile"}
+                                    <SketchUser size={13} />
+                                {:else if s.id === "scheduling"}
+                                    <SketchClock size={13} />
+                                {:else if s.id === "fsrs"}
+                                    <SketchSpark size={13} />
+                                {:else if s.id === "notetypes"}
+                                    <SketchCardStack size={13} />
+                                {:else if s.id === "recovery"}
+                                    <SketchFlame size={13} />
+                                {:else if s.id === "sync"}
+                                    <SketchGlobe size={13} />
+                                {:else if s.id === "appearance"}
+                                    <SketchLeaf size={13} />
+                                {:else if s.id === "advanced"}
+                                    <SketchLock size={13} />
+                                {/if}
+                            </span>
+                            <span class="tx-nav-label">{s.label.toLowerCase()}</span>
+                        </button>
+                    {/each}
+                </nav>
+            </div>
+
+            <div class="tx-sidebar-block tx-sidebar-account" data-testid="settings-account-block">
+                <Caption>// account</Caption>
+                {#if auth.user}
+                    <div class="tx-account-row mono" data-testid="settings-account-row">
+                        <span class="tx-account-icon" aria-hidden="true">
+                            <SketchUser size={12} />
+                        </span>
+                        <span class="tx-account-name" data-testid="settings-account-name">
+                            {auth.user.username}
+                        </span>
+                    </div>
+                    <button
+                        type="button"
+                        class="tx-logout-btn mono"
+                        data-testid="settings-logout-btn"
+                        onclick={() => auth.logout()}
                     >
-                        {#each presets as p (p.id)}
-                            <option value={p.id}>{p.name}</option>
-                        {/each}
-                    </select>
-                    {#if switchingPreset}
-                        <span class="saving">Loading…</span>
-                    {/if}
-                    {#if !creatingPreset}
-                        <button
-                            type="button"
-                            class="new-preset-button"
-                            onclick={() => {
-                                creatingPreset = true;
-                                newPresetName = "";
-                                errorCreatePreset = null;
-                            }}
-                            disabled={disabledControls() || switchingPreset}
-                        >
-                            + New preset
-                        </button>
-                    {/if}
-                    {#if !creatingPreset && selectedPresetId !== null && selectedPresetId !== DEFAULT_PRESET_ID}
-                        {@const sel = presets.find(
-                            (p) => p.id === selectedPresetId,
-                        )}
-                        {#if sel}
-                            <button
-                                type="button"
-                                class="delete-preset-button"
-                                onclick={() => deletePreset(sel.id, sel.name)}
-                                disabled={disabledControls() ||
-                                    switchingPreset ||
-                                    deletingPreset}
-                            >
-                                Delete
-                            </button>
-                        {/if}
-                    {/if}
-                    {#if deletingPreset}
-                        <span class="saving">Deleting…</span>
-                    {/if}
-                    {#if errorDeletePreset}
-                        <span class="field-error" role="alert"
-                            >{errorDeletePreset}</span
-                        >
-                    {/if}
+                        logout
+                    </button>
+                    <p class="tx-account-hint mono">
+                        change password — <span class="tx-coming-soon">coming soon</span>
+                    </p>
+                {:else}
+                    <div class="tx-account-row mono">
+                        <span class="tx-account-name">— not signed in</span>
+                    </div>
+                {/if}
+            </div>
+
+            <div class="tx-sidebar-block tx-sidebar-build">
+                <Caption>// build</Caption>
+                <div class="tx-build mono">
+                    <div>ferdinand</div>
+                    <div class="tx-build-mute">phase A4-ε₂</div>
+                    <div class="tx-build-ok">sketch-skin ✓</div>
                 </div>
-                {#if creatingPreset}
-                    <div class="create-preset-row">
-                        <label for="new-preset-name">New preset name</label>
-                        <input
-                            id="new-preset-name"
-                            type="text"
-                            class="new-preset-input"
-                            bind:value={newPresetName}
-                            disabled={savingCreatePreset}
-                            maxlength="100"
-                            placeholder="e.g. Languages"
-                        />
-                        <button
-                            type="button"
-                            class="save-preset-button"
-                            onclick={createPreset}
-                            disabled={savingCreatePreset ||
-                                newPresetName.trim() === ""}
-                        >
-                            Save
-                        </button>
-                        <button
-                            type="button"
-                            class="cancel-preset-button"
-                            onclick={cancelCreatePreset}
-                            disabled={savingCreatePreset}
-                        >
-                            Cancel
-                        </button>
-                        {#if savingCreatePreset}
-                            <span class="saving">Creating…</span>
-                        {/if}
-                        {#if errorCreatePreset}
-                            <span class="field-error" role="alert"
-                                >{errorCreatePreset}</span
-                            >
+            </div>
+        </aside>
+
+        <div class="tx-panel" data-testid="settings-panel">
+            <header class="tx-panel-head">
+                <Caption>// {active}.config</Caption>
+                <h2 class="tx-panel-title mono" data-testid="settings-panel-title">
+                    {sections.find((s) => s.id === active)?.label.toLowerCase() ?? ""}
+                    {#if active === "fsrs"}
+                        <span class="tx-panel-hand hand" aria-hidden="true">tune the scheduler</span>
+                    {:else if active === "appearance"}
+                        <span class="tx-panel-hand hand" aria-hidden="true">paper or ink</span>
+                    {:else if active === "sync"}
+                        <span class="tx-panel-hand hand" aria-hidden="true">your collection, your server</span>
+                    {:else if active === "notetypes"}
+                        <span class="tx-panel-hand hand" aria-hidden="true">card templates</span>
+                    {:else if active === "recovery"}
+                        <span class="tx-panel-hand hand" aria-hidden="true">undo a slip</span>
+                    {/if}
+                </h2>
+                <p class="tx-panel-sub mono">
+                    {#if active === "fsrs"}
+                        tune fsrs v5 to match your memory
+                    {:else if active === "appearance"}
+                        cream paper or warm dark
+                    {:else if active === "notetypes"}
+                        rename templates and manage their fields
+                    {:else if active === "recovery"}
+                        reset a card's schedule when a rating slips
+                    {:else if active === "sync"}
+                        m4 self-hosted server preview
+                    {:else}
+                        configure how this collection behaves
+                    {/if}
+                </p>
+            </header>
+
+            {#if active === "fsrs"}
+                {#if loadError}
+                    <div class="tx-banner tx-banner-error mono" role="alert" data-testid="settings-load-error">
+                        // couldn't reach anki server — settings shown are unsaved defaults until reconnected
+                        <div class="tx-banner-detail">{loadError}</div>
+                    </div>
+                {/if}
+                <p class="tx-disclaimer mono">
+                    // editing presets directly. per-deck assignment lands in a later release.
+                </p>
+
+                {#if presets.length > 0}
+                    <div class="tx-card tx-preset-card" data-testid="settings-preset-card">
+                        <div class="tx-card-head">
+                            <Caption>// preset</Caption>
+                            <span class="tx-card-hand hand" aria-hidden="true">scheduling profile</span>
+                        </div>
+                        <div class="tx-preset-row">
+                            <label for="preset-select" class="tx-label mono">active</label>
+                            <div class="tx-select-wrap">
+                                <select
+                                    id="preset-select"
+                                    class="tx-select mono"
+                                    value={selectedPresetId}
+                                    onchange={(e) => {
+                                        const next = Number((e.target as HTMLSelectElement).value);
+                                        if (!Number.isNaN(next)) switchPreset(next);
+                                    }}
+                                    disabled={loading || loadError !== null || switchingPreset}
+                                    data-testid="settings-preset-select"
+                                >
+                                    {#each presets as p (p.id)}
+                                        <option value={p.id}>{p.name}</option>
+                                    {/each}
+                                </select>
+                                <span class="tx-select-caret mono" aria-hidden="true">▾</span>
+                            </div>
+                            {#if switchingPreset}
+                                <span class="tx-saving mono">loading…</span>
+                            {/if}
+                            {#if !creatingPreset}
+                                <button
+                                    type="button"
+                                    class="tx-btn tx-btn-paper mono"
+                                    onclick={() => {
+                                        creatingPreset = true;
+                                        newPresetName = "";
+                                        errorCreatePreset = null;
+                                    }}
+                                    disabled={disabledControls() || switchingPreset}
+                                    data-testid="settings-new-preset-btn"
+                                >
+                                    <SketchPlus size={11} />
+                                    <span>new preset</span>
+                                </button>
+                            {/if}
+                            {#if !creatingPreset && selectedPresetId !== null && selectedPresetId !== DEFAULT_PRESET_ID}
+                                {@const sel = presets.find(
+                                    (p) => p.id === selectedPresetId,
+                                )}
+                                {#if sel}
+                                    <button
+                                        type="button"
+                                        class="tx-btn tx-btn-danger mono"
+                                        onclick={() => deletePreset(sel.id, sel.name)}
+                                        disabled={disabledControls() ||
+                                            switchingPreset ||
+                                            deletingPreset}
+                                        data-testid="settings-delete-preset-btn"
+                                    >
+                                        delete
+                                    </button>
+                                {/if}
+                            {/if}
+                            {#if deletingPreset}
+                                <span class="tx-saving mono">deleting…</span>
+                            {/if}
+                            {#if errorDeletePreset}
+                                <span class="tx-error mono" role="alert">{errorDeletePreset}</span>
+                            {/if}
+                        </div>
+                        {#if creatingPreset}
+                            <div class="tx-create-preset-row">
+                                <label for="new-preset-name" class="tx-label mono">name</label>
+                                <input
+                                    id="new-preset-name"
+                                    type="text"
+                                    class="tx-input mono"
+                                    bind:value={newPresetName}
+                                    disabled={savingCreatePreset}
+                                    maxlength="100"
+                                    placeholder="e.g. Languages"
+                                />
+                                <button
+                                    type="button"
+                                    class="tx-btn tx-btn-primary mono"
+                                    onclick={createPreset}
+                                    disabled={savingCreatePreset ||
+                                        newPresetName.trim() === ""}
+                                >
+                                    <SketchCheck size={11} />
+                                    <span>save</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="tx-btn tx-btn-ghost mono"
+                                    onclick={cancelCreatePreset}
+                                    disabled={savingCreatePreset}
+                                >
+                                    cancel
+                                </button>
+                                {#if savingCreatePreset}
+                                    <span class="tx-saving mono">creating…</span>
+                                {/if}
+                                {#if errorCreatePreset}
+                                    <span class="tx-error mono" role="alert">{errorCreatePreset}</span>
+                                {/if}
+                            </div>
                         {/if}
                     </div>
                 {/if}
-            {/if}
-            <Card padding="lg">
-                <div class="field">
-                    <div class="field-head">
-                        <div>
-                            <label for="fsrs-enabled">Enable FSRS</label>
-                            <p class="hint">
-                                Use the FSRS v5 scheduler. Toggling reschedules
-                                existing cards under current params — this may
-                                take a few seconds on large collections.
-                            </p>
+
+                <div class="tx-card" data-testid="settings-fsrs-fields-card">
+                    <div class="tx-card-head">
+                        <Caption>// scheduling</Caption>
+                        <span class="tx-card-hand hand" aria-hidden="true">caps and cadence</span>
+                    </div>
+
+                    <div class="tx-field">
+                        <div class="tx-field-head">
+                            <div class="tx-field-meta">
+                                <label for="fsrs-enabled" class="tx-label mono">enable fsrs</label>
+                                <p class="tx-hint mono">
+                                    use the fsrs v5 scheduler. toggling reschedules existing
+                                    cards under current params — may take a few seconds on
+                                    large collections.
+                                </p>
+                            </div>
+                            <div class="tx-toggle-cell">
+                                {#if savingFsrs}
+                                    <span class="tx-saving mono">rescheduling…</span>
+                                {/if}
+                                <input
+                                    id="fsrs-enabled"
+                                    type="checkbox"
+                                    class="tx-checkbox"
+                                    bind:checked={fsrsEnabled}
+                                    onchange={() => persistFsrs()}
+                                    disabled={disabledControls()}
+                                />
+                            </div>
                         </div>
-                        <div class="toggle-cell">
-                            {#if savingFsrs}
-                                <span class="saving">Rescheduling…</span>
-                            {/if}
+                        {#if errorFsrs}
+                            <p class="tx-error mono">{errorFsrs}</p>
+                        {/if}
+                    </div>
+
+                    <div class="tx-field">
+                        <div class="tx-field-head">
+                            <div class="tx-field-meta">
+                                <label for="desired-retention" class="tx-label mono">desired retention</label>
+                                <p class="tx-hint mono">target probability of recalling a card when due.</p>
+                            </div>
+                            <div class="tx-value-pill mono">{retentionPct}%</div>
+                        </div>
+                        <input
+                            id="desired-retention"
+                            type="range"
+                            class="tx-range"
+                            min="70"
+                            max="97"
+                            bind:value={retentionPct}
+                            onchange={() => persistRetention()}
+                            disabled={disabledControls()}
+                        />
+                        <div class="tx-scale mono">
+                            <span>70%</span>
+                            <span>85%</span>
+                            <span>97%</span>
+                        </div>
+                        {#if savingRetention}
+                            <span class="tx-saving mono">saving…</span>
+                        {/if}
+                        {#if errorRetention}
+                            <p class="tx-error mono">{errorRetention}</p>
+                        {/if}
+                    </div>
+
+                    <div class="tx-field">
+                        <div class="tx-field-head">
+                            <div class="tx-field-meta">
+                                <label for="max-interval" class="tx-label mono">maximum interval</label>
+                                <p class="tx-hint mono">cap in days. longer = fewer reviews but slower learning.</p>
+                            </div>
                             <input
-                                id="fsrs-enabled"
-                                type="checkbox"
-                                bind:checked={fsrsEnabled}
-                                onchange={() => persistFsrs()}
+                                id="max-interval"
+                                class="tx-num-input mono"
+                                type="number"
+                                min="1"
+                                max="36500"
+                                bind:value={maxInterval}
+                                onblur={() => persistMaxInterval()}
                                 disabled={disabledControls()}
                             />
                         </div>
+                        {#if savingMaxInterval}
+                            <span class="tx-saving mono">saving…</span>
+                        {/if}
+                        {#if errorMaxInterval}
+                            <p class="tx-error mono">{errorMaxInterval}</p>
+                        {/if}
                     </div>
-                    {#if errorFsrs}
-                        <p class="field-error">{errorFsrs}</p>
-                    {/if}
+
+                    <div class="tx-field">
+                        <div class="tx-field-head">
+                            <div class="tx-field-meta">
+                                <label for="new-per-day" class="tx-label mono">new cards per day</label>
+                                <p class="tx-hint mono">daily cap on newly-introduced cards. 0 pauses new cards.</p>
+                            </div>
+                            <input
+                                id="new-per-day"
+                                class="tx-num-input mono"
+                                type="number"
+                                min="0"
+                                max="9999"
+                                bind:value={newPerDay}
+                                onblur={() => persistNewPerDay()}
+                                disabled={disabledControls()}
+                            />
+                        </div>
+                        {#if savingNewPerDay}
+                            <span class="tx-saving mono">saving…</span>
+                        {/if}
+                        {#if errorNewPerDay}
+                            <p class="tx-error mono">{errorNewPerDay}</p>
+                        {/if}
+                    </div>
+
+                    <div class="tx-field">
+                        <div class="tx-field-head">
+                            <div class="tx-field-meta">
+                                <label for="reviews-per-day" class="tx-label mono">reviews per day</label>
+                                <p class="tx-hint mono">daily cap on review cards. 0 pauses reviews.</p>
+                            </div>
+                            <input
+                                id="reviews-per-day"
+                                class="tx-num-input mono"
+                                type="number"
+                                min="0"
+                                max="9999"
+                                bind:value={reviewsPerDay}
+                                onblur={() => persistReviewsPerDay()}
+                                disabled={disabledControls()}
+                            />
+                        </div>
+                        {#if savingReviewsPerDay}
+                            <span class="tx-saving mono">saving…</span>
+                        {/if}
+                        {#if errorReviewsPerDay}
+                            <p class="tx-error mono">{errorReviewsPerDay}</p>
+                        {/if}
+                    </div>
+
+                    <div class="tx-field">
+                        <div class="tx-field-head">
+                            <div class="tx-field-meta">
+                                <label for="cap-answer-time" class="tx-label mono">answer-time cap</label>
+                                <p class="tx-hint mono">soft per-card timer in seconds. slower than this counts as a hard answer.</p>
+                            </div>
+                            <input
+                                id="cap-answer-time"
+                                class="tx-num-input mono"
+                                type="number"
+                                min="1"
+                                max="600"
+                                bind:value={capAnswerTimeSecs}
+                                onblur={() => persistCapAnswerTime()}
+                                disabled={disabledControls()}
+                            />
+                        </div>
+                        {#if savingCapAnswerTime}
+                            <span class="tx-saving mono">saving…</span>
+                        {/if}
+                        {#if errorCapAnswerTime}
+                            <p class="tx-error mono">{errorCapAnswerTime}</p>
+                        {/if}
+                    </div>
+
+                    <div class="tx-field tx-field-last">
+                        <div class="tx-field-head">
+                            <div class="tx-field-meta">
+                                <!-- svelte-ignore a11y_label_has_associated_control: this label is the ARIA group label for the radiogroup below via aria-labelledby, not bound to a single input -->
+                                <label id="new-card-order-label" class="tx-label mono">new card order</label>
+                                <p class="tx-hint mono">order new cards are picked off the daily pool. random shuffles within the per-day cap.</p>
+                            </div>
+                            <div
+                                class="tx-segmented mono"
+                                role="radiogroup"
+                                aria-labelledby="new-card-order-label"
+                            >
+                                <button
+                                    type="button"
+                                    role="radio"
+                                    aria-checked={newCardOrder === "due"}
+                                    class="tx-segment"
+                                    class:tx-segment-active={newCardOrder === "due"}
+                                    onclick={() => persistNewCardOrder("due")}
+                                    disabled={disabledControls() || savingNewCardOrder}
+                                >due</button>
+                                <button
+                                    type="button"
+                                    role="radio"
+                                    aria-checked={newCardOrder === "random"}
+                                    class="tx-segment"
+                                    class:tx-segment-active={newCardOrder === "random"}
+                                    onclick={() => persistNewCardOrder("random")}
+                                    disabled={disabledControls() || savingNewCardOrder}
+                                >random</button>
+                            </div>
+                        </div>
+                        {#if savingNewCardOrder}
+                            <span class="tx-saving mono">saving…</span>
+                        {/if}
+                        {#if errorNewCardOrder}
+                            <p class="tx-error mono">{errorNewCardOrder}</p>
+                        {/if}
+                    </div>
                 </div>
 
-                <div class="field">
-                    <div class="field-head">
-                        <div>
-                            <label for="desired-retention">Desired retention</label>
-                            <p class="hint">Target probability of recalling a card when due.</p>
-                        </div>
-                        <div class="value-pill">{retentionPct}%</div>
+                <div class="tx-card" data-testid="settings-optimize-card">
+                    <div class="tx-card-head">
+                        <Caption>// optimize</Caption>
+                        <span class="tx-card-hand hand" aria-hidden="true">trained weights</span>
                     </div>
-                    <input
-                        id="desired-retention"
-                        type="range"
-                        min="70"
-                        max="97"
-                        bind:value={retentionPct}
-                        onchange={() => persistRetention()}
-                        disabled={disabledControls()}
-                    />
-                    <div class="scale">
-                        <span>70%</span>
-                        <span>85%</span>
-                        <span>97%</span>
-                    </div>
-                    {#if savingRetention}
-                        <span class="saving">Saving…</span>
-                    {/if}
-                    {#if errorRetention}
-                        <p class="field-error">{errorRetention}</p>
-                    {/if}
-                </div>
-
-                <div class="field">
-                    <div class="field-head">
-                        <div>
-                            <label for="max-interval">Maximum interval</label>
-                            <p class="hint">Cap in days. Longer = fewer reviews but slower learning.</p>
-                        </div>
-                        <input
-                            id="max-interval"
-                            class="num-input"
-                            type="number"
-                            min="1"
-                            max="36500"
-                            bind:value={maxInterval}
-                            onblur={() => persistMaxInterval()}
-                            disabled={disabledControls()}
-                        />
-                    </div>
-                    {#if savingMaxInterval}
-                        <span class="saving">Saving…</span>
-                    {/if}
-                    {#if errorMaxInterval}
-                        <p class="field-error">{errorMaxInterval}</p>
-                    {/if}
-                </div>
-
-                <div class="field">
-                    <div class="field-head">
-                        <div>
-                            <label for="new-per-day">New cards per day</label>
-                            <p class="hint">Daily cap on newly-introduced cards. 0 pauses new cards.</p>
-                        </div>
-                        <input
-                            id="new-per-day"
-                            class="num-input"
-                            type="number"
-                            min="0"
-                            max="9999"
-                            bind:value={newPerDay}
-                            onblur={() => persistNewPerDay()}
-                            disabled={disabledControls()}
-                        />
-                    </div>
-                    {#if savingNewPerDay}
-                        <span class="saving">Saving…</span>
-                    {/if}
-                    {#if errorNewPerDay}
-                        <p class="field-error">{errorNewPerDay}</p>
-                    {/if}
-                </div>
-
-                <div class="field">
-                    <div class="field-head">
-                        <div>
-                            <label for="reviews-per-day">Reviews per day</label>
-                            <p class="hint">Daily cap on review cards. 0 pauses reviews.</p>
-                        </div>
-                        <input
-                            id="reviews-per-day"
-                            class="num-input"
-                            type="number"
-                            min="0"
-                            max="9999"
-                            bind:value={reviewsPerDay}
-                            onblur={() => persistReviewsPerDay()}
-                            disabled={disabledControls()}
-                        />
-                    </div>
-                    {#if savingReviewsPerDay}
-                        <span class="saving">Saving…</span>
-                    {/if}
-                    {#if errorReviewsPerDay}
-                        <p class="field-error">{errorReviewsPerDay}</p>
-                    {/if}
-                </div>
-
-                <div class="field">
-                    <div class="field-head">
-                        <div>
-                            <label for="cap-answer-time">Answer-time cap</label>
-                            <p class="hint">Soft per-card timer in seconds. Slower than this counts as a hard answer.</p>
-                        </div>
-                        <input
-                            id="cap-answer-time"
-                            class="num-input"
-                            type="number"
-                            min="1"
-                            max="600"
-                            bind:value={capAnswerTimeSecs}
-                            onblur={() => persistCapAnswerTime()}
-                            disabled={disabledControls()}
-                        />
-                    </div>
-                    {#if savingCapAnswerTime}
-                        <span class="saving">Saving…</span>
-                    {/if}
-                    {#if errorCapAnswerTime}
-                        <p class="field-error">{errorCapAnswerTime}</p>
-                    {/if}
-                </div>
-
-                <div class="field">
-                    <div class="field-head">
-                        <div>
-                            <!-- svelte-ignore a11y_label_has_associated_control: this label is the ARIA group label for the radiogroup below via aria-labelledby, not bound to a single input -->
-                            <label id="new-card-order-label">New card order</label>
-                            <p class="hint">Order new cards are picked off the daily pool. Random shuffles within the per-day cap.</p>
-                        </div>
-                        <div
-                            class="segmented"
-                            role="radiogroup"
-                            aria-labelledby="new-card-order-label"
-                        >
-                            <button
-                                type="button"
-                                role="radio"
-                                aria-checked={newCardOrder === "due"}
-                                class="segment"
-                                class:active={newCardOrder === "due"}
-                                onclick={() => persistNewCardOrder("due")}
-                                disabled={disabledControls() || savingNewCardOrder}
-                            >Due</button>
-                            <button
-                                type="button"
-                                role="radio"
-                                aria-checked={newCardOrder === "random"}
-                                class="segment"
-                                class:active={newCardOrder === "random"}
-                                onclick={() => persistNewCardOrder("random")}
-                                disabled={disabledControls() || savingNewCardOrder}
-                            >Random</button>
-                        </div>
-                    </div>
-                    {#if savingNewCardOrder}
-                        <span class="saving">Saving…</span>
-                    {/if}
-                    {#if errorNewCardOrder}
-                        <p class="field-error">{errorNewCardOrder}</p>
-                    {/if}
-                </div>
-            </Card>
-
-            <Card padding="lg">
-                <div class="card-head">
-                    <h3>Optimized weights</h3>
-                    <div class="optimize-actions">
-                        <label class="health-toggle" title="Verify trained params on next optimize / enable-flip">
+                    <div class="tx-optimize-actions">
+                        <label class="tx-health-toggle mono" title="Verify trained params on next optimize / enable-flip">
                             <input
                                 type="checkbox"
+                                class="tx-checkbox"
                                 bind:checked={fsrsHealthCheck}
                                 disabled={disabledControls() || savingHealthCheck}
                                 onchange={() => persistHealthCheck()}
                             />
-                            <span>Health check</span>
+                            <span>health check</span>
                         </label>
                         <button
-                            class="re-optimize"
+                            type="button"
+                            class="tx-btn tx-btn-paper mono"
                             onclick={() => runOptimize()}
                             disabled={disabledControls() || optimizing}
+                            data-testid="settings-reoptimize-btn"
                         >
-                            {optimizing ? "Optimizing…" : "Re-optimize"}
+                            {optimizing ? "optimizing…" : "re-optimize"}
                         </button>
                     </div>
-                </div>
-                {#if errorHealthCheck}
-                    <p class="field-error">{errorHealthCheck}</p>
-                {/if}
-                <p class="hint">
-                    {#if paramsSource === "disk"}
-                        Loaded {optimizedParams.length} params from disk · click
-                        Re-optimize to retrain on the latest review history.
-                    {:else if optimizeFsrsItems === null}
-                        Click Re-optimize to fit FSRS parameters from your
-                        review history.
-                    {:else if optimizeFsrsItems === 0}
-                        No reviews available yet — log some reviews first, then
-                        re-optimize.
-                    {:else}
-                        Trained on {optimizeFsrsItems.toLocaleString()} reviews
-                        on {presets.find((p) => p.id === selectedPresetId)
-                            ?.name ?? "this preset"} · params updated.
+                    {#if errorHealthCheck}
+                        <p class="tx-error mono">{errorHealthCheck}</p>
                     {/if}
-                </p>
-                {#if errorOptimize}
-                    <p class="field-error">{errorOptimize}</p>
-                {/if}
-                {#if optimizedParams.length > 0}
-                    <div class="weights">
-                        {#each optimizedParams as w, i (i)}
-                            <div class="w-cell">
-                                <div class="w-i">w<sub>{i}</sub></div>
-                                <div class="w-v">{w.toFixed(3)}</div>
-                            </div>
-                        {/each}
-                    </div>
-                {/if}
-            </Card>
-        {:else if active === "appearance"}
-            <Card padding="lg">
-                <div class="field">
-                    <div class="field-head">
-                        <div>
-                            <span class="field-label">Theme</span>
-                            <p class="hint">Light uses a warm cream base; dark is a deep warm gray.</p>
+                    <p class="tx-hint mono">
+                        {#if paramsSource === "disk"}
+                            loaded {optimizedParams.length} params from disk · click
+                            re-optimize to retrain on the latest review history.
+                        {:else if optimizeFsrsItems === null}
+                            click re-optimize to fit fsrs parameters from your
+                            review history.
+                        {:else if optimizeFsrsItems === 0}
+                            no reviews available yet — log some reviews first, then
+                            re-optimize.
+                        {:else}
+                            trained on {optimizeFsrsItems.toLocaleString()} reviews
+                            on {presets.find((p) => p.id === selectedPresetId)
+                                ?.name ?? "this preset"} · params updated.
+                        {/if}
+                    </p>
+                    {#if errorOptimize}
+                        <p class="tx-error mono">{errorOptimize}</p>
+                    {/if}
+                    {#if optimizedParams.length > 0}
+                        <div class="tx-weights">
+                            {#each optimizedParams as w, i (i)}
+                                <div class="tx-w-cell">
+                                    <div class="tx-w-i mono">w<sub>{i}</sub></div>
+                                    <div class="tx-w-v mono">{w.toFixed(3)}</div>
+                                </div>
+                            {/each}
                         </div>
+                    {/if}
+                </div>
+            {:else if active === "appearance"}
+                <div class="tx-card" data-testid="settings-theme-card">
+                    <div class="tx-card-head">
+                        <Caption>// theme</Caption>
+                        <span class="tx-card-hand hand" aria-hidden="true">paper or ink</span>
                     </div>
-                    <div class="theme-grid">
-                        <label class="theme-opt">
+                    <p class="tx-hint mono">
+                        light uses a warm cream base; dark is a deep warm gray.
+                    </p>
+                    <div class="tx-theme-grid">
+                        <label class="tx-theme-opt" data-testid="settings-theme-light">
                             <input
                                 type="radio"
                                 name="theme"
@@ -1168,10 +1308,10 @@
                                 bind:group={themeChoice}
                                 onchange={() => setThemeChoice("light")}
                             />
-                            <div class="swatch light"></div>
-                            <span>Light</span>
+                            <div class="tx-theme-swatch tx-theme-swatch-light" aria-hidden="true"></div>
+                            <span class="mono">light</span>
                         </label>
-                        <label class="theme-opt">
+                        <label class="tx-theme-opt" data-testid="settings-theme-dark">
                             <input
                                 type="radio"
                                 name="theme"
@@ -1179,10 +1319,10 @@
                                 bind:group={themeChoice}
                                 onchange={() => setThemeChoice("dark")}
                             />
-                            <div class="swatch dark"></div>
-                            <span>Dark</span>
+                            <div class="tx-theme-swatch tx-theme-swatch-dark" aria-hidden="true"></div>
+                            <span class="mono">dark</span>
                         </label>
-                        <label class="theme-opt">
+                        <label class="tx-theme-opt" data-testid="settings-theme-auto">
                             <input
                                 type="radio"
                                 name="theme"
@@ -1190,42 +1330,38 @@
                                 bind:group={themeChoice}
                                 onchange={() => setThemeChoice("auto")}
                             />
-                            <div class="swatch auto"></div>
-                            <span>System</span>
+                            <div class="tx-theme-swatch tx-theme-swatch-auto" aria-hidden="true"></div>
+                            <span class="mono">system</span>
                         </label>
                     </div>
                 </div>
-            </Card>
-        {:else if active === "notetypes"}
-            <Card padding="lg">
-                <div class="field">
-                    <div class="field-head">
-                        <div>
-                            <span class="field-label">Notetypes</span>
-                            <p class="hint">
-                                Rename the templates that drive your cards
-                                and manage their fields. Field changes
-                                affect every note sharing the notetype, so
-                                expand a row before editing.
-                            </p>
-                        </div>
+            {:else if active === "notetypes"}
+                <div class="tx-card" data-testid="settings-notetypes-card">
+                    <div class="tx-card-head">
+                        <Caption>// notetypes</Caption>
+                        <span class="tx-card-hand hand" aria-hidden="true">card templates</span>
                     </div>
+                    <p class="tx-hint mono">
+                        rename the templates that drive your cards and manage
+                        their fields. field changes affect every note sharing
+                        the notetype, so expand a row before editing.
+                    </p>
                     {#if loadingNotetypes}
-                        <p class="hint">Loading notetypes…</p>
+                        <p class="tx-hint mono">loading notetypes…</p>
                     {:else if errorNotetypesLoad}
-                        <p class="field-error" role="alert">
+                        <p class="tx-error mono" role="alert">
                             {errorNotetypesLoad}
                         </p>
                     {:else if notetypes && notetypes.length > 0}
-                        <ul class="nt-list">
+                        <ul class="tx-nt-list">
                             {#each notetypes as nt (nt.id)}
                                 {@const isExpanded =
                                     expandedNotetypeId === nt.id}
-                                <li class="nt-row">
-                                    <div class="nt-row-head">
+                                <li class="tx-nt-row">
+                                    <div class="tx-nt-row-head">
                                         {#if editingNotetypeId === nt.id}
                                             <input
-                                                class="text-input nt-input"
+                                                class="tx-input tx-nt-input mono"
                                                 type="text"
                                                 bind:value={notetypeNameDraft}
                                                 disabled={savingNotetypeRename}
@@ -1240,24 +1376,27 @@
                                                 }}
                                             />
                                             <button
-                                                class="ghost-btn"
+                                                type="button"
+                                                class="tx-btn tx-btn-ghost mono"
                                                 onclick={commitEditNotetype}
                                                 disabled={savingNotetypeRename}
                                             >
                                                 {savingNotetypeRename
-                                                    ? "Saving…"
-                                                    : "Save"}
+                                                    ? "saving…"
+                                                    : "save"}
                                             </button>
                                             <button
-                                                class="ghost-btn"
+                                                type="button"
+                                                class="tx-btn tx-btn-ghost mono"
                                                 onclick={cancelEditNotetype}
                                                 disabled={savingNotetypeRename}
                                             >
-                                                Cancel
+                                                cancel
                                             </button>
                                         {:else}
                                             <button
-                                                class="nt-disclose"
+                                                type="button"
+                                                class="tx-nt-disclose"
                                                 aria-expanded={isExpanded}
                                                 aria-label="Toggle fields for {nt.name}"
                                                 onclick={() =>
@@ -1266,34 +1405,36 @@
                                                     )}
                                             >
                                                 <span
-                                                    class="nt-chev"
-                                                    class:open={isExpanded}
+                                                    class="tx-nt-chev mono"
+                                                    class:tx-nt-chev-open={isExpanded}
+                                                    aria-hidden="true"
                                                 >›</span>
-                                                <span class="nt-name">
+                                                <span class="tx-nt-name mono">
                                                     {nt.name}
                                                 </span>
                                             </button>
-                                            <span class="nt-meta">
+                                            <span class="tx-nt-meta mono">
                                                 {nt.fields.length} field{nt
                                                     .fields.length === 1
                                                     ? ""
                                                     : "s"}
                                             </span>
                                             <button
-                                                class="ghost-btn"
+                                                type="button"
+                                                class="tx-btn tx-btn-ghost mono"
                                                 onclick={() =>
                                                     startEditNotetype(
                                                         nt.id,
                                                         nt.name,
                                                     )}
                                             >
-                                                Rename
+                                                rename
                                             </button>
                                         {/if}
                                     </div>
                                     {#if isExpanded}
-                                        <div class="nt-fields">
-                                            <ul class="nt-fields-list">
+                                        <div class="tx-nt-fields">
+                                            <ul class="tx-nt-fields-list">
                                                 {#each nt.fields as fieldName, idx (idx)}
                                                     {@const isPendingDelete =
                                                         pendingDelete?.ntId ===
@@ -1302,38 +1443,41 @@
                                                             idx}
                                                     {@const isLastField =
                                                         nt.fields.length <= 1}
-                                                    <li class="nt-field-row">
+                                                    <li class="tx-nt-field-row">
                                                         <span
-                                                            class="nt-field-ord"
+                                                            class="tx-nt-field-ord mono"
                                                             >{idx + 1}.</span>
                                                         <span
-                                                            class="nt-field-name"
+                                                            class="tx-nt-field-name mono"
                                                             >{fieldName}</span>
                                                         {#if isPendingDelete}
                                                             <span
-                                                                class="nt-field-confirm"
+                                                                class="tx-nt-field-confirm mono"
                                                             >
-                                                                Delete field?
+                                                                delete field?
                                                             </span>
                                                             <button
-                                                                class="ghost-btn danger"
+                                                                type="button"
+                                                                class="tx-btn tx-btn-danger mono"
                                                                 disabled={savingDeleteField}
                                                                 onclick={commitDeleteField}
                                                             >
                                                                 {savingDeleteField
-                                                                    ? "Deleting…"
-                                                                    : "Confirm"}
+                                                                    ? "deleting…"
+                                                                    : "confirm"}
                                                             </button>
                                                             <button
-                                                                class="ghost-btn"
+                                                                type="button"
+                                                                class="tx-btn tx-btn-ghost mono"
                                                                 disabled={savingDeleteField}
                                                                 onclick={cancelDeleteField}
                                                             >
-                                                                Cancel
+                                                                cancel
                                                             </button>
                                                         {:else}
                                                             <button
-                                                                class="nt-field-x"
+                                                                type="button"
+                                                                class="tx-nt-field-x"
                                                                 aria-label="Delete field {fieldName}"
                                                                 title={isLastField
                                                                     ? "A notetype must have at least one field"
@@ -1354,18 +1498,18 @@
                                             {#if errorDeleteField &&
                                                 errorDeleteField.id === nt.id}
                                                 <p
-                                                    class="field-error"
+                                                    class="tx-error mono"
                                                     role="alert"
                                                 >
                                                     {errorDeleteField.message}
                                                 </p>
                                             {/if}
                                             {#if addingFieldNotetypeId === nt.id}
-                                                <div class="nt-field-add">
+                                                <div class="tx-nt-field-add">
                                                     <input
-                                                        class="text-input nt-input"
+                                                        class="tx-input tx-nt-input mono"
                                                         type="text"
-                                                        placeholder="New field name"
+                                                        placeholder="new field name"
                                                         bind:value={newFieldNameDraft}
                                                         disabled={savingNewField}
                                                         aria-label="New field name for {nt.name}"
@@ -1383,35 +1527,39 @@
                                                         }}
                                                     />
                                                     <button
-                                                        class="ghost-btn"
+                                                        type="button"
+                                                        class="tx-btn tx-btn-ghost mono"
                                                         onclick={commitAddField}
                                                         disabled={savingNewField}
                                                     >
                                                         {savingNewField
-                                                            ? "Adding…"
-                                                            : "Add"}
+                                                            ? "adding…"
+                                                            : "add"}
                                                     </button>
                                                     <button
-                                                        class="ghost-btn"
+                                                        type="button"
+                                                        class="tx-btn tx-btn-ghost mono"
                                                         onclick={cancelAddField}
                                                         disabled={savingNewField}
                                                     >
-                                                        Cancel
+                                                        cancel
                                                     </button>
                                                 </div>
                                             {:else}
                                                 <button
-                                                    class="ghost-btn nt-add-btn"
+                                                    type="button"
+                                                    class="tx-btn tx-btn-ghost tx-nt-add-btn mono"
                                                     onclick={() =>
                                                         startAddField(nt.id)}
                                                 >
-                                                    + New field
+                                                    <SketchPlus size={11} />
+                                                    <span>new field</span>
                                                 </button>
                                             {/if}
                                             {#if errorAddField &&
                                                 errorAddField.id === nt.id}
                                                 <p
-                                                    class="field-error"
+                                                    class="tx-error mono"
                                                     role="alert"
                                                 >
                                                     {errorAddField.message}
@@ -1423,39 +1571,38 @@
                             {/each}
                         </ul>
                         {#if errorNotetypeRename}
-                            <p class="field-error" role="alert">
+                            <p class="tx-error mono" role="alert">
                                 {errorNotetypeRename}
                             </p>
                         {/if}
                     {:else if notetypes && notetypes.length === 0}
-                        <p class="hint">
-                            No notetypes on this collection — add cards
-                            from the home page to seed Basic.
+                        <p class="tx-hint mono">
+                            no notetypes on this collection — add cards from
+                            the home page to seed basic.
                         </p>
                     {/if}
                 </div>
-            </Card>
-        {:else if active === "recovery"}
-            <Card padding="lg">
-                <div class="recovery">
-                    <h3 class="recovery-title">
-                        Burn-recovery — reset card to new
-                    </h3>
-                    <p class="hint">
-                        Reset a card's scheduling state back to new.
-                        Revlog history is preserved so you can review
-                        what happened. Use when an accidental rating
-                        has corrupted a card's schedule.
+            {:else if active === "recovery"}
+                <div class="tx-card" data-testid="settings-recovery-card">
+                    <div class="tx-card-head">
+                        <Caption>// recovery</Caption>
+                        <span class="tx-card-hand hand" aria-hidden="true">undo a slip</span>
+                    </div>
+                    <p class="tx-hint mono">
+                        reset a card's scheduling state back to new. revlog
+                        history is preserved so you can review what happened.
+                        use when an accidental rating has corrupted a card's
+                        schedule.
                     </p>
 
-                    <div class="recovery-lookup">
-                        <label for="recovery-card-id" class="field-label">
-                            Card id
+                    <div class="tx-recovery-lookup">
+                        <label for="recovery-card-id" class="tx-label mono">
+                            card id
                         </label>
-                        <div class="recovery-lookup-row">
+                        <div class="tx-recovery-lookup-row">
                             <input
                                 id="recovery-card-id"
-                                class="text-input recovery-input"
+                                class="tx-input tx-recovery-input mono"
                                 type="text"
                                 inputmode="numeric"
                                 pattern="[0-9]*"
@@ -1466,18 +1613,18 @@
                             />
                             <button
                                 type="button"
-                                class="ghost-btn"
+                                class="tx-btn tx-btn-paper mono"
                                 onclick={lookupRecoveryCard}
                                 disabled={lookingUpCard ||
                                     savingRecoveryReset ||
                                     recoveryCardIdInput.trim() === ""}
                             >
-                                {lookingUpCard ? "Looking up…" : "Look up"}
+                                {lookingUpCard ? "looking up…" : "look up"}
                             </button>
                         </div>
                         {#if errorRecoveryLookup}
                             <p
-                                class="field-error"
+                                class="tx-error mono"
                                 role="alert"
                                 data-test="recovery-lookup-error"
                             >
@@ -1487,11 +1634,11 @@
                     </div>
 
                     {#if recoveryCard}
-                        <div class="recovery-card-detail">
-                            <div class="recovery-detail-row">
-                                <div class="meta-key">Front</div>
+                        <div class="tx-recovery-detail">
+                            <div class="tx-recovery-row">
+                                <div class="tx-meta-key mono">front</div>
                                 <div
-                                    class="recovery-front-preview"
+                                    class="tx-recovery-front mono"
                                     data-test="recovery-card-front"
                                 >
                                     {recoveryCard.front_html.length > 240
@@ -1502,83 +1649,83 @@
                                         : recoveryCard.front_html}
                                 </div>
                             </div>
-                            <div class="recovery-detail-row">
-                                <div class="meta-key">Deck</div>
-                                <div data-test="recovery-card-deck">
+                            <div class="tx-recovery-row">
+                                <div class="tx-meta-key mono">deck</div>
+                                <div class="mono" data-test="recovery-card-deck">
                                     {recoveryCard.deck_name}
                                 </div>
                             </div>
-                            <div class="recovery-detail-row">
-                                <div class="meta-key">Notetype</div>
-                                <div data-test="recovery-card-notetype">
+                            <div class="tx-recovery-row">
+                                <div class="tx-meta-key mono">notetype</div>
+                                <div class="mono" data-test="recovery-card-notetype">
                                     {recoveryCard.notetype_name}
                                 </div>
                             </div>
-                            <div class="recovery-detail-row">
-                                <div class="meta-key">Current state</div>
-                                <div data-test="recovery-card-state">
+                            <div class="tx-recovery-row">
+                                <div class="tx-meta-key mono">current state</div>
+                                <div class="mono" data-test="recovery-card-state">
                                     {recoveryCard.state}
                                 </div>
                             </div>
-                            <div class="recovery-detail-row">
-                                <div class="meta-key">Ease factor</div>
-                                <div data-test="recovery-card-ease">
+                            <div class="tx-recovery-row">
+                                <div class="tx-meta-key mono">ease factor</div>
+                                <div class="mono" data-test="recovery-card-ease">
                                     {recoveryCard.ease_factor.toFixed(2)}
                                 </div>
                             </div>
-                            <div class="recovery-detail-row">
-                                <div class="meta-key">Tags</div>
-                                <div data-test="recovery-card-tags">
+                            <div class="tx-recovery-row">
+                                <div class="tx-meta-key mono">tags</div>
+                                <div class="mono" data-test="recovery-card-tags">
                                     {recoveryCard.tags.length > 0
                                         ? recoveryCard.tags.join(", ")
                                         : "(none)"}
                                 </div>
                             </div>
 
-                            <div class="recovery-actions">
+                            <div class="tx-recovery-actions">
                                 {#if !pendingRecoveryReset}
                                     <button
                                         type="button"
-                                        class="ghost-btn danger"
+                                        class="tx-btn tx-btn-danger mono"
                                         data-test="recovery-reset-btn"
                                         onclick={startRecoveryReset}
                                         disabled={savingRecoveryReset}
                                     >
-                                        Reset to new
+                                        reset to new
                                     </button>
                                 {:else}
                                     <span
-                                        class="nt-field-confirm"
+                                        class="tx-nt-field-confirm mono"
                                         data-test="recovery-confirm-prompt"
                                     >
-                                        Reset to new?
+                                        reset to new?
                                     </span>
                                     <button
                                         type="button"
-                                        class="ghost-btn danger"
+                                        class="tx-btn tx-btn-danger mono"
                                         data-test="recovery-confirm-btn"
                                         onclick={commitRecoveryReset}
                                         disabled={savingRecoveryReset}
                                     >
                                         {savingRecoveryReset
-                                            ? "Resetting…"
-                                            : "Confirm"}
+                                            ? "resetting…"
+                                            : "confirm"}
                                     </button>
                                     <button
                                         type="button"
-                                        class="ghost-btn"
+                                        class="tx-btn tx-btn-ghost mono"
                                         data-test="recovery-cancel-btn"
                                         onclick={cancelRecoveryReset}
                                         disabled={savingRecoveryReset}
                                     >
-                                        Cancel
+                                        cancel
                                     </button>
                                 {/if}
                             </div>
 
                             {#if errorRecoveryReset}
                                 <p
-                                    class="field-error"
+                                    class="tx-error mono"
                                     role="alert"
                                     data-test="recovery-reset-error"
                                 >
@@ -1590,7 +1737,7 @@
 
                     {#if recoverySuccess}
                         <p
-                            class="recovery-success"
+                            class="tx-recovery-success mono"
                             role="status"
                             data-test="recovery-success"
                         >
@@ -1598,516 +1745,783 @@
                         </p>
                     {/if}
                 </div>
-            </Card>
-        {:else if active === "sync"}
-            <Card padding="lg">
-                <div class="sync-status">
-                    <div class="sync-dot"></div>
-                    <div>
-                        <div class="sync-label">Synced with your Anki server</div>
-                        <div class="hint">Last sync: 2m ago · 8,412 cards · 124 MB media</div>
+            {:else if active === "sync"}
+                <div class="tx-card" data-testid="settings-sync-card">
+                    <div class="tx-card-head">
+                        <Caption>// sync</Caption>
+                        <span class="tx-card-hand hand" aria-hidden="true">your collection, your server</span>
+                    </div>
+                    <div class="tx-sync-status">
+                        <span class="tx-sync-dot" aria-hidden="true"></span>
+                        <div class="tx-sync-status-text">
+                            <div class="tx-sync-label mono">connected</div>
+                            <div class="tx-hint mono">m4 self-hosted sync arrives in a later release · current build is local-only</div>
+                        </div>
+                    </div>
+                    <div class="tx-row">
+                        <div class="tx-meta-key mono">server</div>
+                        <div class="mono">https://anki.yourdomain.dev <span class="tx-coming-soon mono">— preview</span></div>
+                    </div>
+                    <div class="tx-row">
+                        <div class="tx-meta-key mono">devices</div>
+                        <div class="mono">this browser</div>
                     </div>
                 </div>
-                <div class="row">
-                    <div class="meta-key">Server</div>
-                    <div>https://anki.yourdomain.dev</div>
+            {:else}
+                <div class="tx-card tx-card-placeholder" data-testid="settings-placeholder-card">
+                    <div class="tx-card-head">
+                        <Caption>// {active}</Caption>
+                        <span class="tx-card-hand hand" aria-hidden="true">coming soon</span>
+                    </div>
+                    <p class="tx-hint mono">
+                        content for <strong>{active}</strong> will live here.
+                        placeholder until the data layer lands.
+                    </p>
                 </div>
-                <div class="row">
-                    <div class="meta-key">Devices</div>
-                    <div>MacBook Pro · iPhone 17 · this browser</div>
-                </div>
-            </Card>
-        {:else}
-            <Card padding="lg">
-                <p class="placeholder">Content for <strong>{active}</strong> will live here. Placeholder for prototype.</p>
-            </Card>
-        {/if}
-    </div>
+            {/if}
+        </div>
+    </section>
 </div>
 
 <style>
-    .wrap {
-        display: grid;
-        grid-template-columns: 200px 1fr;
-        gap: var(--space-10);
-        max-width: var(--content-max-wide);
+    .tx-page {
+        max-width: 1280px;
         margin: 0 auto;
-        padding: var(--space-10) var(--space-8) var(--space-16);
-    }
-    @media (max-width: 1024px) {
-        .wrap {
-            grid-template-columns: 1fr;
-            gap: var(--space-6);
-            min-width: 0;
-        }
-        .settings-nav {
-            position: static;
-            flex-direction: row;
-            flex-wrap: wrap;
-            gap: var(--space-2);
-            align-self: stretch;
-        }
-        .content {
-            min-width: 0;
-            overflow-x: hidden;
-        }
-    }
-    @media (max-width: 640px) {
-        .wrap {
-            padding: var(--space-5) var(--space-3) var(--space-8);
-        }
-    }
-
-    .settings-nav {
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-        position: sticky;
-        top: var(--space-10);
-        align-self: start;
-    }
-    .nav-item {
-        padding: 0.45rem 0.75rem;
-        border-radius: var(--radius-sm);
-        font-size: var(--text-sm);
-        color: var(--text-muted);
-        text-align: left;
-    }
-    .nav-item:hover {
-        background: var(--bg-hover);
-        color: var(--text);
-    }
-    .nav-item.active {
-        background: var(--bg-hover);
-        color: var(--text);
-        font-weight: 500;
-    }
-
-    .content {
+        padding: var(--space-8) var(--space-6) var(--space-12);
         display: flex;
         flex-direction: column;
         gap: var(--space-6);
-        min-width: 0;
-    }
-    header h1 {
-        font-size: var(--text-2xl);
-        font-weight: 600;
-        letter-spacing: -0.015em;
-    }
-    .subtitle {
-        color: var(--text-muted);
-        font-size: var(--text-sm);
-        margin-top: var(--space-1);
     }
 
-    .field {
+    /* ============== HEADER ============== */
+    .tx-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        flex-wrap: wrap;
+        gap: var(--space-4);
+    }
+    .tx-head-left {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+    .tx-title {
+        font-size: 28px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        margin: 4px 0 0;
+        color: var(--ink);
+        line-height: 1.05;
+    }
+    .tx-title-hand {
+        font-family: var(--font-hand);
+        color: var(--accent);
+        font-size: 22px;
+        margin-left: 12px;
+        letter-spacing: 0;
+        text-transform: lowercase;
+    }
+    .tx-subtitle {
+        font-size: 12px;
+        color: var(--ink-mute);
+        margin: 4px 0 0;
+        letter-spacing: 0.04em;
+        display: flex;
+        gap: 10px;
+        align-items: baseline;
+        flex-wrap: wrap;
+    }
+    .tx-subtitle-kbd {
+        font-size: 10px;
+        color: var(--ink-mute);
+        letter-spacing: 0.1em;
+        padding: 2px 8px;
+        border: 1px dashed var(--rule);
+        border-radius: 999px;
+    }
+    .tx-head-right {
+        color: var(--ink);
+        opacity: 0.55;
+    }
+
+    /* ============== SHELL (sidebar + panel) ============== */
+    .tx-shell {
+        display: grid;
+        grid-template-columns: 240px 1fr;
+        gap: var(--space-6);
+        align-items: start;
+    }
+
+    /* ============== SIDEBAR ============== */
+    .tx-sidebar {
+        position: sticky;
+        top: var(--space-6);
+        align-self: start;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+        padding: 18px 16px;
+        background: var(--bg-soft);
+        border: 1.5px solid var(--ink);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-stamp-sm);
+    }
+    .tx-sidebar-block {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+    .tx-nav {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        margin-top: 4px;
+    }
+    .tx-nav-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 10px;
+        font-size: 12px;
+        letter-spacing: 0.02em;
+        background: transparent;
+        border: 1.2px solid transparent;
+        border-radius: var(--radius);
+        color: var(--ink-soft);
+        cursor: pointer;
+        text-align: left;
+        transition: background-color 100ms ease, color 100ms ease,
+            border-color 100ms ease, box-shadow 100ms ease;
+    }
+    .tx-nav-item:hover:not(.tx-nav-item-active) {
+        background: var(--paper);
+        color: var(--ink);
+    }
+    .tx-nav-item:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+    }
+    .tx-nav-item-active {
+        background: var(--paper);
+        border-color: var(--ink);
+        color: var(--ink);
+        box-shadow: var(--shadow-stamp-sm);
+        font-weight: 500;
+    }
+    .tx-nav-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        flex: 0 0 auto;
+        color: var(--ink);
+    }
+    .tx-nav-label {
+        flex: 1;
+        text-transform: lowercase;
+    }
+
+    .tx-sidebar-account {
+        padding-top: 14px;
+        border-top: 1px dashed var(--rule);
+    }
+    .tx-account-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 10px;
+        background: var(--paper);
+        border: 1.2px solid var(--ink);
+        border-radius: var(--radius);
+        margin-top: 6px;
+        font-size: 12px;
+        color: var(--ink);
+    }
+    .tx-account-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 auto;
+        color: var(--ink);
+    }
+    .tx-account-name {
+        flex: 1;
+        font-weight: 500;
+    }
+    .tx-logout-btn {
+        margin-top: 8px;
+        padding: 6px 10px;
+        font-size: 11px;
+        letter-spacing: 0.06em;
+        background: transparent;
+        border: 1.2px dashed var(--rule);
+        border-radius: var(--radius);
+        color: var(--ink-soft);
+        cursor: pointer;
+        text-align: center;
+        text-transform: lowercase;
+        transition: color 120ms ease, border-color 120ms ease,
+            background-color 120ms ease;
+    }
+    .tx-logout-btn:hover {
+        color: var(--due);
+        border-color: var(--due);
+        border-style: solid;
+        background: color-mix(in oklch, var(--due) 8%, transparent);
+    }
+    .tx-account-hint {
+        margin-top: 6px;
+        font-size: 10px;
+        color: var(--ink-mute);
+        letter-spacing: 0.04em;
+    }
+    .tx-coming-soon {
+        font-style: italic;
+        color: var(--ink-mute);
+    }
+
+    .tx-sidebar-build {
+        padding-top: 14px;
+        border-top: 1px dashed var(--rule);
+    }
+    .tx-build {
+        font-size: 11px;
+        color: var(--ink-soft);
+        line-height: 1.6;
+        margin-top: 4px;
+    }
+    .tx-build-mute {
+        color: var(--ink-mute);
+    }
+    .tx-build-ok {
+        color: var(--accent);
+        margin-top: 4px;
+    }
+
+    /* ============== PANEL ============== */
+    .tx-panel {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-5);
+        min-width: 0;
+    }
+    .tx-panel-head {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding-bottom: var(--space-4);
+        border-bottom: 1.5px dashed var(--rule);
+    }
+    .tx-panel-title {
+        font-size: 26px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        margin: 4px 0 0;
+        color: var(--ink);
+        line-height: 1.05;
+    }
+    .tx-panel-hand {
+        font-family: var(--font-hand);
+        color: var(--accent);
+        font-size: 22px;
+        margin-left: 12px;
+        text-transform: lowercase;
+        letter-spacing: 0;
+    }
+    .tx-panel-sub {
+        font-size: 12px;
+        color: var(--ink-mute);
+        margin: 4px 0 0;
+        letter-spacing: 0.04em;
+    }
+
+    /* ============== CARD ============== */
+    .tx-card {
         display: flex;
         flex-direction: column;
         gap: var(--space-3);
-        padding: var(--space-4) 0;
-        border-bottom: 1px solid var(--border);
+        padding: var(--space-5) var(--space-5);
+        background: var(--paper);
+        border: 1.5px solid var(--ink);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-stamp-sm);
     }
-    .field:last-child {
-        border-bottom: 0;
-    }
-    .field-head {
+    .tx-card-head {
         display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: var(--space-4);
+        align-items: baseline;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-bottom: 4px;
     }
-    label,
-    .field-label {
-        font-size: var(--text-sm);
-        font-weight: 500;
-    }
-    .hint {
-        font-size: var(--text-xs);
-        color: var(--text-subtle);
-        margin-top: 2px;
-    }
-    .value-pill {
-        font-variant-numeric: tabular-nums;
-        font-weight: 500;
-        padding: 0.25rem 0.75rem;
-        background: var(--accent-bg);
+    .tx-card-hand {
+        font-family: var(--font-hand);
+        font-size: 18px;
         color: var(--accent);
-        border: 1px solid var(--accent-border);
-        border-radius: var(--radius-full);
-        font-size: var(--text-sm);
+        text-transform: lowercase;
+    }
+    .tx-card-placeholder {
+        background: var(--bg-soft);
+        border-style: dashed;
+        box-shadow: none;
     }
 
-    .disclaimer {
-        font-size: var(--text-xs);
-        color: var(--text-subtle);
+    /* ============== ERROR / BANNER ============== */
+    .tx-banner {
+        padding: 10px 14px;
+        border: 1.5px solid var(--rule);
+        border-radius: var(--radius-md);
+        background: var(--paper);
+        font-size: 12px;
+        line-height: 1.45;
+        letter-spacing: 0.02em;
+    }
+    .tx-banner-error {
+        border-color: var(--due);
+        background: color-mix(in oklch, var(--due) 8%, var(--paper));
+        color: var(--due);
+    }
+    .tx-banner-detail {
+        margin-top: 4px;
+        font-size: 11px;
+        color: var(--ink-soft);
+    }
+    .tx-disclaimer {
+        margin: 0;
+        padding: 6px 10px;
+        font-size: 11px;
+        color: var(--ink-mute);
         font-style: italic;
-        margin-bottom: calc(var(--space-2) * -1);
+        letter-spacing: 0.02em;
+    }
+    .tx-error {
+        font-size: 11px;
+        color: var(--due);
+        margin: 4px 0 0;
+        letter-spacing: 0.02em;
+    }
+    .tx-saving {
+        font-size: 11px;
+        color: var(--ink-mute);
+        font-style: italic;
+        letter-spacing: 0.04em;
     }
 
-    .preset-row {
+    /* ============== LABELS / HINTS ============== */
+    .tx-label {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--ink);
+        letter-spacing: 0.02em;
+        text-transform: lowercase;
+    }
+    .tx-hint {
+        font-size: 11px;
+        color: var(--ink-mute);
+        margin: 2px 0 0;
+        line-height: 1.5;
+        letter-spacing: 0.02em;
+    }
+
+    /* ============== PRESET ROW ============== */
+    .tx-preset-row {
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
-        gap: var(--space-3);
-        margin: var(--space-3) 0;
+        gap: 10px;
+        margin-top: var(--space-2);
     }
-    .preset-row label {
-        font-size: var(--text-sm);
-        color: var(--text-muted);
+    .tx-create-preset-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        margin-top: var(--space-3);
+        padding-top: var(--space-3);
+        border-top: 1px dashed var(--rule);
     }
-    .preset-select {
-        background: var(--bg);
-        color: var(--text);
-        border: 1px solid var(--border);
-        border-radius: var(--radius-sm);
-        padding: var(--space-1) var(--space-2);
-        font: inherit;
+
+    /* ============== SELECTS / INPUTS ============== */
+    .tx-select-wrap {
+        position: relative;
         min-width: 14rem;
     }
-    .preset-select:focus {
-        outline: none;
-        border-color: var(--text-muted);
-    }
-    .new-preset-button,
-    .save-preset-button,
-    .cancel-preset-button,
-    .delete-preset-button {
-        background: var(--bg);
-        color: var(--text);
-        border: 1px solid var(--border);
-        border-radius: var(--radius-sm);
-        padding: var(--space-1) var(--space-3);
-        font-size: var(--text-sm);
+    .tx-select {
+        appearance: none;
+        -webkit-appearance: none;
+        width: 100%;
+        font-size: 13px;
+        font-family: var(--font-mono);
+        padding: 8px 28px 8px 12px;
+        background: var(--paper);
+        color: var(--ink);
+        border: 1.2px solid var(--ink);
+        border-radius: 4px;
         cursor: pointer;
+        line-height: 1.4;
     }
-    .new-preset-button:hover:not(:disabled),
-    .save-preset-button:hover:not(:disabled),
-    .cancel-preset-button:hover:not(:disabled),
-    .delete-preset-button:hover:not(:disabled) {
-        border-color: var(--text-muted);
+    .tx-select:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
     }
-    .new-preset-button:disabled,
-    .save-preset-button:disabled,
-    .cancel-preset-button:disabled,
-    .delete-preset-button:disabled {
+    .tx-select:disabled {
         opacity: 0.55;
         cursor: not-allowed;
     }
-    .delete-preset-button {
-        color: var(--danger, #c44);
+    .tx-select-caret {
+        position: absolute;
+        right: 10px;
+        top: 50%;
+        transform: translateY(-50%);
+        font-size: 11px;
+        color: var(--ink-mute);
+        pointer-events: none;
     }
-    .delete-preset-button:hover:not(:disabled) {
-        border-color: var(--danger, #c44);
-    }
-    .save-preset-button {
-        background: var(--accent, #c0c);
-        color: var(--bg);
-        border-color: transparent;
-    }
-    .create-preset-row {
-        display: flex;
-        align-items: center;
-        gap: var(--space-3);
-        flex-wrap: wrap;
-        margin: 0 0 var(--space-3) 0;
-    }
-    .create-preset-row label {
-        font-size: var(--text-sm);
-        color: var(--text-muted);
-    }
-    .new-preset-input {
+
+    .tx-input {
         flex: 1 1 16rem;
         min-width: 12rem;
-        padding: 0.3rem 0.5rem;
-        border: 1px solid var(--border);
-        border-radius: var(--radius-sm);
-        background: var(--bg);
-        color: var(--text);
-        font: inherit;
+        padding: 8px 12px;
+        background: var(--paper);
+        color: var(--ink);
+        border: 1.2px solid var(--ink);
+        border-radius: 4px;
+        font-family: var(--font-mono);
+        font-size: 13px;
+        line-height: 1.4;
     }
-    .new-preset-input:focus {
-        outline: none;
-        border-color: var(--accent);
+    .tx-input:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
     }
-    .new-preset-input:disabled {
+    .tx-input:disabled {
         opacity: 0.55;
         cursor: not-allowed;
     }
 
-    .error-banner {
-        padding: var(--space-3) var(--space-4);
-        border: 1px solid var(--danger, #c44);
-        border-radius: var(--radius-sm);
-        background: color-mix(in oklch, var(--danger, #c44) 8%, transparent);
-        color: var(--text);
-        font-size: var(--text-sm);
-        line-height: 1.45;
-    }
-    .error-banner strong {
-        font-weight: 600;
-        margin-right: 0.25rem;
-    }
-
-    .toggle-cell {
-        display: flex;
-        align-items: center;
-        gap: var(--space-2);
-    }
-
-    .num-input {
+    .tx-num-input {
         width: 7rem;
-        padding: 0.3rem 0.5rem;
-        border: 1px solid var(--border);
-        border-radius: var(--radius-sm);
-        background: var(--bg);
-        color: var(--text);
-        font-size: var(--text-sm);
+        padding: 8px 12px;
+        background: var(--paper);
+        color: var(--ink);
+        border: 1.2px solid var(--ink);
+        border-radius: 4px;
+        font-family: var(--font-mono);
+        font-size: 13px;
         font-variant-numeric: tabular-nums;
         text-align: right;
     }
-    .num-input:focus {
-        outline: none;
-        border-color: var(--accent);
+    .tx-num-input:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
     }
-    .num-input:disabled,
-    input[type="range"]:disabled,
-    input[type="checkbox"]:disabled {
+    .tx-num-input:disabled {
         opacity: 0.55;
         cursor: not-allowed;
     }
 
-    .segmented {
+    /* ============== BUTTONS ============== */
+    .tx-btn {
         display: inline-flex;
-        border: 1px solid var(--border);
-        border-radius: var(--radius-sm);
-        overflow: hidden;
-        background: var(--bg);
-    }
-    .segment {
-        padding: 0.35rem 0.9rem;
-        background: transparent;
-        color: var(--text-subtle);
-        border: none;
-        border-left: 1px solid var(--border);
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        letter-spacing: 0.04em;
+        padding: 8px 14px;
+        border: 1.5px solid var(--ink);
+        border-radius: var(--radius-md);
+        background: var(--paper);
+        color: var(--ink);
         cursor: pointer;
-        font-size: var(--text-sm);
-        transition: background 0.12s ease, color 0.12s ease;
+        text-decoration: none;
+        line-height: 1;
+        text-transform: lowercase;
+        transition: transform 80ms ease, box-shadow 80ms ease,
+            background-color 100ms ease, color 100ms ease;
     }
-    .segment:first-child {
-        border-left: none;
+    .tx-btn:hover:not(:disabled) {
+        background: var(--bg-soft);
     }
-    .segment:hover:not(:disabled):not(.active) {
-        background: var(--bg-subtle, rgba(0, 0, 0, 0.04));
+    .tx-btn:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
     }
-    .segment.active {
-        background: var(--accent);
-        color: var(--accent-contrast, #fff);
-        cursor: default;
-    }
-    .segment:disabled {
-        opacity: 0.55;
+    .tx-btn:disabled {
+        opacity: 0.45;
         cursor: not-allowed;
+        transform: none;
+        box-shadow: none;
+    }
+    .tx-btn-paper {
+        background: var(--paper);
+        box-shadow: var(--shadow-stamp-sm);
+    }
+    .tx-btn-paper:hover:not(:disabled) {
+        transform: translate(-1px, -1px);
+        box-shadow: var(--shadow-stamp-md);
+    }
+    .tx-btn-ghost {
+        background: transparent;
+        border-color: var(--rule);
+        color: var(--ink-soft);
+        box-shadow: none;
+    }
+    .tx-btn-ghost:hover:not(:disabled) {
+        background: var(--paper);
+        border-color: var(--ink);
+        color: var(--ink);
+    }
+    .tx-btn-primary {
+        background: var(--ink);
+        color: var(--bg);
+        box-shadow: var(--shadow-stamp-sm);
+    }
+    .tx-btn-primary:hover:not(:disabled) {
+        background: var(--ink);
+        transform: translate(-1px, -1px);
+        box-shadow: var(--shadow-stamp-md);
+    }
+    .tx-btn-danger {
+        background: var(--paper);
+        color: var(--due);
+        border-color: var(--due);
+    }
+    .tx-btn-danger:hover:not(:disabled) {
+        background: var(--due);
+        color: var(--bg);
     }
 
-    .saving {
-        font-size: var(--text-xs);
-        color: var(--text-subtle);
-        font-style: italic;
+    /* ============== FIELD (label + control row) ============== */
+    .tx-field {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-2);
+        padding: var(--space-3) 0;
+        border-bottom: 1px dashed var(--rule);
+    }
+    .tx-field-last,
+    .tx-field:last-child {
+        border-bottom: 0;
+    }
+    .tx-field-head {
+        display: grid;
+        grid-template-columns: minmax(180px, 1fr) auto;
+        gap: var(--space-4);
+        align-items: flex-start;
+    }
+    .tx-field-meta {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+    }
+    .tx-toggle-cell {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+        justify-self: end;
+    }
+    .tx-checkbox {
+        accent-color: var(--accent);
+        cursor: pointer;
+        width: 16px;
+        height: 16px;
+    }
+    .tx-checkbox:disabled {
+        cursor: not-allowed;
+        opacity: 0.55;
     }
 
-    .field-error {
-        font-size: var(--text-xs);
-        color: var(--danger, #c44);
-        margin-top: var(--space-1);
+    .tx-value-pill {
+        font-variant-numeric: tabular-nums;
+        font-weight: 500;
+        padding: 4px 12px;
+        background: var(--accent-soft);
+        color: var(--ink);
+        border: 1px solid var(--ink);
+        border-radius: var(--radius-pill);
+        font-size: 12px;
+        align-self: flex-start;
     }
 
-    input[type="range"] {
+    .tx-range {
         width: 100%;
         accent-color: var(--accent);
+        margin-top: var(--space-2);
     }
-    .scale {
-        display: flex;
-        justify-content: space-between;
-        font-size: var(--text-xs);
-        color: var(--text-subtle);
-    }
-
-    .card-head {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-    .card-head h3 {
-        font-size: var(--text-base);
-        font-weight: 600;
-    }
-    .re-optimize {
-        padding: 0.3rem 0.75rem;
-        font-size: var(--text-xs);
-        border-radius: var(--radius-sm);
-        background: var(--bg-subtle);
-        color: var(--text-muted);
-        border: 1px solid var(--border);
-    }
-    .re-optimize:hover:not(:disabled) {
-        color: var(--accent);
-        border-color: var(--accent);
-    }
-    .re-optimize:disabled {
+    .tx-range:disabled {
         opacity: 0.55;
         cursor: not-allowed;
     }
-    .optimize-actions {
+    .tx-scale {
+        display: flex;
+        justify-content: space-between;
+        font-size: 10px;
+        color: var(--ink-mute);
+        letter-spacing: 0.04em;
+        margin-top: 2px;
+    }
+
+    /* ============== SEGMENTED ============== */
+    .tx-segmented {
+        display: inline-flex;
+        border: 1.2px solid var(--ink);
+        border-radius: var(--radius);
+        overflow: hidden;
+        background: var(--paper);
+        align-self: flex-start;
+    }
+    .tx-segment {
+        padding: 7px 14px;
+        background: transparent;
+        color: var(--ink-soft);
+        border: 0;
+        border-left: 1.2px solid var(--ink);
+        cursor: pointer;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        letter-spacing: 0.04em;
+        text-transform: lowercase;
+        transition: background 120ms ease, color 120ms ease;
+    }
+    .tx-segment:first-child {
+        border-left: 0;
+    }
+    .tx-segment:hover:not(:disabled):not(.tx-segment-active) {
+        background: var(--bg-soft);
+        color: var(--ink);
+    }
+    .tx-segment-active {
+        background: var(--ink);
+        color: var(--bg);
+        cursor: default;
+    }
+    .tx-segment:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+    }
+
+    /* ============== OPTIMIZE / WEIGHTS ============== */
+    .tx-optimize-actions {
         display: flex;
         align-items: center;
-        gap: var(--space-3);
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-top: 4px;
     }
-    .health-toggle {
+    .tx-health-toggle {
         display: inline-flex;
         align-items: center;
-        gap: var(--space-1);
-        font-size: var(--text-xs);
-        color: var(--text-muted);
+        gap: 6px;
+        font-size: 11px;
+        color: var(--ink-soft);
+        letter-spacing: 0.04em;
         cursor: pointer;
         user-select: none;
     }
-    .health-toggle input[type="checkbox"] {
-        accent-color: var(--accent);
-        cursor: pointer;
-    }
-    .health-toggle input[type="checkbox"]:disabled {
-        cursor: not-allowed;
-        opacity: 0.55;
-    }
-
-    .weights {
+    .tx-weights {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(70px, 1fr));
-        gap: var(--space-2);
-        margin-top: var(--space-4);
+        gap: 8px;
+        margin-top: var(--space-3);
     }
-    .w-cell {
-        padding: var(--space-2);
-        border: 1px solid var(--border);
-        border-radius: var(--radius-sm);
-        background: var(--bg-subtle);
+    .tx-w-cell {
+        padding: 8px 10px;
+        background: var(--bg-soft);
+        border: 1.2px solid var(--rule);
+        border-radius: var(--radius);
     }
-    .w-i {
-        font-family: var(--font-mono);
-        font-size: 0.65rem;
-        color: var(--text-subtle);
+    .tx-w-i {
+        font-size: 9px;
+        color: var(--ink-mute);
+        letter-spacing: 0.04em;
     }
-    .w-v {
-        font-family: var(--font-mono);
-        font-size: var(--text-xs);
+    .tx-w-v {
+        font-size: 12px;
         font-variant-numeric: tabular-nums;
-        color: var(--text);
+        color: var(--ink);
+        margin-top: 2px;
     }
 
-    .theme-grid {
+    /* ============== THEME PICKER ============== */
+    .tx-theme-grid {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
-        gap: var(--space-3);
+        gap: 12px;
+        margin-top: var(--space-2);
     }
-    .theme-opt {
+    .tx-theme-opt {
         display: flex;
         flex-direction: column;
-        gap: var(--space-2);
-        padding: var(--space-3);
-        border: 1px solid var(--border);
+        gap: 8px;
+        padding: 12px;
+        background: var(--paper);
+        border: 1.5px solid var(--ink);
         border-radius: var(--radius-md);
         cursor: pointer;
+        position: relative;
+        transition: transform 80ms ease, box-shadow 80ms ease;
     }
-    .theme-opt:has(input:checked) {
-        border-color: var(--accent);
-        background: var(--accent-bg);
+    .tx-theme-opt:has(input:checked) {
+        box-shadow: var(--shadow-stamp-md);
+        transform: translate(-1px, -1px);
     }
-    .theme-opt input {
+    .tx-theme-opt input {
         position: absolute;
         opacity: 0;
+        pointer-events: none;
     }
-    .swatch {
+    .tx-theme-opt span {
+        font-size: 12px;
+        color: var(--ink);
+        letter-spacing: 0.04em;
+        text-transform: lowercase;
+    }
+    .tx-theme-swatch {
         aspect-ratio: 16 / 10;
-        border-radius: var(--radius-sm);
-        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        border: 1.2px solid var(--ink);
     }
-    .swatch.light {
-        background: linear-gradient(135deg, oklch(98% 0.012 85) 50%, oklch(94% 0.015 85) 50%);
+    .tx-theme-swatch-light {
+        background: linear-gradient(135deg, oklch(95% 0.018 82) 50%, oklch(90% 0.022 80) 50%);
     }
-    .swatch.dark {
-        background: linear-gradient(135deg, oklch(17% 0.008 75) 50%, oklch(24% 0.012 75) 50%);
+    .tx-theme-swatch-dark {
+        background: linear-gradient(135deg, oklch(15.5% 0.012 60) 50%, oklch(20% 0.014 62) 50%);
     }
-    .swatch.auto {
-        background: linear-gradient(135deg, oklch(98% 0.012 85) 50%, oklch(17% 0.008 75) 50%);
-    }
-
-    .sync-status {
-        display: flex;
-        align-items: center;
-        gap: var(--space-4);
-        padding-bottom: var(--space-4);
-        margin-bottom: var(--space-4);
-        border-bottom: 1px solid var(--border);
-    }
-    .sync-dot {
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-        background: var(--success);
-        box-shadow: 0 0 0 4px color-mix(in oklch, var(--success) 20%, transparent);
-    }
-    .sync-label {
-        font-weight: 500;
-    }
-    .row {
-        display: grid;
-        grid-template-columns: 120px 1fr;
-        padding: var(--space-3) 0;
-        border-top: 1px solid var(--border);
-        font-size: var(--text-sm);
-    }
-    .row:first-of-type {
-        border-top: 0;
-    }
-    .meta-key {
-        color: var(--text-subtle);
-    }
-    .placeholder {
-        color: var(--text-muted);
-        font-size: var(--text-sm);
+    .tx-theme-swatch-auto {
+        background: linear-gradient(135deg, oklch(95% 0.018 82) 50%, oklch(15.5% 0.012 60) 50%);
     }
 
-    /* Phase 16-B: notetype rename list. List rows mirror the .row pattern
-       above (border-top divider, three-column flex), but the input gets
-       the same border treatment as .text-input elsewhere so the rename
-       affordance reads as inline-edit, not full-form. */
-    .nt-list {
+    /* ============== NOTETYPES ============== */
+    .tx-nt-list {
         list-style: none;
-        margin: var(--space-3) 0 0;
+        margin: var(--space-2) 0 0;
         padding: 0;
-    }
-    .nt-row {
         display: flex;
         flex-direction: column;
-        gap: var(--space-2);
-        padding: var(--space-2) 0;
-        border-top: 1px solid var(--border);
+        gap: 2px;
     }
-    .nt-row:first-child {
+    .tx-nt-row {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 10px 0;
+        border-top: 1px dashed var(--rule);
+    }
+    .tx-nt-row:first-child {
         border-top: 0;
     }
-    .nt-row-head {
+    .tx-nt-row-head {
         display: flex;
         align-items: center;
-        gap: var(--space-3);
+        gap: 12px;
+        flex-wrap: wrap;
     }
-    /* Phase 19-B: disclosure button replaces the static name span when
-       the row is collapsible. Reset button styling so the affordance
-       reads as text + chevron, not a button shape. */
-    .nt-disclose {
+    .tx-nt-disclose {
         flex: 1;
         display: inline-flex;
         align-items: center;
-        gap: var(--space-2);
+        gap: 8px;
         padding: 0;
         background: none;
         border: 0;
@@ -2116,212 +2530,285 @@
         color: inherit;
         font: inherit;
     }
-    .nt-disclose:hover .nt-name {
+    .tx-nt-disclose:hover .tx-nt-name {
         color: var(--accent);
     }
-    .nt-chev {
+    .tx-nt-chev {
         display: inline-flex;
-        width: 1rem;
-        font-size: 0.85rem;
-        color: var(--text-subtle);
-        transition: transform var(--duration-fast) var(--ease, ease);
+        width: 12px;
+        font-size: 13px;
+        color: var(--ink-mute);
+        transition: transform 120ms ease;
     }
-    .nt-chev.open {
+    .tx-nt-chev-open {
         transform: rotate(90deg);
     }
-    .nt-name {
+    .tx-nt-name {
         flex: 1;
-        font-size: var(--text-sm);
-        color: var(--text);
+        font-size: 13px;
+        color: var(--ink);
     }
-    .nt-fields {
-        margin-left: 1.5rem;
-        padding: var(--space-2) 0 var(--space-3);
+    .tx-nt-meta {
+        font-size: 10px;
+        color: var(--ink-mute);
+        letter-spacing: 0.04em;
+    }
+    .tx-nt-fields {
+        margin-left: 22px;
+        padding: 8px 0 4px;
         display: flex;
         flex-direction: column;
-        gap: var(--space-2);
+        gap: 6px;
     }
-    .nt-fields-list {
+    .tx-nt-fields-list {
         list-style: none;
         margin: 0;
         padding: 0;
         display: flex;
         flex-direction: column;
-        gap: var(--space-1);
+        gap: 2px;
     }
-    .nt-field-row {
+    .tx-nt-field-row {
         display: flex;
         align-items: center;
-        gap: var(--space-2);
-        font-size: var(--text-sm);
-        color: var(--text);
+        gap: 8px;
+        font-size: 12px;
+        color: var(--ink);
     }
-    .nt-field-ord {
-        width: 1.5rem;
-        color: var(--text-subtle);
+    .tx-nt-field-ord {
+        width: 22px;
+        color: var(--ink-mute);
         font-variant-numeric: tabular-nums;
+        font-size: 11px;
     }
-    .nt-field-name {
+    .tx-nt-field-name {
         flex: 1;
     }
-    /* Phase 19-C: per-field ✕ glyph + inline confirm UI. The ✕ button
-       sits at the row's tail end; confirm replaces it inline so the
-       field name stays visible while the user makes the destructive
-       call. `.danger` modifier on the Confirm button picks up the
-       danger color that elsewhere indicates destructive intent. */
-    .nt-field-x {
-        width: 1.5rem;
-        height: 1.5rem;
+    .tx-nt-field-x {
+        width: 22px;
+        height: 22px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        font-size: 0.95rem;
+        font-size: 14px;
         background: none;
         border: 0;
-        border-radius: var(--radius-sm);
-        color: var(--text-subtle);
+        border-radius: var(--radius);
+        color: var(--ink-mute);
         cursor: pointer;
-        transition:
-            color var(--duration-fast) var(--ease, ease),
-            background var(--duration-fast) var(--ease, ease);
+        transition: color 120ms ease, background 120ms ease;
     }
-    .nt-field-x:hover:not(:disabled) {
-        color: var(--danger);
-        background: var(--bg-hover);
+    .tx-nt-field-x:hover:not(:disabled) {
+        color: var(--due);
+        background: color-mix(in oklch, var(--due) 8%, transparent);
     }
-    .nt-field-x:disabled {
+    .tx-nt-field-x:disabled {
         opacity: 0.35;
         cursor: not-allowed;
     }
-    .nt-field-confirm {
-        font-size: var(--text-xs);
-        color: var(--danger);
+    .tx-nt-field-confirm {
+        font-size: 11px;
+        color: var(--due);
+        letter-spacing: 0.04em;
     }
-    .ghost-btn.danger {
-        color: var(--danger);
-        border-color: var(--danger);
-    }
-    .ghost-btn.danger:hover:not(:disabled) {
-        background: var(--danger);
-        color: var(--bg);
-    }
-    .nt-field-add {
+    .tx-nt-field-add {
         display: flex;
         align-items: center;
-        gap: var(--space-2);
+        gap: 8px;
+        flex-wrap: wrap;
     }
-    .nt-add-btn {
+    .tx-nt-add-btn {
         align-self: flex-start;
     }
-    .nt-meta {
-        font-size: var(--text-xs);
-        color: var(--text-subtle);
-    }
-    .nt-input {
-        flex: 1;
-        padding: 0.4rem 0.6rem;
-        border: 1px solid var(--border);
-        border-radius: var(--radius-sm);
-        background: var(--bg);
-        color: var(--text);
-        font: inherit;
-    }
-    .nt-input:focus {
-        outline: none;
-        border-color: var(--accent);
-    }
-    .nt-input:disabled {
-        opacity: 0.55;
-    }
-    .ghost-btn {
-        padding: 0.3rem 0.65rem;
-        font-size: var(--text-xs);
-        border-radius: var(--radius-sm);
-        background: var(--bg-subtle);
-        color: var(--text-muted);
-        border: 1px solid var(--border);
-        cursor: pointer;
-    }
-    .ghost-btn:hover:not(:disabled) {
-        color: var(--accent);
-        border-color: var(--accent);
-    }
-    .ghost-btn:disabled {
-        opacity: 0.55;
-        cursor: not-allowed;
+    .tx-nt-input {
+        max-width: 22rem;
     }
 
-    /* Phase 20-C: burn-recovery panel. Same vertical-stack layout as the
-       19-B/C notetype list — heading, hint, lookup row, then the card
-       detail block once a card is loaded. The Confirm/Cancel pair sits
-       inline next to a "Reset to new?" prompt so the card preview
-       stays visible while the user makes the destructive call. */
-    .recovery {
+    /* ============== RECOVERY ============== */
+    .tx-recovery-lookup {
         display: flex;
         flex-direction: column;
-        gap: var(--space-4);
-    }
-    .recovery-title {
-        font-size: var(--text-base);
-        font-weight: 600;
-    }
-    .recovery-lookup {
-        display: flex;
-        flex-direction: column;
-        gap: var(--space-2);
-    }
-    .recovery-lookup-row {
-        display: flex;
-        align-items: center;
-        gap: var(--space-2);
-    }
-    .recovery-input {
-        flex: 1;
-        max-width: 22rem;
-        padding: 0.4rem 0.6rem;
-        border: 1px solid var(--border);
-        border-radius: var(--radius-sm);
-        background: var(--bg);
-        color: var(--text);
-        font: inherit;
-    }
-    .recovery-input:focus {
-        outline: none;
-        border-color: var(--accent);
-    }
-    .recovery-input:disabled {
-        opacity: 0.55;
-    }
-    .recovery-card-detail {
-        display: flex;
-        flex-direction: column;
-        gap: var(--space-2);
-        padding: var(--space-3);
-        border: 1px solid var(--border);
-        border-radius: var(--radius-md);
-        background: var(--bg-subtle);
-    }
-    .recovery-detail-row {
-        display: grid;
-        grid-template-columns: 120px 1fr;
-        gap: var(--space-3);
-        font-size: var(--text-sm);
-    }
-    .recovery-front-preview {
-        font-family: var(--font-mono, monospace);
-        font-size: var(--text-xs);
-        color: var(--text);
-        white-space: pre-wrap;
-        word-break: break-word;
-    }
-    .recovery-actions {
-        display: flex;
-        align-items: center;
-        gap: var(--space-2);
+        gap: 8px;
         margin-top: var(--space-2);
     }
-    .recovery-success {
-        font-size: var(--text-xs);
-        color: var(--success, #2a7);
+    .tx-recovery-lookup-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+    .tx-recovery-input {
+        flex: 1;
+        max-width: 24rem;
+    }
+    .tx-recovery-detail {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 14px 16px;
+        background: var(--bg-soft);
+        border: 1.2px solid var(--ink);
+        border-radius: var(--radius-md);
+        margin-top: var(--space-2);
+    }
+    .tx-recovery-row {
+        display: grid;
+        grid-template-columns: 130px 1fr;
+        gap: 12px;
+        font-size: 12px;
+    }
+    .tx-recovery-front {
+        font-size: 11px;
+        color: var(--ink);
+        white-space: pre-wrap;
+        word-break: break-word;
+        line-height: 1.5;
+    }
+    .tx-recovery-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: var(--space-2);
+        flex-wrap: wrap;
+    }
+    .tx-recovery-success {
+        font-size: 12px;
+        color: var(--accent);
+        letter-spacing: 0.02em;
+    }
+    .tx-meta-key {
+        color: var(--ink-mute);
+        font-size: 11px;
+        letter-spacing: 0.04em;
+        text-transform: lowercase;
+    }
+
+    /* ============== SYNC ============== */
+    .tx-sync-status {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 10px 12px;
+        background: var(--bg-soft);
+        border: 1.2px solid var(--ink);
+        border-radius: var(--radius-md);
+    }
+    .tx-sync-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: var(--accent);
+        border: 1.2px solid var(--ink);
+        box-shadow: 0 0 0 4px color-mix(in oklch, var(--accent) 22%, transparent);
+        flex: 0 0 auto;
+    }
+    .tx-sync-status-text {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+    .tx-sync-label {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--accent);
+        letter-spacing: 0.04em;
+        text-transform: lowercase;
+    }
+    .tx-row {
+        display: grid;
+        grid-template-columns: 130px 1fr;
+        gap: 12px;
+        padding: 10px 0;
+        border-top: 1px dashed var(--rule);
+        font-size: 12px;
+        color: var(--ink);
+    }
+    .tx-row:first-of-type {
+        border-top: 0;
+    }
+
+    /* ============== MOBILE (≤768px) ============== */
+    @media (max-width: 1024px) {
+        .tx-shell {
+            grid-template-columns: 1fr;
+            gap: var(--space-5);
+        }
+        .tx-sidebar {
+            position: static;
+        }
+        .tx-nav {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 4px;
+        }
+    }
+
+    @media (max-width: 768px) {
+        .tx-page {
+            padding: var(--space-5) var(--space-4) var(--space-10);
+            gap: var(--space-5);
+        }
+        .tx-title {
+            font-size: 22px;
+        }
+        .tx-title-hand {
+            font-size: 18px;
+        }
+        .tx-subtitle-kbd {
+            display: none;
+        }
+        .tx-head-right {
+            display: none;
+        }
+        .tx-shell {
+            gap: var(--space-4);
+        }
+        .tx-sidebar {
+            padding: 14px 14px;
+            gap: 14px;
+        }
+        .tx-nav {
+            grid-template-columns: 1fr;
+        }
+        .tx-panel-title {
+            font-size: 22px;
+        }
+        .tx-panel-hand {
+            font-size: 18px;
+            margin-left: 8px;
+        }
+        .tx-card {
+            padding: var(--space-4) var(--space-4);
+        }
+        .tx-field-head {
+            grid-template-columns: 1fr;
+            gap: var(--space-2);
+        }
+        .tx-toggle-cell {
+            justify-self: start;
+        }
+        .tx-value-pill {
+            align-self: flex-start;
+        }
+        .tx-segmented {
+            align-self: flex-start;
+        }
+        .tx-theme-grid {
+            grid-template-columns: 1fr;
+        }
+        .tx-recovery-row {
+            grid-template-columns: 1fr;
+            gap: 4px;
+        }
+        .tx-row {
+            grid-template-columns: 1fr;
+            gap: 4px;
+        }
+        .tx-num-input {
+            width: 100%;
+        }
+        .tx-select-wrap {
+            min-width: 100%;
+        }
     }
 </style>
