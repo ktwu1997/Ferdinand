@@ -1,8 +1,8 @@
 <script lang="ts">
     import { onMount } from "svelte";
     import { goto } from "$app/navigation";
-    import Card from "$lib/components/Card.svelte";
-    import Button from "$lib/components/Button.svelte";
+    import { Caption, Chip } from "$lib/components/ui";
+    import { SketchPlus } from "$lib/components/sketch";
     import {
         fetchDecks,
         fetchNotetypes,
@@ -20,6 +20,10 @@
     // Front/Back. Switching notetype resets every field — matching the
     // desktop Add-Card screen, where field content doesn't carry over
     // between notetypes either.
+    // Phase A4-ε₂.b: sketch-skin port. Markup + CSS swapped for kraft
+    // paper aesthetic with side-by-side form/preview; data layer
+    // (decks/notetypes load, dynamic fields, drag-drop media, tag
+    // parsing, save-redirect) preserved verbatim.
 
     let decks = $state<ApiDeckSummary[] | null>(null);
     let deckId = $state<number | null>(null);
@@ -139,6 +143,12 @@
         return notetypes.find((n) => n.id === notetypeId) ?? null;
     });
 
+    // Selected deck for preview header.
+    let selectedDeck = $derived.by(() => {
+        if (!decks || deckId === null) return null;
+        return decks.find((d) => d.id === deckId) ?? null;
+    });
+
     function onNotetypeChange(e: Event): void {
         const target = e.target as HTMLSelectElement;
         const next = Number(target.value);
@@ -194,233 +204,713 @@
     }
 </script>
 
-<div class="page">
-    <header>
-        <h1>Add note</h1>
-        <p class="subtitle">Create a new card in any deck.</p>
+<svelte:head><title>New note — Anki</title></svelte:head>
+
+<div class="sketch-skin grain page nx-page" data-testid="notes-new-root">
+    <header class="nx-head" data-testid="notes-new-hero">
+        <div class="nx-head-left">
+            <Caption>the.workshop</Caption>
+            <h1 class="nx-title mono" data-testid="notes-new-title">
+                new note
+                <span class="nx-title-hand hand" aria-hidden="true">add to library</span>
+            </h1>
+            <p class="nx-subtitle mono">
+                create a card in any deck
+                <span class="nx-subtitle-kbd mono">⌘↵ to save</span>
+            </p>
+        </div>
+        <div class="nx-actions" data-testid="notes-new-actions">
+            <a class="nx-btn nx-btn-ghost mono" href="/" data-testid="notes-new-cancel">cancel</a>
+            <button
+                type="submit"
+                form="nx-note-form"
+                class="nx-btn nx-btn-primary mono"
+                disabled={!canSubmit}
+                data-testid="notes-new-save"
+            >
+                <SketchPlus size={11} />
+                <span>{saving ? "saving…" : "save"}</span>
+            </button>
+        </div>
     </header>
 
     {#if loadError}
-        <div class="error-banner" role="alert">
-            <strong>Couldn't load form data.</strong>
-            {loadError}
+        <div class="nx-error mono" role="alert" data-testid="notes-new-error">
+            // couldn't load form data — {loadError}
         </div>
     {/if}
 
-    <Card padding="lg">
-        <form class="form" onsubmit={(e) => { e.preventDefault(); save(); }}>
-            <div class="field">
-                <label for="deck-select">Deck</label>
-                {#if loadError}
-                    <!-- Banner above already surfaces the failure; suppressing
-                         the select keeps the form un-submittable on its own
-                         (canSubmit gates on deckId !== null). -->
-                {:else if decks === null}
-                    <span class="hint">Loading decks…</span>
-                {:else if decks.length === 0}
-                    <span class="hint"
-                        >No decks available — create one in Browse first.</span
-                    >
-                {:else}
+    <!-- Top tri-strip: deck + notetype + status. Mirrors design
+         deck/type/tools row but with real data-driven dropdowns and
+         a live status pill replacing the formatting toolbar (which
+         has no data-layer hook in this build). -->
+    <section class="nx-toolbar" data-testid="notes-new-toolbar">
+        <div class="nx-toolbar-col" data-testid="notes-new-deck-col">
+            <Caption>deck</Caption>
+            {#if loadError}
+                <div class="nx-toolbar-hint mono">unavailable</div>
+            {:else if decks === null}
+                <div class="nx-toolbar-hint mono">loading…</div>
+            {:else if decks.length === 0}
+                <div class="nx-toolbar-hint mono">none — make one in browse first</div>
+            {:else}
+                <div class="nx-select-wrap">
                     <select
-                        id="deck-select"
-                        class="text-input"
+                        id="nx-deck-select"
+                        class="nx-select mono"
                         bind:value={deckId}
                         disabled={saving}
+                        data-testid="notes-new-deck-select"
                     >
                         {#each decks as d (d.id)}
                             <option value={d.id}>{d.name}</option>
                         {/each}
                     </select>
-                {/if}
-            </div>
+                    <span class="nx-select-caret mono" aria-hidden="true">▾</span>
+                </div>
+            {/if}
+        </div>
 
-            <div class="field">
-                <label for="notetype-select">Notetype</label>
-                {#if loadError}
-                    <!-- Suppressed when decks/notetypes load failed. -->
-                {:else if notetypes === null}
-                    <span class="hint">Loading notetypes…</span>
-                {:else if notetypes.length === 0}
-                    <span class="hint"
-                        >No notetypes available on this collection.</span
-                    >
-                {:else}
+        <div class="nx-toolbar-col" data-testid="notes-new-notetype-col">
+            <Caption>notetype</Caption>
+            {#if loadError}
+                <div class="nx-toolbar-hint mono">unavailable</div>
+            {:else if notetypes === null}
+                <div class="nx-toolbar-hint mono">loading…</div>
+            {:else if notetypes.length === 0}
+                <div class="nx-toolbar-hint mono">none on this collection</div>
+            {:else}
+                <div class="nx-select-wrap">
                     <select
-                        id="notetype-select"
-                        class="text-input"
+                        id="nx-notetype-select"
+                        class="nx-select mono"
                         value={notetypeId}
                         onchange={onNotetypeChange}
                         disabled={saving}
+                        data-testid="notes-new-notetype-select"
                     >
                         {#each notetypes as n (n.id)}
                             <option value={n.id}
-                                >{n.name} ({n.fields.length} field{n.fields
+                                >{n.name} · {n.fields.length} field{n.fields
                                     .length === 1
                                     ? ""
-                                    : "s"})</option
+                                    : "s"}</option
                             >
                         {/each}
                     </select>
-                {/if}
-            </div>
+                    <span class="nx-select-caret mono" aria-hidden="true">▾</span>
+                </div>
+            {/if}
+        </div>
 
+        <div class="nx-toolbar-col nx-toolbar-status" data-testid="notes-new-status-col">
+            <Caption>status</Caption>
+            <div class="nx-toolbar-status-row mono">
+                <span class="nx-status-dot" class:nx-status-dot-on={canSubmit} aria-hidden="true"></span>
+                <span>{canSubmit ? "ready to save" : saving ? "saving…" : "fill the first field"}</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- Two-pane: form on the left, live preview on the right. -->
+    <form
+        id="nx-note-form"
+        class="nx-grid"
+        onsubmit={(e) => { e.preventDefault(); save(); }}
+        data-testid="notes-new-form"
+    >
+        <div class="nx-form-col" data-testid="notes-new-form-col">
             {#if selectedNotetype}
                 {#each selectedNotetype.fields as fieldName, i (i)}
                     <div
-                        class="field field-droppable"
-                        class:dragging={dragOverFieldIdx === i}
+                        class="nx-field"
+                        class:nx-field-dragging={dragOverFieldIdx === i}
                         ondragover={(e) => handleFieldDragOver(e, i)}
                         ondragleave={() => handleFieldDragLeave(i)}
                         ondrop={(e) => handleFieldDrop(e, i)}
                         role="presentation"
+                        data-testid="notes-new-field-{i}"
                     >
-                        <label for="field-input-{i}">{fieldName}</label>
+                        <div class="nx-field-label">
+                            <Caption>{fieldName}</Caption>
+                            {#if i === 0}
+                                <span class="nx-field-hint mono">required</span>
+                            {:else if uploadingFieldIdx === i}
+                                <span class="nx-field-hint mono">uploading…</span>
+                            {:else}
+                                <span class="nx-field-hint mono">drop image / audio</span>
+                            {/if}
+                        </div>
                         <textarea
-                            id="field-input-{i}"
-                            class="text-input"
+                            id="nx-field-{i}"
+                            class="nx-textarea mono"
+                            class:nx-textarea-primary={i === 0}
                             bind:value={fieldValues[i]}
                             disabled={saving || uploadingFieldIdx === i}
                             rows={i === 0 ? 3 : 4}
                             required={i === 0}
                             placeholder={i === 0 ? "森林" : ""}
                         ></textarea>
-                        {#if uploadingFieldIdx === i}
-                            <span class="hint">Uploading media…</span>
-                        {/if}
                     </div>
                 {/each}
                 {#if mediaError}
-                    <div class="field-error" role="alert">{mediaError}</div>
+                    <div class="nx-field-error mono" role="alert" data-testid="notes-new-media-error">
+                        {mediaError}
+                    </div>
                 {/if}
+            {:else if !loadError}
+                <div class="nx-form-loading mono" data-testid="notes-new-form-loading">
+                    loading fields…
+                </div>
             {/if}
 
-            <div class="field">
-                <label for="tags-input">Tags</label>
+            <div class="nx-field" data-testid="notes-new-tags-field">
+                <div class="nx-field-label">
+                    <Caption>tags</Caption>
+                    <span class="nx-field-hint mono">
+                        space- or comma-separated{#if parsedTags.length > 0} · {parsedTags.length} tag{parsedTags.length === 1 ? "" : "s"}{/if}
+                    </span>
+                </div>
                 <input
-                    id="tags-input"
+                    id="nx-tags-input"
                     type="text"
-                    class="text-input"
+                    class="nx-input mono"
                     bind:value={tagsRaw}
                     disabled={saving}
                     placeholder="vocab nature"
+                    data-testid="notes-new-tags-input"
                 />
-                <span class="hint">
-                    Space- or comma-separated.
-                    {#if parsedTags.length > 0}
-                        {parsedTags.length} tag{parsedTags.length === 1 ? "" : "s"}.
-                    {/if}
-                </span>
             </div>
 
             {#if error}
-                <div class="field-error" role="alert">{error}</div>
+                <div class="nx-field-error mono" role="alert" data-testid="notes-new-error-inline">
+                    {error}
+                </div>
             {/if}
+        </div>
 
-            <div class="actions">
-                <Button variant="ghost" href="/">Cancel</Button>
-                <Button
-                    variant="primary"
-                    type="submit"
-                    disabled={!canSubmit}
-                >
-                    {saving ? "Saving…" : "Save"}
-                </Button>
+        <aside class="nx-preview-col" data-testid="notes-new-preview">
+            <div class="nx-preview-head">
+                <Caption>preview · live</Caption>
+                {#if selectedDeck}
+                    <span class="nx-preview-deck mono">→ {selectedDeck.name}</span>
+                {/if}
             </div>
-        </form>
-    </Card>
+
+            <div class="nx-preview-stack">
+                <div class="nx-preview-back" aria-hidden="true"></div>
+                <article class="nx-preview-card" data-testid="notes-new-preview-card">
+                    {#if parsedTags.length > 0}
+                        <div class="nx-preview-tags" data-testid="notes-new-preview-tags">
+                            {#each parsedTags as t (t)}
+                                <Chip>{t}</Chip>
+                            {/each}
+                        </div>
+                    {/if}
+
+                    {#if fieldValues[0]?.trim()}
+                        <div class="nx-preview-primary" data-testid="notes-new-preview-primary">
+                            {fieldValues[0]}
+                        </div>
+                    {:else}
+                        <div class="nx-preview-empty mono" data-testid="notes-new-preview-empty">
+                            type the first field to see it here
+                        </div>
+                    {/if}
+
+                    {#if fieldValues[1]?.trim()}
+                        <div class="nx-preview-rule" aria-hidden="true"></div>
+                        <div class="nx-preview-secondary mono" data-testid="notes-new-preview-secondary">
+                            {fieldValues[1]}
+                        </div>
+                    {/if}
+
+                    {#if fieldValues.slice(2).some((v) => v?.trim())}
+                        <div class="nx-preview-rule" aria-hidden="true"></div>
+                        <div class="nx-preview-extras">
+                            {#each fieldValues.slice(2) as v, i (i)}
+                                {#if v?.trim()}
+                                    <div class="nx-preview-extra" data-testid="notes-new-preview-extra-{i}">
+                                        <span class="nx-preview-extra-label mono">{selectedNotetype?.fields[i + 2] ?? ""}</span>
+                                        <span class="nx-preview-extra-text">{v}</span>
+                                    </div>
+                                {/if}
+                            {/each}
+                        </div>
+                    {/if}
+
+                    <div class="nx-preview-footer mono" aria-hidden="true">
+                        <span>· will be queued as new</span>
+                        <span>· first review: today</span>
+                    </div>
+                </article>
+            </div>
+        </aside>
+    </form>
 </div>
 
 <style>
-    .page {
-        max-width: 640px;
+    .nx-page {
+        max-width: 1180px;
         margin: 0 auto;
-        padding: var(--space-6) var(--space-4);
-    }
-    header {
-        margin-bottom: var(--space-5);
-    }
-    h1 {
-        font-size: var(--text-3xl);
-        margin: 0 0 var(--space-2);
-    }
-    .subtitle {
-        color: var(--text-muted);
-        margin: 0;
-    }
-    .form {
+        padding: var(--space-8) var(--space-6) var(--space-12);
         display: flex;
         flex-direction: column;
+        gap: var(--space-6);
+    }
+
+    /* ============== HEADER ============== */
+    .nx-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        flex-wrap: wrap;
         gap: var(--space-4);
     }
-    .field {
+    .nx-head-left {
         display: flex;
         flex-direction: column;
-        gap: var(--space-2);
+        gap: 4px;
     }
-    .field label {
-        font-size: var(--text-sm);
-        font-weight: 500;
-        color: var(--text);
+    .nx-title {
+        font-size: 28px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        margin: 4px 0 0;
+        color: var(--ink);
+        line-height: 1.05;
     }
-    .text-input {
-        padding: 0.5rem 0.65rem;
-        border: 1px solid var(--border);
-        border-radius: var(--radius-sm);
-        background: var(--bg);
-        color: var(--text);
-        font: inherit;
-        line-height: 1.5;
+    .nx-title-hand {
+        font-family: var(--font-hand);
+        color: var(--accent);
+        font-size: 22px;
+        margin-left: 12px;
+        letter-spacing: 0;
+        text-transform: lowercase;
     }
-    .text-input:focus {
-        outline: none;
-        border-color: var(--accent);
+    .nx-subtitle {
+        font-size: 12px;
+        color: var(--ink-mute);
+        margin: 4px 0 0;
+        letter-spacing: 0.04em;
+        display: flex;
+        gap: 10px;
+        align-items: baseline;
+        flex-wrap: wrap;
     }
-    .text-input:disabled {
+    .nx-subtitle-kbd {
+        font-size: 10px;
+        color: var(--ink-mute);
+        letter-spacing: 0.1em;
+        padding: 2px 8px;
+        border: 1px dashed var(--rule);
+        border-radius: 999px;
+    }
+
+    /* Header action buttons. Inline-styled paper pills, ghost = paper bg
+       + ink border, primary = ink bg + bg fg with stamp shadow. */
+    .nx-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+    }
+    .nx-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        letter-spacing: 0.04em;
+        padding: 8px 14px;
+        border: 1.5px solid var(--ink);
+        border-radius: var(--radius-md);
+        background: var(--paper);
+        color: var(--ink);
+        cursor: pointer;
+        text-decoration: none;
+        line-height: 1;
+        transition: transform 80ms ease, box-shadow 80ms ease,
+            background-color 100ms ease;
+    }
+    .nx-btn:hover {
+        background: var(--bg-soft);
+    }
+    .nx-btn:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+    }
+    .nx-btn-ghost {
+        background: transparent;
+        color: var(--ink-soft);
+    }
+    .nx-btn-ghost:hover {
+        background: var(--bg-soft);
+        color: var(--ink);
+    }
+    .nx-btn-primary {
+        background: var(--ink);
+        color: var(--bg);
+        box-shadow: var(--shadow-stamp-sm);
+    }
+    .nx-btn-primary:hover {
+        background: var(--ink);
+        transform: translate(-1px, -1px);
+        box-shadow: var(--shadow-stamp-md);
+    }
+    .nx-btn-primary:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+        transform: none;
+        box-shadow: var(--shadow-stamp-sm);
+    }
+
+    /* ============== ERROR BANNER ============== */
+    .nx-error {
+        padding: 10px 14px;
+        border: 1.5px solid var(--due);
+        background: color-mix(in oklch, var(--due) 10%, var(--paper));
+        color: var(--due);
+        border-radius: var(--radius-md);
+        font-size: 12px;
+    }
+
+    /* ============== TOP TOOLBAR (deck / notetype / status) ============== */
+    .nx-toolbar {
+        display: grid;
+        grid-template-columns: 1fr 1fr auto;
+        gap: 14px;
+        padding: 14px 16px;
+        background: var(--bg-soft);
+        border: 1.5px solid var(--ink);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-stamp-sm);
+    }
+    .nx-toolbar-col {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+    .nx-toolbar-status {
+        min-width: 180px;
+    }
+    .nx-toolbar-hint {
+        margin-top: 4px;
+        font-size: 12px;
+        color: var(--ink-mute);
+        padding: 8px 12px;
+        background: var(--paper);
+        border: 1.2px solid var(--rule);
+        border-radius: 4px;
+    }
+    .nx-toolbar-status-row {
+        margin-top: 4px;
+        font-size: 12px;
+        color: var(--ink-soft);
+        padding: 8px 12px;
+        background: var(--paper);
+        border: 1.2px solid var(--ink);
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        letter-spacing: 0.04em;
+    }
+    .nx-status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--ink-mute);
+        border: 1px solid var(--ink);
+        flex: 0 0 auto;
+    }
+    .nx-status-dot-on {
+        background: var(--accent);
+    }
+
+    /* Sketch-pill <select> trigger. Native-rendered options drop into the
+       browser's chrome; only the trigger is styled. */
+    .nx-select-wrap {
+        position: relative;
+        margin-top: 4px;
+    }
+    .nx-select {
+        appearance: none;
+        -webkit-appearance: none;
+        width: 100%;
+        font-size: 13px;
+        font-family: var(--font-mono);
+        padding: 8px 28px 8px 12px;
+        background: var(--paper);
+        color: var(--ink);
+        border: 1.2px solid var(--ink);
+        border-radius: 4px;
+        cursor: pointer;
+        line-height: 1.4;
+    }
+    .nx-select:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+    }
+    .nx-select:disabled {
         opacity: 0.55;
         cursor: not-allowed;
     }
-    textarea.text-input {
+    .nx-select-caret {
+        position: absolute;
+        right: 10px;
+        top: 50%;
+        transform: translateY(-50%);
+        color: var(--ink-mute);
+        font-size: 12px;
+        pointer-events: none;
+    }
+
+    /* ============== TWO-PANE GRID ============== */
+    .nx-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 28px;
+        align-items: start;
+    }
+
+    /* ============== FORM ============== */
+    .nx-form-col {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+    .nx-field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+    .nx-field-label {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+    }
+    .nx-field-hint {
+        font-size: 10px;
+        color: var(--ink-mute);
+        letter-spacing: 0.04em;
+    }
+    .nx-textarea,
+    .nx-input {
+        font-family: var(--font-mono);
+        font-size: 13px;
+        line-height: 1.5;
+        color: var(--ink);
+        padding: 12px 14px;
+        background: var(--paper);
+        border: 1.5px solid var(--ink);
+        border-radius: 4px;
+        box-shadow: var(--shadow-stamp-sm);
         resize: vertical;
         min-height: 4.5rem;
+        transition: box-shadow 100ms ease, transform 100ms ease;
     }
-    /* Phase 15-C: drop-target highlight. Using a subtle accent ring
-       instead of an aggressive overlay so a stray drag past the form
-       isn't visually disruptive. */
-    .field-droppable {
-        position: relative;
-        transition: background var(--duration-fast) var(--ease);
+    .nx-input {
+        min-height: 0;
+        resize: none;
     }
-    .field-droppable.dragging {
-        background: color-mix(in oklch, var(--accent) 5%, transparent);
-        border-radius: var(--radius-sm);
+    .nx-textarea:focus,
+    .nx-input:focus {
+        outline: none;
+        box-shadow: var(--shadow-stamp-md);
+        transform: translate(-1px, -1px);
+    }
+    .nx-textarea:disabled,
+    .nx-input:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+    }
+    .nx-textarea-primary {
+        font-family: var(--font-cjk);
+        font-size: 22px;
+        font-weight: 500;
+        line-height: 1.3;
+        min-height: 92px;
+    }
+    .nx-field-dragging .nx-textarea {
         outline: 2px dashed var(--accent);
-        outline-offset: 2px;
+        outline-offset: 3px;
+        background: color-mix(in oklch, var(--accent) 6%, var(--paper));
     }
-    .hint {
-        font-size: var(--text-xs);
-        color: var(--text-subtle);
+    .nx-form-loading {
+        font-size: 12px;
+        color: var(--ink-mute);
+        padding: 24px 0;
+        text-align: center;
+        letter-spacing: 0.04em;
     }
-    .field-error {
-        padding: var(--space-2) var(--space-3);
-        border: 1px solid var(--danger, #c44);
-        border-radius: var(--radius-sm);
-        background: color-mix(in oklch, var(--danger, #c44) 8%, transparent);
-        color: var(--text);
-        font-size: var(--text-sm);
+    .nx-field-error {
+        padding: 10px 12px;
+        border: 1.5px solid var(--due);
+        background: color-mix(in oklch, var(--due) 10%, var(--paper));
+        color: var(--due);
+        border-radius: var(--radius-md);
+        font-size: 12px;
     }
-    .error-banner {
-        padding: var(--space-3) var(--space-4);
-        border: 1px solid var(--danger, #c44);
-        border-radius: var(--radius-sm);
-        background: color-mix(in oklch, var(--danger, #c44) 8%, transparent);
-        color: var(--text);
-        font-size: var(--text-sm);
-        margin-bottom: var(--space-4);
-    }
-    .actions {
+
+    /* ============== PREVIEW ============== */
+    .nx-preview-col {
         display: flex;
-        justify-content: flex-end;
-        gap: var(--space-3);
+        flex-direction: column;
+        gap: 12px;
+        position: sticky;
+        top: var(--space-6);
+    }
+    .nx-preview-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+    }
+    .nx-preview-deck {
+        font-size: 11px;
+        color: var(--ink-mute);
+        letter-spacing: 0.04em;
+    }
+    .nx-preview-stack {
+        position: relative;
+    }
+    .nx-preview-back {
+        position: absolute;
+        inset: 0;
+        transform: translate(6px, 6px) rotate(-0.4deg);
+        background: var(--bg-soft);
+        border: 1.5px solid var(--ink);
+        border-radius: var(--radius-md);
+        z-index: 0;
+    }
+    .nx-preview-card {
+        position: relative;
+        background: var(--paper);
+        border: 1.5px solid var(--ink);
+        border-radius: var(--radius-md);
+        padding: 28px 32px;
+        min-height: 320px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        z-index: 1;
+        box-shadow: var(--shadow-stamp-sm);
+    }
+    .nx-preview-tags {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+    }
+    .nx-preview-primary {
+        font-family: var(--font-cjk);
+        font-size: 44px;
+        font-weight: 500;
+        line-height: 1.15;
+        text-align: center;
+        white-space: pre-wrap;
+        word-break: break-word;
+        color: var(--ink);
+    }
+    .nx-preview-empty {
+        text-align: center;
+        color: var(--ink-mute);
+        font-size: 12px;
+        padding: 28px 0;
+        letter-spacing: 0.04em;
+    }
+    .nx-preview-rule {
+        width: 55%;
+        margin: 4px auto;
+        border-top: 1px dashed var(--rule);
+    }
+    .nx-preview-secondary {
+        font-size: 14px;
+        text-align: center;
+        color: var(--accent);
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+    .nx-preview-extras {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+    .nx-preview-extra {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+    }
+    .nx-preview-extra-label {
+        font-size: 10px;
+        color: var(--ink-mute);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+    }
+    .nx-preview-extra-text {
+        font-family: var(--font-cjk);
+        font-size: 14px;
+        line-height: 1.5;
+        color: var(--ink);
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+    .nx-preview-footer {
+        margin-top: auto;
+        padding-top: 14px;
+        display: flex;
+        justify-content: space-between;
+        font-size: 10px;
+        color: var(--ink-mute);
+        letter-spacing: 0.08em;
+        border-top: 1px dashed var(--rule);
+    }
+
+    /* ============== MOBILE (≤768px) ============== */
+    @media (max-width: 768px) {
+        .nx-page {
+            padding: var(--space-5) var(--space-4) var(--space-10);
+            gap: var(--space-5);
+        }
+        .nx-head {
+            align-items: flex-start;
+        }
+        .nx-title {
+            font-size: 22px;
+        }
+        .nx-title-hand {
+            font-size: 18px;
+            margin-left: 8px;
+        }
+        .nx-subtitle-kbd {
+            display: none;
+        }
+        .nx-actions {
+            width: 100%;
+            justify-content: flex-end;
+        }
+        .nx-toolbar {
+            grid-template-columns: 1fr;
+            gap: 10px;
+            padding: 12px 14px;
+        }
+        .nx-toolbar-status {
+            min-width: 0;
+        }
+        .nx-grid {
+            grid-template-columns: 1fr;
+            gap: 18px;
+        }
+        .nx-preview-col {
+            position: static;
+        }
+        .nx-preview-card {
+            padding: 20px 22px;
+            min-height: 240px;
+        }
+        .nx-preview-primary {
+            font-size: 32px;
+        }
+        .nx-textarea-primary {
+            font-size: 18px;
+            min-height: 76px;
+        }
     }
 </style>
