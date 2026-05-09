@@ -14,6 +14,20 @@ export default defineConfig({
     plugins: [svelte({ hot: false }), svelteTesting()],
     test: {
         environment: "jsdom",
+        // Phase B-test-fix: align jsdom's default origin with the dev
+        // server URL so apiBase()/mediaBase() return the URLs that
+        // existing assertions hardcoded (BrowseRow + CardFace pinned to
+        // :40001). Setting this in vitest config is cleaner than
+        // redefining window.location, which jsdom guards.
+        environmentOptions: {
+            jsdom: {
+                url: "http://localhost:40001/",
+            },
+        },
+        // Phase B-test-fix: matchMedia polyfill (jsdom omits it) lives
+        // here. setupFiles run after the test environment is created and
+        // before each test file imports modules.
+        setupFiles: ["./src/test/vitest-setup.ts"],
         include: ["src/**/*.{test,spec}.ts"],
     },
     resolve: {

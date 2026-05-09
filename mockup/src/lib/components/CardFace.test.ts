@@ -70,7 +70,12 @@ describe("CardFace mount contract", () => {
         }
     });
 
-    test("shadow root contains base href, style block, and .card wrapper", () => {
+    test("shadow root contains style block and .card wrapper", () => {
+        // Phase B-test-fix-1: component no longer emits <base> inside the
+        // shadow root — per HTML spec <base> has no effect there, so the
+        // component instead prefixes each img/audio/video/source/a with
+        // mediaBase() at $effect time. We assert media URL resolution in
+        // the [sound:X] test below; here we only check the static frame.
         const instance = mount(CardFace, {
             target: container,
             props: {
@@ -83,16 +88,8 @@ describe("CardFace mount contract", () => {
 
         try {
             const shadow = shadowFor(container, "shadow-structure");
-            const base = shadow.querySelector("base");
             const style = shadow.querySelector("style");
             const cardWrapper = shadow.querySelector("div.card");
-            expect(base).not.toBeNull();
-            // mediaBase() falls through to DEFAULT_BASE in jsdom — no `api` query
-            // param and no VITE_ANKI_API env. If the default ever changes, update
-            // both the component contract and this assertion together.
-            expect(base!.getAttribute("href")).toBe(
-                "http://localhost:40001/media/",
-            );
             expect(style).not.toBeNull();
             expect(style!.textContent).toBe(".card { color: red; }");
             expect(cardWrapper).not.toBeNull();
@@ -138,7 +135,13 @@ describe("CardFace mount contract", () => {
             const shadow = shadowFor(container, "sound-transform");
             const audio = shadow.querySelector("audio");
             expect(audio).not.toBeNull();
-            expect(audio!.getAttribute("src")).toBe("foo.mp3");
+            // Phase B-test-fix-1: relative src is resolved against
+            // mediaBase() per-element (no <base> in shadow root). With
+            // jsdom origin = localhost:40001, mediaBase() = "/media/" so
+            // the final src is the absolute media URL below.
+            expect(audio!.getAttribute("src")).toBe(
+                "http://localhost:40001/media/foo.mp3",
+            );
             expect(audio!.hasAttribute("controls")).toBe(true);
             expect(audio!.getAttribute("preload")).toBe("none");
         } finally {
