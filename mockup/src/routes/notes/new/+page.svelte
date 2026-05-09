@@ -3,6 +3,7 @@
     import { goto } from "$app/navigation";
     import { Caption, Chip } from "$lib/components/ui";
     import { SketchPlus } from "$lib/components/sketch";
+    import ImportApkgPanel from "$lib/components/ImportApkgPanel.svelte";
     import {
         fetchDecks,
         fetchNotetypes,
@@ -239,6 +240,12 @@
             // couldn't load form data — {loadError}
         </div>
     {/if}
+
+    <!-- Phase B3b: apkg import panel. Sits above the form so a friend
+         coming from the desktop app can ingest a .apkg before adding any
+         hand-typed notes. Defaults collapsed so the page's primary
+         affordance (add a new note) stays the dominant one. -->
+    <ImportApkgPanel />
 
     <!-- Top tri-strip: deck + notetype + status. Mirrors design
          deck/type/tools row but with real data-driven dropdowns and

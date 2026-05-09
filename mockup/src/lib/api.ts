@@ -170,7 +170,7 @@ export function setOnUnauthorized(cb: UnauthorizedCallback | null): void {
     onUnauthorizedCallback = cb;
 }
 
-function fireOnUnauthorized(path: string): void {
+export function fireOnUnauthorized(path: string): void {
     if (path.startsWith("/api/auth/")) return;
     onUnauthorizedCallback?.();
 }
