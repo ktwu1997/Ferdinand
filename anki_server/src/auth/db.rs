@@ -121,6 +121,24 @@ impl AuthDb {
         Ok(conn.last_insert_rowid())
     }
 
+    /// Replace a user's password hash. Used by the self-service change-password
+    /// endpoint (Phase B1) and the future admin-reset endpoint (Phase B2).
+    /// `Err` if the user does not exist — callers must already have authed
+    /// the user and looked them up, so a missing row is an internal bug.
+    pub fn update_password(&self, username: &str, password_hash: &str) -> anyhow::Result<()> {
+        let conn = self.inner.lock().expect("auth db poisoned");
+        let updated = conn
+            .execute(
+                "UPDATE users SET password_hash = ?1 WHERE username = ?2",
+                params![password_hash, username],
+            )
+            .with_context(|| format!("update password for '{username}'"))?;
+        if updated == 0 {
+            anyhow::bail!("update_password: no user named '{username}'");
+        }
+        Ok(())
+    }
+
     /// Borrow the underlying connection. Used by the session store, which
     /// shares this same db file. Held only for sync ops; never across await.
     pub(super) fn conn(&self) -> Arc<Mutex<Connection>> {
@@ -183,5 +201,21 @@ mod tests {
         db.insert_user("ktwu", "h1").unwrap();
         let err = db.insert_user("ktwu", "h2");
         assert!(err.is_err(), "second insert with same username must fail");
+    }
+
+    #[test]
+    fn update_password_replaces_hash() {
+        let db = tmp_db();
+        db.insert_user("ktwu", "old-hash").unwrap();
+        db.update_password("ktwu", "new-hash").unwrap();
+        let row = db.find_user("ktwu").unwrap().expect("user present");
+        assert_eq!(row.password_hash, "new-hash");
+    }
+
+    #[test]
+    fn update_password_unknown_user_errors() {
+        let db = tmp_db();
+        let err = db.update_password("nobody", "new-hash");
+        assert!(err.is_err(), "missing user must surface as Err");
     }
 }

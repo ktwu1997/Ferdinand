@@ -31,6 +31,7 @@
         getCard,
         patchDeckConfigById,
         patchNotetypeName,
+        postAuthChangePassword,
         postDeckConfig,
         postFsrsOptimize,
         postNotetypeField,
@@ -217,6 +218,66 @@
         }
         // Drop any "fresh" optimize-result hint left over from a prior preset.
         optimizeFsrsItems = null;
+    }
+
+    // Phase B1: self-service change-password form lives in the sidebar
+    // account block under the logout button. Toggle-reveal so the sidebar
+    // stays uncluttered when the form isn't in use; on submit we PATCH
+    // /api/auth/password and let the server cycle the session id (current
+    // device stays logged in, no extra round-trip needed).
+    let pwOpen = $state(false);
+    let pwCurrent = $state("");
+    let pwNew = $state("");
+    let pwConfirm = $state("");
+    let pwSaving = $state(false);
+    let pwError: string | null = $state(null);
+    let pwSuccess = $state(false);
+
+    function resetPasswordForm(): void {
+        pwCurrent = "";
+        pwNew = "";
+        pwConfirm = "";
+        pwError = null;
+    }
+
+    function togglePwOpen(): void {
+        pwOpen = !pwOpen;
+        pwSuccess = false;
+        if (!pwOpen) resetPasswordForm();
+    }
+
+    async function submitPasswordChange(event: Event): Promise<void> {
+        event.preventDefault();
+        if (pwSaving) return;
+        pwError = null;
+        pwSuccess = false;
+        if (!pwCurrent) {
+            pwError = "current password required";
+            return;
+        }
+        if (!pwNew) {
+            pwError = "new password required";
+            return;
+        }
+        if (pwNew !== pwConfirm) {
+            pwError = "new password and confirmation don't match";
+            return;
+        }
+        if (pwNew === pwCurrent) {
+            pwError = "new password must differ from the current password";
+            return;
+        }
+        pwSaving = true;
+        try {
+            await postAuthChangePassword(pwCurrent, pwNew);
+            pwSuccess = true;
+            pwOpen = false;
+            resetPasswordForm();
+        } catch (err) {
+            pwError = err instanceof Error ? err.message : String(err);
+        } finally {
+            pwSaving = false;
+        }
     }
 
     onMount(async () => {
@@ -848,9 +909,90 @@
                     >
                         logout
                     </button>
-                    <p class="tx-account-hint mono">
-                        change password — <span class="tx-coming-soon">coming soon</span>
-                    </p>
+                    {#if pwSuccess}
+                        <p
+                            class="tx-account-msg tx-account-msg-ok mono"
+                            data-testid="settings-pw-success"
+                            role="status"
+                        >
+                            // password updated
+                        </p>
+                    {/if}
+                    {#if !pwOpen}
+                        <button
+                            type="button"
+                            class="tx-account-link mono"
+                            data-testid="settings-pw-toggle"
+                            onclick={togglePwOpen}
+                        >
+                            change password →
+                        </button>
+                    {:else}
+                        <form
+                            class="tx-pw-form"
+                            data-testid="settings-pw-form"
+                            onsubmit={submitPasswordChange}
+                        >
+                            <label class="tx-pw-field mono">
+                                <span class="tx-pw-label">current</span>
+                                <input
+                                    type="password"
+                                    autocomplete="current-password"
+                                    bind:value={pwCurrent}
+                                    data-testid="settings-pw-current"
+                                    disabled={pwSaving}
+                                />
+                            </label>
+                            <label class="tx-pw-field mono">
+                                <span class="tx-pw-label">new</span>
+                                <input
+                                    type="password"
+                                    autocomplete="new-password"
+                                    bind:value={pwNew}
+                                    data-testid="settings-pw-new"
+                                    disabled={pwSaving}
+                                />
+                            </label>
+                            <label class="tx-pw-field mono">
+                                <span class="tx-pw-label">confirm</span>
+                                <input
+                                    type="password"
+                                    autocomplete="new-password"
+                                    bind:value={pwConfirm}
+                                    data-testid="settings-pw-confirm"
+                                    disabled={pwSaving}
+                                />
+                            </label>
+                            {#if pwError}
+                                <p
+                                    class="tx-account-msg tx-account-msg-err mono"
+                                    data-testid="settings-pw-error"
+                                    role="alert"
+                                >
+                                    {pwError}
+                                </p>
+                            {/if}
+                            <div class="tx-pw-actions mono">
+                                <button
+                                    type="submit"
+                                    class="tx-pw-submit"
+                                    data-testid="settings-pw-submit"
+                                    disabled={pwSaving}
+                                >
+                                    {pwSaving ? "saving…" : "save"}
+                                </button>
+                                <button
+                                    type="button"
+                                    class="tx-pw-cancel"
+                                    data-testid="settings-pw-cancel"
+                                    onclick={togglePwOpen}
+                                    disabled={pwSaving}
+                                >
+                                    cancel
+                                </button>
+                            </div>
+                        </form>
+                    {/if}
                 {:else}
                     <div class="tx-account-row mono">
                         <span class="tx-account-name">— not signed in</span>
@@ -1970,15 +2112,120 @@
         border-style: solid;
         background: color-mix(in oklch, var(--due) 8%, transparent);
     }
-    .tx-account-hint {
-        margin-top: 6px;
-        font-size: 10px;
-        color: var(--ink-mute);
-        letter-spacing: 0.04em;
-    }
     .tx-coming-soon {
         font-style: italic;
         color: var(--ink-mute);
+    }
+    .tx-account-link {
+        margin-top: 8px;
+        padding: 6px 0;
+        background: transparent;
+        border: 0;
+        border-bottom: 1.2px dashed var(--rule);
+        color: var(--ink-soft);
+        font-size: 11px;
+        letter-spacing: 0.06em;
+        text-align: left;
+        cursor: pointer;
+        transition: color 120ms ease, border-color 120ms ease;
+    }
+    .tx-account-link:hover {
+        color: var(--ink);
+        border-bottom-color: var(--ink);
+        border-bottom-style: solid;
+    }
+    .tx-pw-form {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-top: 10px;
+        padding: 10px;
+        border: 1.2px dashed var(--rule);
+        border-radius: var(--radius);
+        background: color-mix(in oklch, var(--paper) 92%, transparent);
+    }
+    .tx-pw-field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+    .tx-pw-label {
+        font-size: 10px;
+        letter-spacing: 0.08em;
+        text-transform: lowercase;
+        color: var(--ink-soft);
+    }
+    .tx-pw-form input {
+        width: 100%;
+        padding: 5px 8px;
+        font-size: 12px;
+        font-family: var(--font-mono);
+        color: var(--ink);
+        background: var(--paper);
+        border: 1.2px solid var(--rule);
+        border-radius: var(--radius);
+        outline: none;
+        transition: border-color 120ms ease;
+    }
+    .tx-pw-form input:focus {
+        border-color: var(--ink);
+    }
+    .tx-pw-form input:disabled {
+        color: var(--ink-mute);
+        background: color-mix(in oklch, var(--paper) 88%, transparent);
+    }
+    .tx-pw-actions {
+        display: flex;
+        gap: 6px;
+        margin-top: 4px;
+    }
+    .tx-pw-submit,
+    .tx-pw-cancel {
+        flex: 1;
+        padding: 6px 8px;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        letter-spacing: 0.06em;
+        text-transform: lowercase;
+        border: 1.2px solid var(--ink);
+        border-radius: var(--radius);
+        cursor: pointer;
+        transition: background-color 120ms ease, color 120ms ease,
+            border-color 120ms ease;
+    }
+    .tx-pw-submit {
+        background: var(--ink);
+        color: var(--paper);
+    }
+    .tx-pw-submit:hover:not(:disabled) {
+        background: color-mix(in oklch, var(--ink) 88%, transparent);
+    }
+    .tx-pw-submit:disabled,
+    .tx-pw-cancel:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+    }
+    .tx-pw-cancel {
+        background: transparent;
+        color: var(--ink-soft);
+        border-style: dashed;
+        border-color: var(--rule);
+    }
+    .tx-pw-cancel:hover:not(:disabled) {
+        color: var(--ink);
+        border-color: var(--ink);
+        border-style: solid;
+    }
+    .tx-account-msg {
+        margin-top: 6px;
+        font-size: 10px;
+        letter-spacing: 0.04em;
+    }
+    .tx-account-msg-ok {
+        color: var(--ok, var(--ink-soft));
+    }
+    .tx-account-msg-err {
+        color: var(--due);
     }
 
     .tx-sidebar-build {

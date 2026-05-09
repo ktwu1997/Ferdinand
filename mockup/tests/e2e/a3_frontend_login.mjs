@@ -6,7 +6,7 @@
 // loads the form, submits credentials, persists the session cookie,
 // honours `?next=`, and the guard rebounces post-logout.
 //
-// Scope (7 cases):
+// Scope (8 cases):
 //   1. Direct /login → page renders with username + password fields
 //   2. Anonymous /browse → redirected to /login?next=%2Fbrowse
 //   3. Wrong password → inline error, URL stays on /login
@@ -14,6 +14,9 @@
 //   5. /api/auth/me from the authenticated context → 200 + username
 //   6. POST /api/auth/logout → 204
 //   7. Anonymous /browse post-logout → redirected back to /login
+//   8. Phase B1 — /settings sidebar password form: toggle reveals inputs,
+//      validation surfaces inline errors, cancel collapses (no server
+//      mutation; happy-path mutation is covered by a2 cases 13-16)
 //
 // Pre-reqs:
 //   * anki_server running on :40001 with mockup/build/ embedded or
@@ -246,6 +249,102 @@ try {
             `pathname=${url.pathname} next=${nextParam}`,
         );
         await page.close();
+    }
+
+    // ===== 8. Phase B1 — /settings sidebar password form (UI smoke) =====
+    // Server-side mutation paths (wrong-current 401, weak-new 400, happy 200,
+    // login-with-new 200) are exercised by a2 cases 11-16 against the live
+    // wire. This case proves the FORM exists, toggles in/out, and surfaces
+    // validation errors before touching the server. Uses a fresh context so
+    // we don't depend on case 4's auth state (case 6 logged it out).
+    {
+        const ctx = await browser.newContext({
+            viewport: { width: 1280, height: 900 },
+        });
+        const page = await ctx.newPage();
+        wireConsole(page, "case8");
+        // Login afresh so /settings is reachable.
+        await page.goto(`${BASE}/login?next=%2Fsettings`, {
+            waitUntil: "networkidle",
+        });
+        await page
+            .locator('input[autocomplete="username"]')
+            .first()
+            .fill(TEST_USER);
+        await page
+            .locator('input[autocomplete="current-password"]')
+            .first()
+            .fill(TEST_PASSWORD);
+        await page.locator('[data-testid="login-submit"]').click();
+        await page
+            .waitForURL((u) => new URL(u).pathname === "/settings", {
+                timeout: 8000,
+            })
+            .catch(() => null);
+
+        const toggle = page.locator('[data-testid="settings-pw-toggle"]');
+        const toggleVisible = await toggle.isVisible().catch(() => false);
+        await page.screenshot({
+            path: path.join(ART, "08a-pw-collapsed.png"),
+        });
+
+        // Open the form
+        if (toggleVisible) await toggle.click();
+        const form = page.locator('[data-testid="settings-pw-form"]');
+        const inputCurrent = page.locator('[data-testid="settings-pw-current"]');
+        const inputNew = page.locator('[data-testid="settings-pw-new"]');
+        const inputConfirm = page.locator('[data-testid="settings-pw-confirm"]');
+        const submit = page.locator('[data-testid="settings-pw-submit"]');
+        const cancel = page.locator('[data-testid="settings-pw-cancel"]');
+        await form.waitFor({ state: "visible", timeout: 3000 }).catch(() => null);
+        const formVisible = await form.isVisible().catch(() => false);
+        const allInputsVisible =
+            (await inputCurrent.isVisible().catch(() => false)) &&
+            (await inputNew.isVisible().catch(() => false)) &&
+            (await inputConfirm.isVisible().catch(() => false)) &&
+            (await submit.isVisible().catch(() => false)) &&
+            (await cancel.isVisible().catch(() => false));
+        await page.screenshot({
+            path: path.join(ART, "08b-pw-open-empty.png"),
+        });
+
+        // Submit empty → "current password required" inline error.
+        await submit.click();
+        const errorLocator = page.locator('[data-testid="settings-pw-error"]');
+        await errorLocator
+            .waitFor({ state: "visible", timeout: 2000 })
+            .catch(() => null);
+        const emptyErr = (await errorLocator.textContent().catch(() => "")) ?? "";
+
+        // Now type a current pw + a mismatched confirm → confirm-mismatch error.
+        await inputCurrent.fill(TEST_PASSWORD);
+        await inputNew.fill("first-attempt");
+        await inputConfirm.fill("different-attempt");
+        await submit.click();
+        await page.waitForTimeout(150);
+        const shortErr = (await errorLocator.textContent().catch(() => "")) ?? "";
+
+        // Cancel → form collapses, toggle reappears.
+        await cancel.click();
+        const reCollapsed = await toggle
+            .isVisible({ timeout: 2000 })
+            .catch(() => false);
+        await page.screenshot({
+            path: path.join(ART, "08c-pw-cancelled.png"),
+        });
+
+        record(
+            "8. /settings sidebar password form toggles + validates + cancels",
+            toggleVisible &&
+                formVisible &&
+                allInputsVisible &&
+                emptyErr.toLowerCase().includes("current") &&
+                /match|don'?t/i.test(shortErr) &&
+                reCollapsed,
+            `toggle=${toggleVisible} form=${formVisible} inputs=${allInputsVisible} emptyErr="${emptyErr.trim()}" shortErr="${shortErr.trim()}" reCollapsed=${reCollapsed}`,
+        );
+        await page.close();
+        await ctx.close();
     }
 } finally {
     await anon.close();

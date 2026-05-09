@@ -1270,3 +1270,25 @@ export async function postAuthLogout(): Promise<void> {
         throw new Error(`${res.status} ${res.statusText}`);
     }
 }
+
+/**
+ * Phase B1: PATCH /api/auth/password. Self-service password change for the
+ * currently-authed user. 200 + `{ok:true}` on success; 401 if `current` is
+ * wrong; 400 if the new password fails server-side validation (min 8 chars,
+ * must differ from current). Errors propagate as `Error("<status> <message>")`
+ * so the settings form can surface them inline. Path lives under
+ * `/api/auth/` so a 401 (wrong-current) does NOT redirect to /login —
+ * the form stays open and shows the error in place.
+ */
+export interface ApiAuthOk {
+    ok: boolean;
+}
+export async function postAuthChangePassword(
+    current: string,
+    newPassword: string,
+): Promise<ApiAuthOk> {
+    return patchJson<ApiAuthOk>("/api/auth/password", {
+        current,
+        new: newPassword,
+    });
+}

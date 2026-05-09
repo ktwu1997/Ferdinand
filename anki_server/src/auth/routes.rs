@@ -2,18 +2,24 @@
 //!
 //! Endpoints
 //! ---------
-//! * `POST /api/auth/register` — create a user. 201 on success, 409 if
+//! * `POST  /api/auth/register` — create a user. 201 on success, 409 if
 //!   username taken.
-//! * `POST /api/auth/login`    — verify credentials, mint a session.
+//! * `POST  /api/auth/login`    — verify credentials, mint a session.
 //!   200 on success, 401 on bad creds.
-//! * `POST /api/auth/logout`   — clear the session. Idempotent → 204 even
+//! * `POST  /api/auth/logout`   — clear the session. Idempotent → 204 even
 //!   if there was nothing to clear.
-//! * `GET  /api/auth/me`       — return `{username}` when authenticated.
+//! * `GET   /api/auth/me`       — return `{username}` when authenticated.
 //!   The `require_auth` layer ahead of this guarantees we have one.
+//! * `PATCH /api/auth/password` — self-service password change (Phase B1).
+//!   401 if `current` doesn't match the stored hash, 400 if `new` is empty
+//!   or equals `current` (no-op), 200 on success. The non-empty rule matches
+//!   register's policy intentionally — bumping the strength floor is a
+//!   project-wide change (register + change_password + admin reset) tracked
+//!   for a follow-up phase. Cycles the current session id so a session
+//!   captured with the old credential can't be replayed after the change.
 //!
-//! These four are the only routes exposed before `require_auth` runs (well,
-//! plus `/api/auth/me` which is auth-gated). Login/register are skipped
-//! because you can't authenticate without first calling them.
+//! Public routes are everything before `require_auth` runs (register/login/
+//! logout). Everything else (`me`, `password`) sits behind the auth gate.
 
 use std::net::SocketAddr;
 use std::time::Instant;
@@ -22,7 +28,7 @@ use axum::extract::{ConnectInfo, State};
 use axum::http::header::RETRY_AFTER;
 use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use tower_sessions::Session;
@@ -43,6 +49,20 @@ pub struct UserBody {
     pub username: String,
 }
 
+/// Body for `PATCH /api/auth/password`. `new` is renamed via serde so the
+/// JSON key matches our wire shape while the field stays a valid Rust ident.
+#[derive(Debug, Deserialize)]
+pub struct ChangePasswordBody {
+    pub current: String,
+    #[serde(rename = "new")]
+    pub new_password: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OkBody {
+    pub ok: bool,
+}
+
 /// Routes that **do not** sit behind `require_auth`. Everything that mutates
 /// session state (login/register) lives here so first-time visitors can
 /// reach them.
@@ -56,7 +76,9 @@ pub fn public_router() -> Router<ServerState> {
 /// Routes that require a valid session. Composed with `require_auth` in
 /// `main.rs`.
 pub fn protected_router() -> Router<ServerState> {
-    Router::new().route("/api/auth/me", get(me))
+    Router::new()
+        .route("/api/auth/me", get(me))
+        .route("/api/auth/password", patch(change_password))
 }
 
 async fn register(
@@ -158,6 +180,63 @@ async fn me(user: axum::extract::Extension<AuthedUser>) -> Json<UserBody> {
     Json(UserBody {
         username: user.0.username().to_string(),
     })
+}
+
+/// Self-service password change. The `require_auth` layer guarantees we
+/// already have a session for `user`, so the only verification we do here
+/// is that they still know the *current* password — defends against an
+/// attacker who got hold of the cookie but not the underlying credential.
+///
+/// Session handling: we cycle the session id on success. The current device
+/// keeps its session (the cookie jar still has the new id) but anyone
+/// replaying the old id loses authentication. Full multi-device revocation
+/// (kill every other session for this user) is deferred to Phase B2 admin
+/// reset, where it's load-bearing — for self-service, the attacker would
+/// also need the new credential to keep going.
+async fn change_password(
+    State(state): State<ServerState>,
+    session: Session,
+    user: axum::extract::Extension<AuthedUser>,
+    Json(body): Json<ChangePasswordBody>,
+) -> ApiResult<Response> {
+    let username = user.0.username().to_string();
+    if body.current.is_empty() {
+        return Err(ServerError::bad_request("current password must not be empty"));
+    }
+    let new_password = body.new_password;
+    if new_password.is_empty() {
+        return Err(ServerError::bad_request("new password must not be empty"));
+    }
+    // Reject the no-op change so a misclick doesn't quietly keep the same
+    // hash with a fresh salt — surfaces as inline UI feedback rather than a
+    // success that confuses the user.
+    if new_password == body.current {
+        return Err(ServerError::bad_request(
+            "new password must differ from the current password",
+        ));
+    }
+    let row = state
+        .auth
+        .find_user(&username)?
+        .ok_or_else(|| anyhow::anyhow!("authed user '{username}' not found in db"))?;
+    let current_ok = super::password::verify(&body.current, &row.password_hash)?;
+    if !current_ok {
+        return Err(ServerError::unauthorized("current password is incorrect"));
+    }
+    let new_hash = super::password::hash(&new_password)?;
+    state.auth.update_password(&username, &new_hash)?;
+    // Cycle the session id so a leaked-cookie attacker on the *same* device
+    // gets logged out at the next request.
+    session
+        .cycle_id()
+        .await
+        .map_err(|e| anyhow::anyhow!("cycle session: {e}"))?;
+    // Re-insert the user binding under the new id.
+    session
+        .insert(SESSION_USER_KEY, &username)
+        .await
+        .map_err(|e| anyhow::anyhow!("write session: {e}"))?;
+    Ok((StatusCode::OK, Json(OkBody { ok: true })).into_response())
 }
 
 /// Tight username validation: 3-64 chars, [a-z0-9_-], lowercase only so
