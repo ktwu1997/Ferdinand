@@ -12,7 +12,7 @@
 //!    user's collection to open.
 
 use axum::body::Body;
-use axum::extract::Request;
+use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -21,6 +21,7 @@ use tower_sessions::Session;
 
 use super::SESSION_USER_KEY;
 use crate::error::ApiError;
+use crate::state::ServerState;
 
 /// Marker placed into request extensions once auth has succeeded. Kept as a
 /// newtype so we can `req.extensions().get::<AuthedUser>()` from anywhere
@@ -75,4 +76,34 @@ fn unauth_response(status: StatusCode, message: &str) -> Response {
         message: message.to_string(),
     };
     (status, Json(body)).into_response()
+}
+
+/// Phase B2: admin gate. Mounted as `route_layer` *only* on the admin
+/// sub-router so non-admin protected routes (e.g. `/api/auth/me`,
+/// `/api/decks`) keep working for every authed user.
+///
+/// Order: this runs *after* [`require_auth`] in the layer stack, so we
+/// can rely on `AuthedUser` already living in request extensions. If
+/// it isn't there, that's a wiring bug — surface as 500 so the operator
+/// sees it loudly rather than silently 403-ing every admin call.
+///
+/// Resolution rule: `state.admin_username == AuthedUser.username` →
+/// pass; anything else → 403. Empty / unset `ANKI_ADMIN_USERNAME` makes
+/// every admin call 403, which is the safer default for a fresh
+/// install (don't accidentally hand admin to whichever user exists).
+pub async fn require_admin(
+    State(state): State<ServerState>,
+    req: Request<Body>,
+    next: Next,
+) -> Response {
+    let Some(user) = req.extensions().get::<AuthedUser>().cloned() else {
+        return unauth_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "admin gate reached without prior auth",
+        );
+    };
+    if !state.is_admin(user.username()) {
+        return unauth_response(StatusCode::FORBIDDEN, "admin only");
+    }
+    next.run(req).await
 }

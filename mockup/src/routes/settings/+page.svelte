@@ -23,6 +23,7 @@
     import {
         deleteDeckConfig,
         deleteNotetypeField,
+        fetchAdminUsers,
         fetchDeckConfigById,
         fetchDeckConfigs,
         fetchFsrsEnabled,
@@ -31,6 +32,8 @@
         getCard,
         patchDeckConfigById,
         patchNotetypeName,
+        postAdminDisable,
+        postAdminResetPassword,
         postAuthChangePassword,
         postDeckConfig,
         postFsrsOptimize,
@@ -38,6 +41,7 @@
         putFsrsEnabled,
         putFsrsHealthCheck,
         resetCardToNew,
+        type ApiAdminUser,
         type ApiCardSummary,
         type ApiDeckConfigListItem,
         type ApiNotetypeSummary,
@@ -45,16 +49,27 @@
 
     const DEFAULT_PRESET_ID = 1;
 
-    let sections = [
-        { id: "profile", label: "Profile" },
-        { id: "scheduling", label: "Scheduling" },
-        { id: "fsrs", label: "FSRS" },
-        { id: "notetypes", label: "Notetypes" },
-        { id: "recovery", label: "Recovery" },
-        { id: "sync", label: "Sync" },
-        { id: "appearance", label: "Appearance" },
-        { id: "advanced", label: "Advanced" },
-    ];
+    // Phase B2: the admin section only appears when the server reports
+    // `auth.user.is_admin` true (env-configured `ANKI_ADMIN_USERNAME`
+    // matches this user). `$derived` rebuilds the list when auth state
+    // flips, so a refresh-after-login or admin-disable flow surfaces the
+    // panel correctly without a manual reload.
+    let sections = $derived.by(() => {
+        const list = [
+            { id: "profile", label: "Profile" },
+            { id: "scheduling", label: "Scheduling" },
+            { id: "fsrs", label: "FSRS" },
+            { id: "notetypes", label: "Notetypes" },
+            { id: "recovery", label: "Recovery" },
+            { id: "sync", label: "Sync" },
+            { id: "appearance", label: "Appearance" },
+            { id: "advanced", label: "Advanced" },
+        ];
+        if (auth.user?.is_admin) {
+            list.push({ id: "admin", label: "Admin" });
+        }
+        return list;
+    });
 
     let active = $state("fsrs");
     let themeChoice: ThemeChoice = $state("light");
@@ -277,6 +292,115 @@
             pwError = err instanceof Error ? err.message : String(err);
         } finally {
             pwSaving = false;
+        }
+    }
+
+    // Phase B2: admin user panel state + handlers. Lazy-loaded — we only
+    // hit /api/admin/users when the operator actually navigates to the
+    // admin tab, so non-admin users (most calls) never pay the round-
+    // trip and the cold path on first nav is one fetch instead of one-
+    // per-onMount.
+    let adminUsers: ApiAdminUser[] = $state([]);
+    let adminLoading = $state(false);
+    let adminLoadedOnce = false;
+    let adminError: string | null = $state(null);
+    let adminBusyUser: string | null = $state(null);
+    let adminSuccess: string | null = $state(null);
+    // Reset-password inline form state. Only one row's form is open at a
+    // time — opening another row closes the first, like a list of
+    // accordion entries.
+    let adminResetUser: string | null = $state(null);
+    let adminResetNew = $state("");
+    let adminResetConfirm = $state("");
+    let adminResetError: string | null = $state(null);
+    let adminResetSaving = $state(false);
+
+    async function loadAdminUsers(): Promise<void> {
+        adminLoading = true;
+        adminError = null;
+        try {
+            const list = await fetchAdminUsers();
+            adminUsers = list.users;
+            adminLoadedOnce = true;
+        } catch (err) {
+            adminError = err instanceof Error ? err.message : String(err);
+        } finally {
+            adminLoading = false;
+        }
+    }
+
+    // Fetch on first switch to the admin tab; later switches reuse the
+    // cached list until the operator hits the explicit refresh button.
+    $effect(() => {
+        if (active === "admin" && auth.user?.is_admin && !adminLoadedOnce && !adminLoading) {
+            void loadAdminUsers();
+        }
+    });
+
+    function closeAdminResetForm(): void {
+        adminResetUser = null;
+        adminResetNew = "";
+        adminResetConfirm = "";
+        adminResetError = null;
+    }
+
+    function openAdminResetForm(username: string): void {
+        // Toggle behaviour: re-clicking the same row's "reset" closes it.
+        if (adminResetUser === username) {
+            closeAdminResetForm();
+            return;
+        }
+        closeAdminResetForm();
+        adminResetUser = username;
+        adminSuccess = null;
+    }
+
+    async function submitAdminReset(event: Event): Promise<void> {
+        event.preventDefault();
+        if (adminResetSaving || !adminResetUser) return;
+        adminResetError = null;
+        if (!adminResetNew) {
+            adminResetError = "new password required";
+            return;
+        }
+        if (adminResetNew !== adminResetConfirm) {
+            adminResetError = "new password and confirmation don't match";
+            return;
+        }
+        adminResetSaving = true;
+        try {
+            await postAdminResetPassword(adminResetUser, adminResetNew);
+            adminSuccess = `// password reset for ${adminResetUser} — their sessions were revoked`;
+            closeAdminResetForm();
+        } catch (err) {
+            adminResetError = err instanceof Error ? err.message : String(err);
+        } finally {
+            adminResetSaving = false;
+        }
+    }
+
+    async function toggleAdminDisable(user: ApiAdminUser): Promise<void> {
+        if (adminBusyUser) return;
+        adminBusyUser = user.username;
+        adminError = null;
+        adminSuccess = null;
+        const targetDisabled = user.disabled_at === null; // flip
+        try {
+            await postAdminDisable(user.username, targetDisabled);
+            adminSuccess = targetDisabled
+                ? `// disabled ${user.username} — their sessions were revoked`
+                : `// re-enabled ${user.username}`;
+            // Optimistic local update so the toggle reflects immediately
+            // without waiting for a list refetch.
+            adminUsers = adminUsers.map((u) =>
+                u.username === user.username
+                    ? { ...u, disabled_at: targetDisabled ? Math.floor(Date.now() / 1000) : null }
+                    : u,
+            );
+        } catch (err) {
+            adminError = err instanceof Error ? err.message : String(err);
+        } finally {
+            adminBusyUser = null;
         }
     }
 
@@ -882,6 +1006,8 @@
                                     <SketchLeaf size={13} />
                                 {:else if s.id === "advanced"}
                                     <SketchLock size={13} />
+                                {:else if s.id === "admin"}
+                                    <SketchUser size={13} />
                                 {/if}
                             </span>
                             <span class="tx-nav-label">{s.label.toLowerCase()}</span>
@@ -1025,6 +1151,8 @@
                         <span class="tx-panel-hand hand" aria-hidden="true">card templates</span>
                     {:else if active === "recovery"}
                         <span class="tx-panel-hand hand" aria-hidden="true">undo a slip</span>
+                    {:else if active === "admin"}
+                        <span class="tx-panel-hand hand" aria-hidden="true">manage users</span>
                     {/if}
                 </h2>
                 <p class="tx-panel-sub mono">
@@ -1038,6 +1166,8 @@
                         reset a card's schedule when a rating slips
                     {:else if active === "sync"}
                         m4 self-hosted server preview
+                    {:else if active === "admin"}
+                        list users · disable accounts · force-reset passwords
                     {:else}
                         configure how this collection behaves
                     {/if}
@@ -1909,6 +2039,142 @@
                         <div class="mono">this browser</div>
                     </div>
                 </div>
+            {:else if active === "admin"}
+                <div class="tx-card" data-testid="settings-admin-card">
+                    <div class="tx-card-head">
+                        <Caption>// users</Caption>
+                        <span class="tx-card-hand hand" aria-hidden="true">friends sharing this server</span>
+                    </div>
+                    {#if adminError}
+                        <p
+                            class="tx-account-msg tx-account-msg-err mono"
+                            data-testid="settings-admin-error"
+                            role="alert"
+                        >
+                            {adminError}
+                        </p>
+                    {/if}
+                    {#if adminSuccess}
+                        <p
+                            class="tx-account-msg tx-account-msg-ok mono"
+                            data-testid="settings-admin-success"
+                            role="status"
+                        >
+                            {adminSuccess}
+                        </p>
+                    {/if}
+                    {#if adminLoading && adminUsers.length === 0}
+                        <p class="tx-hint mono" data-testid="settings-admin-loading">// loading users…</p>
+                    {:else if adminUsers.length === 0 && !adminError}
+                        <p class="tx-hint mono">// no users yet</p>
+                    {:else}
+                        <ul class="tx-admin-list mono" data-testid="settings-admin-list">
+                            {#each adminUsers as u (u.username)}
+                                <li
+                                    class="tx-admin-row"
+                                    class:tx-admin-row-disabled={u.disabled_at !== null}
+                                    data-testid="settings-admin-row-{u.username}"
+                                >
+                                    <div class="tx-admin-row-head">
+                                        <span class="tx-admin-name">
+                                            {u.username}
+                                            {#if u.disabled_at !== null}
+                                                <span class="tx-admin-badge" aria-label="disabled">disabled</span>
+                                            {/if}
+                                        </span>
+                                        <div class="tx-admin-actions">
+                                            <button
+                                                type="button"
+                                                class="tx-account-link"
+                                                data-testid="settings-admin-disable-{u.username}"
+                                                onclick={() => toggleAdminDisable(u)}
+                                                disabled={adminBusyUser !== null
+                                                    || (auth.user?.username === u.username)}
+                                            >
+                                                {u.disabled_at !== null ? "enable" : "disable"}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                class="tx-account-link"
+                                                data-testid="settings-admin-reset-{u.username}"
+                                                onclick={() => openAdminResetForm(u.username)}
+                                                disabled={adminBusyUser !== null}
+                                            >
+                                                {adminResetUser === u.username ? "cancel" : "reset password"}
+                                            </button>
+                                        </div>
+                                    </div>
+                                    {#if adminResetUser === u.username}
+                                        <form
+                                            class="tx-pw-form tx-admin-reset-form"
+                                            data-testid="settings-admin-reset-form-{u.username}"
+                                            onsubmit={submitAdminReset}
+                                        >
+                                            <label class="tx-pw-field">
+                                                <span class="tx-pw-label">new</span>
+                                                <input
+                                                    type="password"
+                                                    autocomplete="new-password"
+                                                    bind:value={adminResetNew}
+                                                    data-testid="settings-admin-reset-new"
+                                                    disabled={adminResetSaving}
+                                                />
+                                            </label>
+                                            <label class="tx-pw-field">
+                                                <span class="tx-pw-label">confirm</span>
+                                                <input
+                                                    type="password"
+                                                    autocomplete="new-password"
+                                                    bind:value={adminResetConfirm}
+                                                    data-testid="settings-admin-reset-confirm"
+                                                    disabled={adminResetSaving}
+                                                />
+                                            </label>
+                                            {#if adminResetError}
+                                                <p
+                                                    class="tx-account-msg tx-account-msg-err mono"
+                                                    data-testid="settings-admin-reset-error"
+                                                    role="alert"
+                                                >
+                                                    {adminResetError}
+                                                </p>
+                                            {/if}
+                                            <div class="tx-pw-actions">
+                                                <button
+                                                    type="submit"
+                                                    class="tx-pw-submit"
+                                                    data-testid="settings-admin-reset-submit"
+                                                    disabled={adminResetSaving}
+                                                >
+                                                    {adminResetSaving ? "saving…" : "reset password"}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    class="tx-pw-cancel"
+                                                    onclick={closeAdminResetForm}
+                                                    disabled={adminResetSaving}
+                                                >
+                                                    cancel
+                                                </button>
+                                            </div>
+                                        </form>
+                                    {/if}
+                                </li>
+                            {/each}
+                        </ul>
+                    {/if}
+                    <div class="tx-admin-footer">
+                        <button
+                            type="button"
+                            class="tx-account-link"
+                            data-testid="settings-admin-refresh"
+                            onclick={loadAdminUsers}
+                            disabled={adminLoading}
+                        >
+                            {adminLoading ? "refreshing…" : "refresh"}
+                        </button>
+                    </div>
+                </div>
             {:else}
                 <div class="tx-card tx-card-placeholder" data-testid="settings-placeholder-card">
                     <div class="tx-card-head">
@@ -2226,6 +2492,65 @@
     }
     .tx-account-msg-err {
         color: var(--due);
+    }
+
+    /* Phase B2: admin user-list + per-row disable / reset-password
+       inline form. Borrows the .tx-pw-form rules (already styled
+       above) for inputs/buttons; only the list scaffolding is new. */
+    .tx-admin-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+    .tx-admin-row {
+        padding: 10px 12px;
+        border: 1.2px solid var(--rule);
+        border-radius: var(--radius);
+        background: color-mix(in oklch, var(--paper) 96%, transparent);
+        transition: border-color 120ms ease, background-color 120ms ease;
+    }
+    .tx-admin-row-disabled {
+        opacity: 0.7;
+        border-style: dashed;
+    }
+    .tx-admin-row-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+    .tx-admin-name {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        color: var(--ink);
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .tx-admin-badge {
+        font-size: 9.5px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        padding: 2px 6px;
+        border: 1px dashed var(--rule);
+        border-radius: var(--radius);
+        color: var(--ink-mute);
+    }
+    .tx-admin-actions {
+        display: inline-flex;
+        gap: 12px;
+    }
+    .tx-admin-reset-form {
+        margin-top: 8px;
+    }
+    .tx-admin-footer {
+        margin-top: 14px;
+        padding-top: 10px;
+        border-top: 1px dashed var(--rule);
     }
 
     .tx-sidebar-build {

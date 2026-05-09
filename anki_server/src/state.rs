@@ -43,6 +43,13 @@ pub struct ServerState {
     /// In-memory rate limiter for `/api/auth/login`. Shared across requests
     /// so a single attacker can't dodge it by fanning out connections.
     pub login_limiter: Arc<LoginRateLimiter>,
+    /// Phase B2: the username with admin privileges, sourced from
+    /// `ANKI_ADMIN_USERNAME` at boot. `None` = no admin user is configured,
+    /// which makes every `/api/admin/*` route 403. Wrapped in `Arc<String>`
+    /// rather than `String` so the per-request clone is a refcount bump
+    /// instead of a heap copy — admin checks are on the hot path of every
+    /// admin-router request.
+    pub admin_username: Option<Arc<String>>,
     /// `username → AppState`. Inserted lazily on first use so a fresh user
     /// doesn't pay a cold-start penalty until they actually authenticate.
     users: Arc<StdMutex<HashMap<String, AppState>>>,
@@ -54,8 +61,33 @@ impl ServerState {
             auth,
             users_dir: Arc::new(users_dir.into()),
             login_limiter: Arc::new(LoginRateLimiter::new()),
+            admin_username: None,
             users: Arc::new(StdMutex::new(HashMap::new())),
         }
+    }
+
+    /// Phase B2: builder-style setter so `main.rs` can wire the admin
+    /// username read from `ANKI_ADMIN_USERNAME` without overloading
+    /// `new()` for what's still an optional slot. Empty / whitespace-only
+    /// strings collapse to `None` — operators flipping the env var on
+    /// for an experiment shouldn't accidentally end up with an admin
+    /// account named " ".
+    pub fn with_admin_username(mut self, raw: Option<String>) -> Self {
+        self.admin_username = raw
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .map(Arc::new);
+        self
+    }
+
+    /// Phase B2 helper used by the admin gate + `/api/auth/me`. Cheap —
+    /// just compares the configured admin username against the supplied
+    /// candidate. Returns `false` if no admin is configured.
+    pub fn is_admin(&self, username: &str) -> bool {
+        self.admin_username
+            .as_ref()
+            .map(|a| a.as_str() == username)
+            .unwrap_or(false)
     }
 
     /// Resolve (or open + cache) the [`AppState`] for `username`.

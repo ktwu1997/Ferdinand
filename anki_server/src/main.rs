@@ -11,6 +11,7 @@
 //   * The `AppState` extractor (see `state.rs`) lazily opens that user's
 //     collection on first request and caches it for the server's lifetime.
 
+mod admin;
 mod auth;
 mod bootstrap;
 mod error;
@@ -149,17 +150,39 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         .with_expiry(Expiry::OnInactivity(Duration::days(30)))
         .with_signed(session_key);
 
-    let server_state = ServerState::new(auth, PathBuf::from(&users_dir));
+    // Phase B2: surface the admin username (env var). Empty / unset →
+    // every `/api/admin/*` call 403s. Documented as opt-in in the
+    // friend-self-host README so a fresh install isn't admin-everywhere.
+    let admin_username = std::env::var("ANKI_ADMIN_USERNAME").ok();
+    if let Some(name) = admin_username.as_deref().filter(|s| !s.trim().is_empty()) {
+        tracing::info!(admin = %name, "admin endpoints enabled for user");
+    } else {
+        tracing::info!("ANKI_ADMIN_USERNAME unset — /api/admin/* will 403 for everyone");
+    }
+    let server_state = ServerState::new(auth, PathBuf::from(&users_dir))
+        .with_admin_username(admin_username);
 
     // Public routes (no auth gate): /api/auth/{register,login,logout} + /api/health
     // come from `auth::routes::public_router()` and `routes::public_router()`.
     let public = auth::routes::public_router().merge(routes::public_router());
-    // Protected routes: everything that touches a Collection + /api/auth/me.
-    // The collection routes inherit the gate via `AppState`'s extractor,
+    // Phase B2: admin sub-router — gated by `require_admin` (which itself
+    // assumes `require_auth` already ran upstream). `route_layer` only
+    // applies the gate to admin routes, NOT to everything merged into
+    // `protected` afterwards.
+    let admin_routes = admin::admin_router().route_layer(
+        axum::middleware::from_fn_with_state(
+            server_state.clone(),
+            auth::middleware::require_admin,
+        ),
+    );
+    // Protected routes: everything that touches a Collection + /api/auth/me
+    // + the admin sub-router (which carries its own admin gate inside).
+    // The collection routes inherit the auth gate via `AppState`'s extractor,
     // but we still wrap them in `require_auth` so a misconfiguration can't
     // let an unauth request leak even an error from inside a handler.
     let protected = routes::router()
         .merge(auth::routes::protected_router())
+        .merge(admin_routes)
         .layer(axum::middleware::from_fn(auth::middleware::require_auth));
 
     let api = Router::new().merge(public).merge(protected);

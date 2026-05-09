@@ -47,6 +47,12 @@ pub struct CredentialsBody {
 #[derive(Debug, Serialize)]
 pub struct UserBody {
     pub username: String,
+    /// Phase B2: true when the env-configured admin username (if any)
+    /// matches `username`. The frontend uses this to decide whether to
+    /// render the `/settings` admin section. Always serialised so the
+    /// shape stays fixed across users — non-admin = `false`, no admin
+    /// configured = `false` for everyone.
+    pub is_admin: bool,
 }
 
 /// Body for `PATCH /api/auth/password`. `new` is renamed via serde so the
@@ -96,7 +102,11 @@ async fn register(
     }
     let hash = super::password::hash(&body.password)?;
     state.auth.insert_user(&username, &hash)?;
-    Ok((StatusCode::CREATED, Json(UserBody { username })))
+    let is_admin = state.is_admin(&username);
+    Ok((
+        StatusCode::CREATED,
+        Json(UserBody { username, is_admin }),
+    ))
 }
 
 async fn login(
@@ -129,6 +139,14 @@ async fn login(
         .auth
         .find_user(&username)?
         .ok_or_else(|| ServerError::unauthorized("invalid credentials"))?;
+    // Phase B2: refuse disabled accounts. Same generic "invalid
+    // credentials" message as wrong-password so a disabled user can't
+    // probe whether they exist vs. were suspended — admin disable is
+    // load-bearing security, not just UX.
+    if row.disabled_at.is_some() {
+        tracing::info!(username = %row.username, "rejecting login for disabled account");
+        return Err(ServerError::unauthorized("invalid credentials"));
+    }
     let ok = super::password::verify(&body.password, &row.password_hash)?;
     if !ok {
         return Err(ServerError::unauthorized("invalid credentials"));
@@ -143,10 +161,12 @@ async fn login(
         .insert(SESSION_USER_KEY, &row.username)
         .await
         .map_err(|e| anyhow::anyhow!("write session: {e}"))?;
+    let is_admin = state.is_admin(&row.username);
     Ok((
         StatusCode::OK,
         Json(UserBody {
             username: row.username,
+            is_admin,
         }),
     )
         .into_response())
@@ -176,10 +196,13 @@ async fn logout(session: Session) -> ApiResult<impl IntoResponse> {
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn me(user: axum::extract::Extension<AuthedUser>) -> Json<UserBody> {
-    Json(UserBody {
-        username: user.0.username().to_string(),
-    })
+async fn me(
+    State(state): State<ServerState>,
+    user: axum::extract::Extension<AuthedUser>,
+) -> Json<UserBody> {
+    let username = user.0.username().to_string();
+    let is_admin = state.is_admin(&username);
+    Json(UserBody { username, is_admin })
 }
 
 /// Self-service password change. The `require_auth` layer guarantees we

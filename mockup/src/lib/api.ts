@@ -1208,9 +1208,15 @@ export async function bulkFlag(
  * POST /api/auth/login. `username` is lowercase a-z 0-9 _ - (server
  * enforces 3..=64 chars at register/login boundary); the auth store and
  * /login page surface it as-is.
+ *
+ * Phase B2: `is_admin` is true when the env-configured admin username
+ * (server-side `ANKI_ADMIN_USERNAME`) matches `username`. The settings
+ * page uses this to gate the admin section. Always present on the wire
+ * — non-admin = `false`, admin not configured = `false` for everyone.
  */
 export interface ApiAuthMe {
     username: string;
+    is_admin: boolean;
 }
 
 /**
@@ -1291,4 +1297,66 @@ export async function postAuthChangePassword(
         current,
         new: newPassword,
     });
+}
+
+/**
+ * Phase B2: admin user-list row. Mirrors `ApiAdminUser` on the server.
+ * Password hashes never leave the server — only the metadata needed
+ * to render the admin panel.
+ *
+ * `disabled_at` is null when the account is active; a unix-seconds
+ * timestamp when an admin disabled it. Frontend renders the toggle
+ * state from this directly (no separate `is_disabled` flag).
+ */
+export interface ApiAdminUser {
+    id: number;
+    username: string;
+    created_at: number;
+    disabled_at: number | null;
+}
+
+export interface ApiAdminUserList {
+    users: ApiAdminUser[];
+}
+
+/**
+ * Phase B2: GET /api/admin/users. Requires the caller to be the admin
+ * user (server-side `ANKI_ADMIN_USERNAME`). Non-admin authed users get
+ * 403; anon callers get 401 (which the global onUnauthorized hook
+ * routes to /login). Returns every user in id-ascending order.
+ */
+export async function fetchAdminUsers(): Promise<ApiAdminUserList> {
+    return getJson<ApiAdminUserList>("/api/admin/users");
+}
+
+/**
+ * Phase B2: POST /api/admin/users/{username}/reset-password. Admin
+ * force-reset — overwrites the target user's password and invalidates
+ * every one of their persisted sessions, kicking the user off all
+ * devices in the same beat. 200 + `{ok:true}` on success. 400 if
+ * `newPassword` is empty, 404 if the user doesn't exist, 403 if the
+ * caller isn't admin.
+ */
+export async function postAdminResetPassword(
+    username: string,
+    newPassword: string,
+): Promise<ApiAuthOk> {
+    const path = `/api/admin/users/${encodeURIComponent(username)}/reset-password`;
+    return postJson<ApiAuthOk>(path, { new: newPassword });
+}
+
+/**
+ * Phase B2: POST /api/admin/users/{username}/disable. Sets or clears
+ * the user's `disabled_at`. Disabling also revokes their sessions so
+ * a captured cookie stops working immediately. Re-enabling does NOT
+ * restore sessions — the user has to log in again. 400 if the admin
+ * tries to disable themselves, 404 if the user is unknown, 403 if
+ * the caller isn't admin.
+ */
+export async function postAdminDisable(
+    username: string,
+    disabled: boolean,
+): Promise<ApiAuthOk> {
+    const path = `/api/admin/users/${encodeURIComponent(username)}/disable`;
+    return postJson<ApiAuthOk>(path, { disabled });
 }
