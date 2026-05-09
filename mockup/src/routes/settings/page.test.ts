@@ -120,37 +120,51 @@ describe("SettingsPage contract", () => {
         container.remove();
     });
 
-    function clickNav(label: string): void {
-        const btn = Array.from(
-            container.querySelectorAll<HTMLButtonElement>(".nav-item"),
-        ).find((b) => b.textContent?.trim() === label);
-        if (!btn) throw new Error(`nav-item "${label}" not found`);
+    // Phase B-test-fix-2b: nav buttons now expose `[data-testid=settings-nav-{id}]`
+    // (sketch-skin port A4-ε₂.c) — switch off textContent matching so the helper
+    // is independent of icon/svg textContent + the lowercase label render.
+    function clickNav(id: string): void {
+        const btn = container.querySelector<HTMLButtonElement>(
+            `[data-testid="settings-nav-${id}"]`,
+        );
+        if (!btn) throw new Error(`nav id "${id}" not found`);
         btn.click();
         flushSync();
     }
 
-    test("initial render: active=fsrs — h1, subtitle, active nav (weights empty until optimize)", () => {
+    test("initial render: active=fsrs — panel title, subtitle, active nav (weights empty until optimize)", () => {
         const instance = mount(Page, { target: container, props: {} });
         try {
             flushSync();
 
-            expect(container.querySelector("h1")?.textContent?.trim()).toBe(
-                "FSRS",
+            // Phase B-test-fix-2b: per-section title moved from <h1> to
+            // `[data-testid=settings-panel-title]` (an h2 inside .tx-panel)
+            // when sketch-skin landed; the page-level h1 is now "preferences".
+            // The panel title carries an inline ".tx-panel-hand" sub-span
+            // ("tune the scheduler"), so assert via toContain on the lowercase
+            // section label.
+            const panelTitle = container.querySelector(
+                '[data-testid="settings-panel-title"]',
             );
+            expect(panelTitle?.textContent?.toLowerCase()).toContain("fsrs");
+
+            // Subtitle (panel-sub) copy is now lowercase: "tune fsrs v5 to
+            // match your memory" — assert on the substring.
             expect(
-                container.querySelector(".subtitle")?.textContent,
-            ).toContain("FSRS v5");
+                container.querySelector(".tx-panel-sub")?.textContent,
+            ).toContain("fsrs v5");
 
             // Phase 9-O2 removed the 19 fake placeholder weights. Real
             // params arrive only after a successful optimize call —
             // covered in the 9-O3 wiring tests below.
-            expect(container.querySelectorAll(".w-cell").length).toBe(0);
+            expect(container.querySelectorAll(".tx-w-cell").length).toBe(0);
 
-            expect(
-                container
-                    .querySelector(".nav-item.active")
-                    ?.textContent?.trim(),
-            ).toBe("FSRS");
+            // Active nav reflects "fsrs" — read .tx-nav-label so the icon's
+            // svg textContent doesn't leak into the assertion.
+            const activeLabel = container.querySelector(
+                ".tx-nav-item-active .tx-nav-label",
+            );
+            expect(activeLabel?.textContent?.trim()).toBe("fsrs");
         } finally {
             unmount(instance);
         }
@@ -161,15 +175,16 @@ describe("SettingsPage contract", () => {
         try {
             flushSync();
 
-            clickNav("Appearance");
+            clickNav("appearance");
 
-            expect(container.querySelector("h1")?.textContent?.trim()).toBe(
-                "Appearance",
+            const panelTitle = container.querySelector(
+                '[data-testid="settings-panel-title"]',
             );
-            expect(container.querySelectorAll(".theme-opt").length).toBe(3);
+            expect(panelTitle?.textContent?.toLowerCase()).toContain("appearance");
+            expect(container.querySelectorAll(".tx-theme-opt").length).toBe(3);
             expect(
                 container.querySelectorAll(
-                    ".theme-opt input[type='radio']",
+                    ".tx-theme-opt input[type='radio']",
                 ).length,
             ).toBe(3);
         } finally {
@@ -177,19 +192,24 @@ describe("SettingsPage contract", () => {
         }
     });
 
-    test("click 'Sync' nav shows sync-status with 'Synced with your Anki server'", () => {
+    test("click 'Sync' nav shows sync-status with 'connected'", () => {
         const instance = mount(Page, { target: container, props: {} });
         try {
             flushSync();
 
-            clickNav("Sync");
+            clickNav("sync");
 
-            expect(container.querySelector("h1")?.textContent?.trim()).toBe(
-                "Sync",
+            const panelTitle = container.querySelector(
+                '[data-testid="settings-panel-title"]',
             );
+            expect(panelTitle?.textContent?.toLowerCase()).toContain("sync");
+            // Phase B-test-fix-2b: sketch-skin renamed the sync status copy
+            // from "Synced with your Anki server" to "connected" (the m4
+            // self-hosted server preview lives below in .tx-hint, but the
+            // status pill itself is the one-word label tested here).
             expect(
-                container.querySelector(".sync-label")?.textContent,
-            ).toContain("Synced with your Anki server");
+                container.querySelector(".tx-sync-label")?.textContent,
+            ).toContain("connected");
         } finally {
             unmount(instance);
         }
@@ -200,12 +220,13 @@ describe("SettingsPage contract", () => {
         try {
             flushSync();
 
-            clickNav("Profile");
+            clickNav("profile");
 
-            expect(container.querySelector("h1")?.textContent?.trim()).toBe(
-                "Profile",
+            const panelTitle = container.querySelector(
+                '[data-testid="settings-panel-title"]',
             );
-            const placeholder = container.querySelector(".placeholder");
+            expect(panelTitle?.textContent?.toLowerCase()).toContain("profile");
+            const placeholder = container.querySelector('[data-testid="settings-placeholder-card"]');
             expect(placeholder).not.toBeNull();
             expect(placeholder?.textContent).toContain("profile");
         } finally {
@@ -218,54 +239,57 @@ describe("SettingsPage contract", () => {
         try {
             flushSync();
 
+            // Phase B-test-fix-2b: read .tx-nav-label rather than the whole
+            // button so we don't pick up the icon's svg textContent. Sketch-
+            // skin renders the section labels lowercase via {s.label.toLowerCase()}.
+            // (Admin row only renders when auth.user.is_admin — auth state is
+            // not stubbed here, so the 8-base-section list applies.)
             const labels = Array.from(
-                container.querySelectorAll<HTMLButtonElement>(".nav-item"),
-            ).map((b) => b.textContent?.trim());
-            // Phase 16-B: Notetypes inserted between FSRS and Sync.
-            // Phase 20-C: Recovery inserted between Notetypes and Sync.
+                container.querySelectorAll<HTMLSpanElement>(".tx-nav-label"),
+            ).map((el) => el.textContent?.trim());
             expect(labels).toEqual([
-                "Profile",
-                "Scheduling",
-                "FSRS",
-                "Notetypes",
-                "Recovery",
-                "Sync",
-                "Appearance",
-                "Advanced",
+                "profile",
+                "scheduling",
+                "fsrs",
+                "notetypes",
+                "recovery",
+                "sync",
+                "appearance",
+                "advanced",
             ]);
         } finally {
             unmount(instance);
         }
     });
 
-    test("exactly one .nav-item.active at a time; label tracks the active section", () => {
+    test("exactly one .tx-nav-item-active at a time; label tracks the active section", () => {
         const instance = mount(Page, { target: container, props: {} });
         try {
             flushSync();
 
             expect(
-                container.querySelectorAll(".nav-item.active").length,
+                container.querySelectorAll(".tx-nav-item-active").length,
             ).toBe(1);
 
-            clickNav("Advanced");
+            clickNav("advanced");
             expect(
-                container.querySelectorAll(".nav-item.active").length,
+                container.querySelectorAll(".tx-nav-item-active").length,
             ).toBe(1);
             expect(
                 container
-                    .querySelector(".nav-item.active")
+                    .querySelector(".tx-nav-item-active .tx-nav-label")
                     ?.textContent?.trim(),
-            ).toBe("Advanced");
+            ).toBe("advanced");
 
-            clickNav("Profile");
+            clickNav("profile");
             expect(
-                container.querySelectorAll(".nav-item.active").length,
+                container.querySelectorAll(".tx-nav-item-active").length,
             ).toBe(1);
             expect(
                 container
-                    .querySelector(".nav-item.active")
+                    .querySelector(".tx-nav-item-active .tx-nav-label")
                     ?.textContent?.trim(),
-            ).toBe("Profile");
+            ).toBe("profile");
         } finally {
             unmount(instance);
         }
@@ -327,7 +351,7 @@ describe("SettingsPage FSRS wiring contract (Phase 9-N3)", () => {
             expect(slider.value).toBe("85");
 
             expect(
-                container.querySelector(".value-pill")?.textContent?.trim(),
+                container.querySelector(".tx-value-pill")?.textContent?.trim(),
             ).toBe("85%");
 
             const numInput = container.querySelector(
@@ -352,13 +376,16 @@ describe("SettingsPage FSRS wiring contract (Phase 9-N3)", () => {
         try {
             await settle();
 
-            const disclaimer = container.querySelector(".disclaimer");
+            // Phase B-test-fix-2b: sketch-skin lowercased disclaimer copy.
+            // Lives at .tx-disclaimer, prefixed with "// ". Body now reads
+            // "// editing presets directly. per-deck assignment lands in a later release."
+            const disclaimer = container.querySelector(".tx-disclaimer");
             expect(disclaimer).not.toBeNull();
             expect(disclaimer?.textContent).toContain(
-                "Editing presets directly",
+                "editing presets directly",
             );
             expect(disclaimer?.textContent).toContain(
-                "Per-deck assignment",
+                "per-deck assignment",
             );
         } finally {
             unmount(instance);
@@ -482,7 +509,7 @@ describe("SettingsPage FSRS wiring contract (Phase 9-N3)", () => {
         try {
             await settle();
 
-            expect(container.querySelector(".error-banner")).not.toBeNull();
+            expect(container.querySelector('[data-testid="settings-load-error"]')).not.toBeNull();
             expect(
                 (
                     container.querySelector(
@@ -527,7 +554,7 @@ describe("SettingsPage FSRS wiring contract (Phase 9-N3)", () => {
             slider.dispatchEvent(new Event("change", { bubbles: true }));
             await settle();
 
-            const err = container.querySelector(".field-error");
+            const err = container.querySelector(".tx-error");
             expect(err).not.toBeNull();
             expect(err?.textContent).toContain(
                 "desired_retention must be between 0.70 and 0.97",
@@ -567,7 +594,7 @@ describe("SettingsPage FSRS optimize wiring contract (Phase 9-O3)", () => {
 
     function clickReoptimize(): void {
         const btn = container.querySelector(
-            ".re-optimize",
+            '[data-testid="settings-reoptimize-btn"]',
         ) as HTMLButtonElement | null;
         if (!btn) throw new Error("re-optimize button not found");
         btn.click();
@@ -611,9 +638,11 @@ describe("SettingsPage FSRS optimize wiring contract (Phase 9-O3)", () => {
             clickReoptimize();
             await settle();
 
-            expect(container.querySelectorAll(".w-cell").length).toBe(19);
-            const hint = container.querySelector(".card-head + .hint");
-            expect(hint?.textContent).toMatch(/Trained on\s+1,234 reviews/);
+            expect(container.querySelectorAll(".tx-w-cell").length).toBe(19);
+            const hint = container.querySelector('[data-testid="settings-optimize-card"] .tx-hint');
+            // Phase B-test-fix-2b: optimize hint copy is lowercase
+            // ("trained on N reviews on Default · params updated.").
+            expect(hint?.textContent).toMatch(/trained on\s+1,234 reviews/);
         } finally {
             unmount(instance);
         }
@@ -634,11 +663,12 @@ describe("SettingsPage FSRS optimize wiring contract (Phase 9-O3)", () => {
             clickReoptimize();
             await settle();
 
-            const hint = container.querySelector(".card-head + .hint");
+            const hint = container.querySelector('[data-testid="settings-optimize-card"] .tx-hint');
+            // Phase B-test-fix-2b: lowercase "no reviews available yet — log…"
             expect(hint?.textContent).toContain(
-                "No reviews available yet",
+                "no reviews available yet",
             );
-            expect(container.querySelectorAll(".w-cell").length).toBe(0);
+            expect(container.querySelectorAll(".tx-w-cell").length).toBe(0);
         } finally {
             unmount(instance);
         }
@@ -658,7 +688,7 @@ describe("SettingsPage FSRS optimize wiring contract (Phase 9-O3)", () => {
             clickReoptimize();
             await settle();
 
-            const err = container.querySelector(".field-error");
+            const err = container.querySelector(".tx-error");
             expect(err).not.toBeNull();
             expect(err?.textContent).toContain(
                 "FSRS must be enabled before optimizing",
@@ -715,8 +745,10 @@ describe("SettingsPage FSRS optimize wiring contract (Phase 9-O3)", () => {
             expect(vi.mocked(postFsrsOptimize)).toHaveBeenCalledTimes(1);
             expect(vi.mocked(postFsrsOptimize)).toHaveBeenCalledWith(2);
             // Hint copy should mention the preset name.
-            const hint = container.querySelector(".card-head + .hint");
-            expect(hint?.textContent).toMatch(/Trained on\s+7 reviews\s+on Spanish/);
+            const hint = container.querySelector('[data-testid="settings-optimize-card"] .tx-hint');
+            // Phase B-test-fix-2b: optimize hint lowercase
+            // ("trained on 7 reviews on Spanish · params updated.").
+            expect(hint?.textContent).toMatch(/trained on\s+7 reviews\s+on Spanish/);
         } finally {
             unmount(instance);
         }
@@ -738,12 +770,12 @@ describe("SettingsPage FSRS optimize wiring contract (Phase 9-O3)", () => {
             clickReoptimize();
             await settle();
 
-            const err = container.querySelector(".field-error");
+            const err = container.querySelector(".tx-error");
             expect(err).not.toBeNull();
             expect(err?.textContent).toContain("no decks use preset");
             // No params updated on failure — weights grid stays empty
             // (defaultConf has fsrs_params=[]).
-            expect(container.querySelectorAll(".w-cell").length).toBe(0);
+            expect(container.querySelectorAll(".tx-w-cell").length).toBe(0);
         } finally {
             unmount(instance);
         }
@@ -768,18 +800,19 @@ describe("SettingsPage FSRS optimize wiring contract (Phase 9-O3)", () => {
             await settle();
 
             const btn = container.querySelector(
-                ".re-optimize",
+                '[data-testid="settings-reoptimize-btn"]',
             ) as HTMLButtonElement;
             btn.click();
             flushSync();
 
-            expect(btn.textContent?.trim()).toBe("Optimizing…");
+            // Phase B-test-fix-2b: button copy is lowercase ("optimizing…" / "re-optimize").
+            expect(btn.textContent?.trim()).toBe("optimizing…");
             expect(btn.disabled).toBe(true);
 
             resolveOptimize!({ fsrs_items: 1, params: [0.5] });
             await settle();
 
-            expect(btn.textContent?.trim()).toBe("Re-optimize");
+            expect(btn.textContent?.trim()).toBe("re-optimize");
             expect(btn.disabled).toBe(false);
         } finally {
             unmount(instance);
@@ -825,7 +858,7 @@ describe("SettingsPage FSRS params hydration contract (Phase 9-O')", () => {
 
             // No optimize click yet — weights come purely from the GET response.
             expect(vi.mocked(postFsrsOptimize)).not.toHaveBeenCalled();
-            expect(container.querySelectorAll(".w-cell").length).toBe(19);
+            expect(container.querySelectorAll(".tx-w-cell").length).toBe(19);
         } finally {
             unmount(instance);
         }
@@ -843,10 +876,14 @@ describe("SettingsPage FSRS params hydration contract (Phase 9-O')", () => {
         try {
             await settle();
 
-            const hint = container.querySelector(".card-head + .hint");
-            expect(hint?.textContent).toMatch(/Loaded.*19\s+params/);
+            const hint = container.querySelector('[data-testid="settings-optimize-card"] .tx-hint');
+            // Phase B-test-fix-2b: hint copy lowercase
+            // ("loaded N params from disk · click re-optimize to retrain…").
+            // We assert on "loaded.*19.*params" so we tolerate the new "from disk"
+            // suffix without being brittle about its exact wording.
+            expect(hint?.textContent).toMatch(/loaded\s+19\s+params/);
             // Must not lie that we just trained — that copy belongs to runOptimize.
-            expect(hint?.textContent).not.toContain("Trained on");
+            expect(hint?.textContent).not.toContain("trained on");
         } finally {
             unmount(instance);
         }
@@ -924,7 +961,7 @@ describe("SettingsPage FSRS params hydration contract (Phase 9-O')", () => {
 
             // Slider + max-interval reflect the switched preset's values.
             expect(
-                container.querySelector(".value-pill")?.textContent?.trim(),
+                container.querySelector(".tx-value-pill")?.textContent?.trim(),
             ).toBe("95%");
             const numInput = container.querySelector<HTMLInputElement>(
                 "#max-interval",
@@ -997,9 +1034,10 @@ describe("SettingsPage FSRS params hydration contract (Phase 9-O')", () => {
         try {
             await settle();
 
-            const hint = container.querySelector(".card-head + .hint");
-            expect(hint?.textContent).toContain("Click Re-optimize");
-            expect(container.querySelectorAll(".w-cell").length).toBe(0);
+            const hint = container.querySelector('[data-testid="settings-optimize-card"] .tx-hint');
+            // Phase B-test-fix-2b: lowercase "click re-optimize to fit fsrs…"
+            expect(hint?.textContent).toContain("click re-optimize");
+            expect(container.querySelectorAll(".tx-w-cell").length).toBe(0);
         } finally {
             unmount(instance);
         }
@@ -1114,7 +1152,7 @@ describe("SettingsPage FSRS params hydration contract (Phase 9-O')", () => {
                 // cap-answer-time field should now have a field-error sibling
                 // containing the server message; no other field should.
                 const allErrors = Array.from(
-                    container.querySelectorAll(".field-error"),
+                    container.querySelectorAll(".tx-error"),
                 );
                 const capErrors = allErrors.filter((e) =>
                     (e.textContent ?? "").includes("cap_answer_time_secs"),
@@ -1136,18 +1174,21 @@ describe("SettingsPage FSRS params hydration contract (Phase 9-O')", () => {
     // gets its own block — same vi.mocked + settle helpers, different
     // dispatch surface.
     describe("Phase 17-C new-card order toggle", () => {
+        // Phase B-test-fix-2b: sketch-skin renamed `.segmented`/`.segment`
+        // → `.tx-segmented`/`.tx-segment`, lowercased the labels ("due"/"random"),
+        // and replaced the active modifier `.active` with `.tx-segment-active`.
         function getSegments(root: HTMLElement): {
             due: HTMLButtonElement;
             random: HTMLButtonElement;
         } {
             const segs = Array.from(
-                root.querySelectorAll<HTMLButtonElement>(".segmented .segment"),
+                root.querySelectorAll<HTMLButtonElement>(".tx-segmented .tx-segment"),
             );
             const due = segs.find((s) =>
-                (s.textContent ?? "").trim() === "Due",
+                (s.textContent ?? "").trim() === "due",
             );
             const random = segs.find((s) =>
-                (s.textContent ?? "").trim() === "Random",
+                (s.textContent ?? "").trim() === "random",
             );
             if (!due || !random) {
                 throw new Error("segmented control buttons missing");
@@ -1165,9 +1206,9 @@ describe("SettingsPage FSRS params hydration contract (Phase 9-O')", () => {
                 await settle();
 
                 const { due, random } = getSegments(container);
-                expect(random.classList.contains("active")).toBe(true);
+                expect(random.classList.contains("tx-segment-active")).toBe(true);
                 expect(random.getAttribute("aria-checked")).toBe("true");
-                expect(due.classList.contains("active")).toBe(false);
+                expect(due.classList.contains("tx-segment-active")).toBe(false);
                 expect(due.getAttribute("aria-checked")).toBe("false");
             } finally {
                 unmount(instance);
@@ -1185,7 +1226,7 @@ describe("SettingsPage FSRS params hydration contract (Phase 9-O')", () => {
 
                 const { due, random } = getSegments(container);
                 // Default snapshot has Due active; clicking Random switches it.
-                expect(due.classList.contains("active")).toBe(true);
+                expect(due.classList.contains("tx-segment-active")).toBe(true);
                 random.dispatchEvent(new MouseEvent("click", { bubbles: true }));
                 await settle();
 
@@ -1196,8 +1237,8 @@ describe("SettingsPage FSRS params hydration contract (Phase 9-O')", () => {
 
                 // Server-echoed value drives the visible state.
                 const after = getSegments(container);
-                expect(after.random.classList.contains("active")).toBe(true);
-                expect(after.due.classList.contains("active")).toBe(false);
+                expect(after.random.classList.contains("tx-segment-active")).toBe(true);
+                expect(after.due.classList.contains("tx-segment-active")).toBe(false);
             } finally {
                 unmount(instance);
             }
@@ -1219,12 +1260,12 @@ describe("SettingsPage FSRS params hydration contract (Phase 9-O')", () => {
                 // After failure the active segment must roll back to Due
                 // (the previous state) — Random clicked but not committed.
                 const after = getSegments(container);
-                expect(after.due.classList.contains("active")).toBe(true);
-                expect(after.random.classList.contains("active")).toBe(false);
+                expect(after.due.classList.contains("tx-segment-active")).toBe(true);
+                expect(after.random.classList.contains("tx-segment-active")).toBe(false);
 
                 // Inline error surfaces the server message.
                 const errors = Array.from(
-                    container.querySelectorAll(".field-error"),
+                    container.querySelectorAll(".tx-error"),
                 );
                 const orderErrors = errors.filter((e) =>
                     (e.textContent ?? "").includes("new_card_order"),
@@ -1273,7 +1314,7 @@ describe("SettingsPage create-preset flow (Phase 12-B)", () => {
             expect(container.querySelector("#new-preset-name")).toBeNull();
 
             const newBtn = container.querySelector(
-                ".new-preset-button",
+                '[data-testid="settings-new-preset-btn"]',
             ) as HTMLButtonElement | null;
             expect(newBtn).not.toBeNull();
             newBtn?.click();
@@ -1284,14 +1325,23 @@ describe("SettingsPage create-preset flow (Phase 12-B)", () => {
                 "#new-preset-name",
             ) as HTMLInputElement | null;
             expect(input).not.toBeNull();
-            const save = container.querySelector(
-                ".save-preset-button",
-            ) as HTMLButtonElement | null;
-            const cancel = container.querySelector(
-                ".cancel-preset-button",
-            ) as HTMLButtonElement | null;
-            expect(save).not.toBeNull();
-            expect(cancel).not.toBeNull();
+            // Phase B-test-fix-2b: sketch-skin replaced .save-preset-button /
+            // .cancel-preset-button with text-driven buttons inside
+            // .tx-create-preset-row. Search inside that scope by lowercase
+            // textContent (icon + span text trims to e.g. "save").
+            const createRowBtns = Array.from(
+                container.querySelectorAll<HTMLButtonElement>(
+                    ".tx-create-preset-row .tx-btn",
+                ),
+            );
+            const save = createRowBtns.find(
+                (b) => b.textContent?.trim() === "save",
+            ) as HTMLButtonElement | undefined;
+            const cancel = createRowBtns.find(
+                (b) => b.textContent?.trim() === "cancel",
+            ) as HTMLButtonElement | undefined;
+            expect(save).toBeDefined();
+            expect(cancel).toBeDefined();
             // Save is disabled until the user types something.
             expect(save?.disabled).toBe(true);
         } finally {
@@ -1323,7 +1373,7 @@ describe("SettingsPage create-preset flow (Phase 12-B)", () => {
 
             (
                 container.querySelector(
-                    ".new-preset-button",
+                    '[data-testid="settings-new-preset-btn"]',
                 ) as HTMLButtonElement
             ).click();
             flushSync();
@@ -1337,11 +1387,16 @@ describe("SettingsPage create-preset flow (Phase 12-B)", () => {
             input.dispatchEvent(new Event("input", { bubbles: true }));
             flushSync();
 
-            (
-                container.querySelector(
-                    ".save-preset-button",
-                ) as HTMLButtonElement
-            ).click();
+            // Phase B-test-fix-2b: locate the save button by lowercase text
+            // inside the inline create row (sketch-skin removed the
+            // .save-preset-button class).
+            (Array.from(
+                container.querySelectorAll<HTMLButtonElement>(
+                    ".tx-create-preset-row .tx-btn",
+                ),
+            ).find(
+                (b) => b.textContent?.trim() === "save",
+            ) as HTMLButtonElement).click();
             await settle();
 
             expect(vi.mocked(postDeckConfig)).toHaveBeenCalledTimes(1);
@@ -1363,7 +1418,7 @@ describe("SettingsPage create-preset flow (Phase 12-B)", () => {
             // Form collapses back to button-only state.
             expect(container.querySelector("#new-preset-name")).toBeNull();
             expect(
-                container.querySelector(".new-preset-button"),
+                container.querySelector('[data-testid="settings-new-preset-btn"]'),
             ).not.toBeNull();
         } finally {
             unmount(instance);
@@ -1381,7 +1436,7 @@ describe("SettingsPage create-preset flow (Phase 12-B)", () => {
 
             (
                 container.querySelector(
-                    ".new-preset-button",
+                    '[data-testid="settings-new-preset-btn"]',
                 ) as HTMLButtonElement
             ).click();
             flushSync();
@@ -1393,17 +1448,22 @@ describe("SettingsPage create-preset flow (Phase 12-B)", () => {
             input.dispatchEvent(new Event("input", { bubbles: true }));
             flushSync();
 
-            (
-                container.querySelector(
-                    ".save-preset-button",
-                ) as HTMLButtonElement
-            ).click();
+            // Phase B-test-fix-2b: locate the save button by lowercase text
+            // inside the inline create row (sketch-skin removed the
+            // .save-preset-button class).
+            (Array.from(
+                container.querySelectorAll<HTMLButtonElement>(
+                    ".tx-create-preset-row .tx-btn",
+                ),
+            ).find(
+                (b) => b.textContent?.trim() === "save",
+            ) as HTMLButtonElement).click();
             await settle();
 
             // Form stays open; error surfaces in field-error.
             expect(container.querySelector("#new-preset-name")).not.toBeNull();
             const errors = Array.from(
-                container.querySelectorAll(".field-error"),
+                container.querySelectorAll(".tx-error"),
             ).map((e) => e.textContent ?? "");
             expect(
                 errors.some((t) => t.includes("preset name already exists")),
@@ -1457,7 +1517,7 @@ describe("SettingsPage delete-preset flow (Phase 13-B)", () => {
             await settle();
 
             expect(
-                container.querySelector(".delete-preset-button"),
+                container.querySelector('[data-testid="settings-delete-preset-btn"]'),
             ).toBeNull();
         } finally {
             unmount(instance);
@@ -1491,7 +1551,7 @@ describe("SettingsPage delete-preset flow (Phase 13-B)", () => {
             await settle();
 
             const delBtn = container.querySelector(
-                ".delete-preset-button",
+                '[data-testid="settings-delete-preset-btn"]',
             ) as HTMLButtonElement | null;
             expect(delBtn).not.toBeNull();
             delBtn?.click();
@@ -1536,7 +1596,7 @@ describe("SettingsPage delete-preset flow (Phase 13-B)", () => {
 
             (
                 container.querySelector(
-                    ".delete-preset-button",
+                    '[data-testid="settings-delete-preset-btn"]',
                 ) as HTMLButtonElement
             ).click();
             await settle();
@@ -1580,7 +1640,7 @@ describe("SettingsPage delete-preset flow (Phase 13-B)", () => {
 
             (
                 container.querySelector(
-                    ".delete-preset-button",
+                    '[data-testid="settings-delete-preset-btn"]',
                 ) as HTMLButtonElement
             ).click();
             await settle();
@@ -1588,7 +1648,7 @@ describe("SettingsPage delete-preset flow (Phase 13-B)", () => {
             // Error surfaces in field-error inside .preset-row; selection
             // stays on Languages so the user can retry.
             const errors = Array.from(
-                container.querySelectorAll(".field-error"),
+                container.querySelectorAll(".tx-error"),
             ).map((e) => e.textContent ?? "");
             expect(
                 errors.some((t) => t.includes("404")),
@@ -1629,7 +1689,7 @@ describe("SettingsPage FSRS health-check toggle (Phase 15-B)", () => {
 
     function healthCheckBox(): HTMLInputElement {
         const input = container.querySelector<HTMLInputElement>(
-            ".health-toggle input[type='checkbox']",
+            ".tx-health-toggle input[type='checkbox']",
         );
         if (!input) throw new Error("health-toggle checkbox not found");
         return input;
@@ -1670,7 +1730,7 @@ describe("SettingsPage FSRS health-check toggle (Phase 15-B)", () => {
             expect(healthCheckBox().checked).toBe(true);
             // No error banner on the happy path.
             expect(
-                Array.from(container.querySelectorAll(".field-error")).some(
+                Array.from(container.querySelectorAll(".tx-error")).some(
                     (e) => e.textContent?.includes("health-check"),
                 ),
             ).toBe(false);
@@ -1699,7 +1759,7 @@ describe("SettingsPage FSRS health-check toggle (Phase 15-B)", () => {
             // server still has — the user retries with eyes open.
             expect(healthCheckBox().checked).toBe(false);
             const errors = Array.from(
-                container.querySelectorAll(".field-error"),
+                container.querySelectorAll(".tx-error"),
             ).map((e) => e.textContent ?? "");
             expect(errors.some((t) => t.includes("collection locked"))).toBe(true);
         } finally {
@@ -1750,10 +1810,12 @@ describe("SettingsPage notetypes rename (Phase 16-B)", () => {
     });
 
     function clickNotetypesTab(): void {
-        const tab = Array.from(
-            container.querySelectorAll<HTMLButtonElement>(".nav-item"),
-        ).find((b) => b.textContent?.trim() === "Notetypes");
-        expect(tab, "Notetypes nav button must render").toBeDefined();
+        // Phase B-test-fix-2b: switch to the testid surface so we don't
+        // depend on icon textContent or the lowercase label render.
+        const tab = container.querySelector<HTMLButtonElement>(
+            '[data-testid="settings-nav-notetypes"]',
+        );
+        expect(tab, "Notetypes nav button must render").not.toBeNull();
         tab!.click();
     }
 
@@ -1772,12 +1834,12 @@ describe("SettingsPage notetypes rename (Phase 16-B)", () => {
             await settle();
 
             expect(vi.mocked(fetchNotetypes)).toHaveBeenCalledTimes(1);
-            const rows = container.querySelectorAll(".nt-row");
+            const rows = container.querySelectorAll(".tx-nt-row");
             expect(rows.length).toBe(3);
             // Names rendered in server-returned order (server already
             // sorts by lower(name) ascending).
             const names = Array.from(rows).map(
-                (r) => r.querySelector(".nt-name")?.textContent?.trim(),
+                (r) => r.querySelector(".tx-nt-name")?.textContent?.trim(),
             );
             expect(names).toEqual([
                 "Basic",
@@ -1786,7 +1848,7 @@ describe("SettingsPage notetypes rename (Phase 16-B)", () => {
             ]);
             // Field count meta line: "2 fields".
             const metas = Array.from(rows).map(
-                (r) => r.querySelector(".nt-meta")?.textContent?.trim(),
+                (r) => r.querySelector(".tx-nt-meta")?.textContent?.trim(),
             );
             expect(metas[0]).toBe("2 fields");
             // Idempotent re-click does NOT refetch.
@@ -1818,16 +1880,16 @@ describe("SettingsPage notetypes rename (Phase 16-B)", () => {
             await settle();
 
             // Click first row's "Rename" button.
-            const firstRow = container.querySelector(".nt-row")!;
+            const firstRow = container.querySelector(".tx-nt-row")!;
             const renameBtn = Array.from(
-                firstRow.querySelectorAll<HTMLButtonElement>(".ghost-btn"),
-            ).find((b) => b.textContent?.trim() === "Rename");
+                firstRow.querySelectorAll<HTMLButtonElement>(".tx-btn"),
+            ).find((b) => b.textContent?.trim() === "rename");
             expect(renameBtn).toBeDefined();
             renameBtn!.click();
             await settle();
 
             // Inline input rendered, seeded with current name.
-            const input = firstRow.querySelector<HTMLInputElement>(".nt-input");
+            const input = firstRow.querySelector<HTMLInputElement>(".tx-nt-input");
             expect(input).not.toBeNull();
             // Type new name with surrounding whitespace — server-side
             // trim is the source of truth so commit must pass through
@@ -1838,8 +1900,8 @@ describe("SettingsPage notetypes rename (Phase 16-B)", () => {
 
             // Click Save.
             const saveBtn = Array.from(
-                firstRow.querySelectorAll<HTMLButtonElement>(".ghost-btn"),
-            ).find((b) => b.textContent?.trim() === "Save");
+                firstRow.querySelectorAll<HTMLButtonElement>(".tx-btn"),
+            ).find((b) => b.textContent?.trim() === "save");
             expect(saveBtn).toBeDefined();
             saveBtn!.click();
             await settle();
@@ -1856,12 +1918,12 @@ describe("SettingsPage notetypes rename (Phase 16-B)", () => {
             // Row reflects the server-canonical name (NOT the request
             // input — could differ if server normalisation added a
             // suffix in the future).
-            const updatedRow = container.querySelector(".nt-row")!;
+            const updatedRow = container.querySelector(".tx-nt-row")!;
             expect(
-                updatedRow.querySelector(".nt-name")?.textContent?.trim(),
+                updatedRow.querySelector(".tx-nt-name")?.textContent?.trim(),
             ).toBe("Basic Renamed");
             // Edit mode dismissed.
-            expect(updatedRow.querySelector(".nt-input")).toBeNull();
+            expect(updatedRow.querySelector(".tx-nt-input")).toBeNull();
         } finally {
             unmount(instance);
         }
@@ -1879,23 +1941,23 @@ describe("SettingsPage notetypes rename (Phase 16-B)", () => {
             clickNotetypesTab();
             await settle();
 
-            const firstRow = container.querySelector(".nt-row")!;
+            const firstRow = container.querySelector(".tx-nt-row")!;
             (
                 Array.from(
-                    firstRow.querySelectorAll<HTMLButtonElement>(".ghost-btn"),
-                ).find((b) => b.textContent?.trim() === "Rename")!
+                    firstRow.querySelectorAll<HTMLButtonElement>(".tx-btn"),
+                ).find((b) => b.textContent?.trim() === "rename")!
             ).click();
             await settle();
 
-            const input = firstRow.querySelector<HTMLInputElement>(".nt-input")!;
+            const input = firstRow.querySelector<HTMLInputElement>(".tx-nt-input")!;
             input.value = "x".repeat(101);
             input.dispatchEvent(new Event("input", { bubbles: true }));
             flushSync();
 
             (
                 Array.from(
-                    firstRow.querySelectorAll<HTMLButtonElement>(".ghost-btn"),
-                ).find((b) => b.textContent?.trim() === "Save")!
+                    firstRow.querySelectorAll<HTMLButtonElement>(".tx-btn"),
+                ).find((b) => b.textContent?.trim() === "save")!
             ).click();
             await settle();
 
@@ -1903,14 +1965,14 @@ describe("SettingsPage notetypes rename (Phase 16-B)", () => {
             // Inline error surfaces (NOT the global page banner — this is
             // a per-row mutation, not a load-time failure).
             const errors = Array.from(
-                container.querySelectorAll(".field-error"),
+                container.querySelectorAll(".tx-error"),
             ).map((e) => e.textContent ?? "");
             expect(
                 errors.some((t) => t.includes("at most 100 characters")),
             ).toBe(true);
             // Still in edit mode so the user can shorten the name and
             // retry without re-clicking Rename.
-            expect(firstRow.querySelector(".nt-input")).not.toBeNull();
+            expect(firstRow.querySelector(".tx-nt-input")).not.toBeNull();
         } finally {
             unmount(instance);
         }
@@ -1954,22 +2016,22 @@ describe("SettingsPage notetypes add field (Phase 19-B)", () => {
     });
 
     function clickNotetypesTab(): void {
-        const tab = Array.from(
-            container.querySelectorAll<HTMLButtonElement>(".nav-item"),
-        ).find((b) => b.textContent?.trim() === "Notetypes");
-        expect(tab).toBeDefined();
+        const tab = container.querySelector<HTMLButtonElement>(
+            '[data-testid="settings-nav-notetypes"]',
+        );
+        expect(tab).not.toBeNull();
         tab!.click();
     }
 
     function firstNotetypeRow(): HTMLLIElement {
-        const row = container.querySelector<HTMLLIElement>(".nt-row");
+        const row = container.querySelector<HTMLLIElement>(".tx-nt-row");
         if (!row) throw new Error(".nt-row not found — load fetchNotetypes?");
         return row;
     }
 
     function expandFirstRow(): void {
         const disclose = firstNotetypeRow().querySelector<HTMLButtonElement>(
-            ".nt-disclose",
+            ".tx-nt-disclose",
         );
         if (!disclose) throw new Error(".nt-disclose missing");
         disclose.click();
@@ -1990,23 +2052,23 @@ describe("SettingsPage notetypes add field (Phase 19-B)", () => {
 
             // Pre-expansion: no fields lists rendered.
             expect(
-                container.querySelectorAll(".nt-fields-list").length,
+                container.querySelectorAll(".tx-nt-fields-list").length,
             ).toBe(0);
 
             expandFirstRow();
             flushSync();
 
             // Only the first row's fields list shows.
-            const lists = container.querySelectorAll(".nt-fields-list");
+            const lists = container.querySelectorAll(".tx-nt-fields-list");
             expect(lists.length).toBe(1);
-            const items = lists[0]!.querySelectorAll(".nt-field-row");
+            const items = lists[0]!.querySelectorAll(".tx-nt-field-row");
             expect(items.length).toBe(2);
             const fieldNames = Array.from(items).map(
-                (li) => li.querySelector(".nt-field-name")?.textContent?.trim(),
+                (li) => li.querySelector(".tx-nt-field-name")?.textContent?.trim(),
             );
             expect(fieldNames).toEqual(["Front", "Back"]);
             // The "+ New field" button shows on the expanded row only.
-            const addBtns = container.querySelectorAll(".nt-add-btn");
+            const addBtns = container.querySelectorAll(".tx-nt-add-btn");
             expect(addBtns.length).toBe(1);
         } finally {
             unmount(instance);
@@ -2035,7 +2097,7 @@ describe("SettingsPage notetypes add field (Phase 19-B)", () => {
 
             // Open the inline + New field form.
             const addBtn = container.querySelector<HTMLButtonElement>(
-                ".nt-add-btn",
+                ".tx-nt-add-btn",
             );
             addBtn!.click();
             flushSync();
@@ -2045,7 +2107,7 @@ describe("SettingsPage notetypes add field (Phase 19-B)", () => {
             // off and the field-add UI is on; the field-add input is
             // the one inside `.nt-field-add`.
             const input = firstRow.querySelector<HTMLInputElement>(
-                ".nt-field-add .nt-input",
+                ".tx-nt-field-add .tx-nt-input",
             );
             expect(input, "nt-field-add input must render").not.toBeNull();
             input!.value = "  Phase19BTest  ";
@@ -2055,7 +2117,7 @@ describe("SettingsPage notetypes add field (Phase 19-B)", () => {
             // Click Add (the button inside .nt-field-add — Cancel is
             // the second button, Add is the first).
             const addCommit = firstRow.querySelector<HTMLButtonElement>(
-                ".nt-field-add .ghost-btn",
+                ".tx-nt-field-add .tx-btn-ghost",
             );
             addCommit!.click();
             await settle();
@@ -2070,14 +2132,14 @@ describe("SettingsPage notetypes add field (Phase 19-B)", () => {
 
             // Field count meta updated to "3 fields" without a
             // refetch.
-            const meta = firstRow.querySelector(".nt-meta")?.textContent?.trim();
+            const meta = firstRow.querySelector(".tx-nt-meta")?.textContent?.trim();
             expect(meta).toBe("3 fields");
             // Re-expand should still be open; new field appears in the
             // list (post-mutation re-render kept the disclosure open).
-            const listItems = firstRow.querySelectorAll(".nt-field-row");
+            const listItems = firstRow.querySelectorAll(".tx-nt-field-row");
             expect(listItems.length).toBe(3);
             expect(
-                listItems[2]?.querySelector(".nt-field-name")?.textContent
+                listItems[2]?.querySelector(".tx-nt-field-name")?.textContent
                     ?.trim(),
             ).toBe("Phase19BTest");
         } finally {
@@ -2099,27 +2161,27 @@ describe("SettingsPage notetypes add field (Phase 19-B)", () => {
             expandFirstRow();
             flushSync();
             container
-                .querySelector<HTMLButtonElement>(".nt-add-btn")!
+                .querySelector<HTMLButtonElement>(".tx-nt-add-btn")!
                 .click();
             flushSync();
 
             const firstRow = firstNotetypeRow();
             const input = firstRow.querySelector<HTMLInputElement>(
-                ".nt-field-add .nt-input",
+                ".tx-nt-field-add .tx-nt-input",
             );
             input!.value = "Front";
             input!.dispatchEvent(new Event("input", { bubbles: true }));
             flushSync();
 
             firstRow
-                .querySelector<HTMLButtonElement>(".nt-field-add .ghost-btn")!
+                .querySelector<HTMLButtonElement>(".tx-nt-field-add .tx-btn-ghost")!
                 .click();
             await settle();
 
             // Inline error scoped to the row — assertion is on the row's
             // `.field-error`, NOT a global banner.
             const rowErrors = Array.from(
-                firstRow.querySelectorAll(".field-error"),
+                firstRow.querySelectorAll(".tx-error"),
             ).map((e) => e.textContent ?? "");
             expect(rowErrors.some((t) => t.includes("already exists"))).toBe(
                 true,
@@ -2129,11 +2191,11 @@ describe("SettingsPage notetypes add field (Phase 19-B)", () => {
             // error (would lose the user's typed content for a server
             // hiccup that may be transient).
             expect(
-                firstRow.querySelector(".nt-field-add .nt-input"),
+                firstRow.querySelector(".tx-nt-field-add .tx-nt-input"),
             ).not.toBeNull();
             // Row's persisted field count unchanged on the rejected add.
             const meta = firstRow
-                .querySelector(".nt-meta")
+                .querySelector(".tx-nt-meta")
                 ?.textContent?.trim();
             expect(meta).toBe("2 fields");
         } finally {
@@ -2183,16 +2245,16 @@ describe("SettingsPage notetypes delete field (Phase 19-C)", () => {
     });
 
     function clickNotetypesTab(): void {
-        const tab = Array.from(
-            container.querySelectorAll<HTMLButtonElement>(".nav-item"),
-        ).find((b) => b.textContent?.trim() === "Notetypes");
-        expect(tab).toBeDefined();
+        const tab = container.querySelector<HTMLButtonElement>(
+            '[data-testid="settings-nav-notetypes"]',
+        );
+        expect(tab).not.toBeNull();
         tab!.click();
     }
 
     function expandFirstRow(): void {
         const disclose = container.querySelector<HTMLButtonElement>(
-            ".nt-disclose",
+            ".tx-nt-disclose",
         );
         if (!disclose) throw new Error(".nt-disclose missing");
         disclose.click();
@@ -2221,7 +2283,7 @@ describe("SettingsPage notetypes delete field (Phase 19-C)", () => {
             // Three field rows render, each with a ✕ button enabled
             // (count > 1 so the last-field guard doesn't disable any).
             const xButtons = container.querySelectorAll<HTMLButtonElement>(
-                ".nt-field-x",
+                ".tx-nt-field-x",
             );
             expect(xButtons.length).toBe(3);
             expect(xButtons[2]?.disabled).toBe(false);
@@ -2231,17 +2293,18 @@ describe("SettingsPage notetypes delete field (Phase 19-C)", () => {
             xButtons[2]!.click();
             flushSync();
 
-            const fieldRows = container.querySelectorAll(".nt-field-row");
+            const fieldRows = container.querySelectorAll(".tx-nt-field-row");
             const targetRow = fieldRows[2]!;
-            // Row now shows a "Delete field?" prompt + Confirm + Cancel.
+            // Row now shows a "delete field?" prompt + confirm + cancel.
+            // Phase B-test-fix-2b: sketch-skin lowercased the prompt copy.
             expect(
                 targetRow
-                    .querySelector(".nt-field-confirm")
+                    .querySelector(".tx-nt-field-confirm")
                     ?.textContent?.trim(),
-            ).toBe("Delete field?");
+            ).toBe("delete field?");
             const confirmBtn = Array.from(
-                targetRow.querySelectorAll<HTMLButtonElement>(".ghost-btn"),
-            ).find((b) => b.textContent?.trim().startsWith("Confirm"));
+                targetRow.querySelectorAll<HTMLButtonElement>(".tx-btn"),
+            ).find((b) => b.textContent?.trim().startsWith("confirm"));
             expect(confirmBtn).toBeDefined();
 
             confirmBtn!.click();
@@ -2255,9 +2318,9 @@ describe("SettingsPage notetypes delete field (Phase 19-C)", () => {
             // Field count meta updates to "2 fields" without a refetch
             // and the Confirm/Cancel pair clears (pendingDelete reset).
             expect(
-                container.querySelector(".nt-meta")?.textContent?.trim(),
+                container.querySelector(".tx-nt-meta")?.textContent?.trim(),
             ).toBe("2 fields");
-            expect(container.querySelector(".nt-field-confirm")).toBeNull();
+            expect(container.querySelector(".tx-nt-field-confirm")).toBeNull();
         } finally {
             unmount(instance);
         }
@@ -2281,7 +2344,7 @@ describe("SettingsPage notetypes delete field (Phase 19-C)", () => {
             flushSync();
 
             const xButtons = container.querySelectorAll<HTMLButtonElement>(
-                ".nt-field-x",
+                ".tx-nt-field-x",
             );
             expect(xButtons.length).toBe(1);
             expect(xButtons[0]?.disabled).toBe(true);
@@ -2310,27 +2373,27 @@ describe("SettingsPage notetypes delete field (Phase 19-C)", () => {
             flushSync();
 
             container
-                .querySelectorAll<HTMLButtonElement>(".nt-field-x")[2]!
+                .querySelectorAll<HTMLButtonElement>(".tx-nt-field-x")[2]!
                 .click();
             flushSync();
 
             // Click Cancel (second .ghost-btn inside the confirm row —
             // the first is "Confirm").
-            const fieldRows = container.querySelectorAll(".nt-field-row");
+            const fieldRows = container.querySelectorAll(".tx-nt-field-row");
             const cancelBtn = Array.from(
-                fieldRows[2]!.querySelectorAll<HTMLButtonElement>(".ghost-btn"),
-            ).find((b) => b.textContent?.trim() === "Cancel");
+                fieldRows[2]!.querySelectorAll<HTMLButtonElement>(".tx-btn"),
+            ).find((b) => b.textContent?.trim() === "cancel");
             expect(cancelBtn).toBeDefined();
             cancelBtn!.click();
             flushSync();
 
             expect(vi.mocked(deleteNotetypeField)).not.toHaveBeenCalled();
             // Confirm UI gone, ✕ back, field count unchanged.
-            expect(container.querySelector(".nt-field-confirm")).toBeNull();
-            const xs = container.querySelectorAll(".nt-field-x");
+            expect(container.querySelector(".tx-nt-field-confirm")).toBeNull();
+            const xs = container.querySelectorAll(".tx-nt-field-x");
             expect(xs.length).toBe(3);
             expect(
-                container.querySelector(".nt-meta")?.textContent?.trim(),
+                container.querySelector(".tx-nt-meta")?.textContent?.trim(),
             ).toBe("3 fields");
         } finally {
             unmount(instance);
@@ -2380,9 +2443,10 @@ describe("SettingsPage burn-recovery (Phase 20-C)", () => {
     });
 
     function clickRecoveryTab(): void {
-        const tab = Array.from(
-            container.querySelectorAll<HTMLButtonElement>(".nav-item"),
-        ).find((b) => b.textContent?.trim() === "Recovery");
+        // Phase B-test-fix-2b: testid surface, same reason as Notetypes tab.
+        const tab = container.querySelector<HTMLButtonElement>(
+            '[data-testid="settings-nav-recovery"]',
+        );
         if (!tab) throw new Error("Recovery nav-item not found");
         tab.click();
         flushSync();
@@ -2397,8 +2461,8 @@ describe("SettingsPage burn-recovery (Phase 20-C)", () => {
         input.dispatchEvent(new Event("input", { bubbles: true }));
         flushSync();
         const lookupBtn = Array.from(
-            container.querySelectorAll<HTMLButtonElement>(".ghost-btn"),
-        ).find((b) => b.textContent?.trim().startsWith("Look up"));
+            container.querySelectorAll<HTMLButtonElement>(".tx-btn"),
+        ).find((b) => b.textContent?.trim().startsWith("look up"));
         if (!lookupBtn) throw new Error("Look up button missing");
         lookupBtn.click();
         await settle();
@@ -2506,14 +2570,15 @@ describe("SettingsPage burn-recovery (Phase 20-C)", () => {
             expect(
                 container.querySelector('[data-test="recovery-cancel-btn"]'),
             ).not.toBeNull();
-            // The "Reset to new?" inline prompt must be visible while
+            // The "reset to new?" inline prompt must be visible while
             // the confirm is armed — keeps the destructive intent
             // explicit instead of relying on color alone.
+            // Phase B-test-fix-2b: sketch-skin lowercased the prompt copy.
             expect(
                 container
                     .querySelector('[data-test="recovery-confirm-prompt"]')
                     ?.textContent?.trim(),
-            ).toBe("Reset to new?");
+            ).toBe("reset to new?");
 
             // Second click — Confirm — fires the destructive call.
             const confirmBtn = container.querySelector<HTMLButtonElement>(
