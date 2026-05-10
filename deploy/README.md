@@ -20,7 +20,46 @@ The artifacts live at the repo root:
 | `Caddyfile`         | TLS + basic_auth + reverse_proxy → ferdinand:40001   |
 | `docker-compose.yml`| Orchestrates `ferdinand` + `caddy`                   |
 | `.dockerignore`     | Trims build context (no target/, node_modules/, etc) |
+| `.env.example`      | Documents every compose env var (copy to `.env`)     |
+| `deploy/scripts/`   | Idempotent bootstrap / backup / restore / verify     |
 | `deploy/README.md`  | This file                                            |
+
+## Quick Start (one-shot)
+
+For a fresh Ubuntu 22.04/24.04 VPS with DNS already pointed at the box, the
+three-script path is:
+
+```bash
+# 1. Bootstrap fresh VPS (run as root). Installs apt deps, ufw rules,
+#    Docker CE + compose plugin, the `ferdinand` system user, and clones
+#    the repo into /opt/ferdinand. Idempotent — safe to re-run.
+bash <(curl -sSL https://raw.githubusercontent.com/ktwu1997/Ferdinand/main/deploy/scripts/bootstrap-vps.sh)
+
+# 2. Configure environment. Interactive: prompts for domain, basic_auth
+#    user/pass, admin username, import cap. Auto-generates the session key
+#    and bcrypts the basic_auth password. Writes /opt/ferdinand/.env (chmod
+#    600). Existing .env is backed up to .env.bak.<timestamp> first.
+cd /opt/ferdinand && bash deploy/scripts/init-env.sh
+
+# 3. Start the stack and run health checks (TLS reachable, services Up,
+#    cert issued).
+docker compose up -d && bash deploy/scripts/verify.sh
+```
+
+For the daily backup cron, see `deploy/scripts/backup.sh`. To restore from a
+tarball, see `deploy/scripts/restore.sh <archive>`.
+
+If anything in the one-shot path fails, fall back to the **Manual SOP**
+section below for the same steps broken out command-by-command.
+
+## Manual SOP
+
+The remainder of this document is the manual, fully-explained step list. Use
+it when:
+
+- Debugging a Quick-Start failure
+- Customizing the install (non-default repo path, alternate user, etc.)
+- Reading what the scripts under `deploy/scripts/` actually do
 
 ## Static-asset serving choice
 
