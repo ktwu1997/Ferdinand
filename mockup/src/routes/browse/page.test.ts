@@ -144,11 +144,20 @@ const SEARCH_DEBOUNCE_MS = 200;
 
 function setSearch(root: HTMLElement, value: string): void {
     const input = root.querySelector<HTMLInputElement>(
-        '.toolbar input[type="search"]',
+        '.bx-toolbar input[type="search"]',
     );
     if (!input) throw new Error("search input not found");
     input.value = value;
     input.dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
+    // Phase A4-ζ: the toolbar buffers `pendingInput` until Enter or an
+    // auto-commit boundary (closing quote / trailing space). For test
+    // purposes we always commit by simulating Enter so the committed
+    // `query` state reflects the typed value verbatim — this matches
+    // pre-ζ behavior where a single bound input drove the query.
+    input.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+    );
     flushSync();
 }
 
@@ -224,8 +233,8 @@ describe("BrowsePage contract", () => {
 
             // Skeleton is a <div class="row" aria-hidden="true">.
             // BrowseRow is a <button class="row">. Disjoint selectors.
-            const skeletons = container.querySelectorAll(".list div.row");
-            const rows = container.querySelectorAll(".list button.row");
+            const skeletons = container.querySelectorAll(".bx-table-body div.row");
+            const rows = container.querySelectorAll(".bx-table-body button.bx-row-btn");
             expect(skeletons.length).toBe(5);
             expect(rows.length).toBe(0);
         } finally {
@@ -244,13 +253,13 @@ describe("BrowsePage contract", () => {
             // Phase 11-C: PAGE_SIZE=50, initial offset=0.
             expect(vi.mocked(fetchCards)).toHaveBeenCalledWith("", 50, 0);
 
-            expect(container.querySelectorAll(".list div.row").length).toBe(0);
-            expect(container.querySelectorAll(".list button.row").length).toBe(
+            expect(container.querySelectorAll(".bx-table-body div.row").length).toBe(0);
+            expect(container.querySelectorAll(".bx-table-body button.bx-row-btn").length).toBe(
                 3,
             );
 
             expect(
-                container.querySelector(".count-tag")?.textContent?.trim(),
+                container.querySelector(".bx-toolbar-count")?.textContent?.trim(),
             ).toBe("1–3 of 3");
         } finally {
             unmount(instance);
@@ -270,11 +279,11 @@ describe("BrowsePage contract", () => {
 
             // fakeCards length is 8 at time of writing — computed, not
             // hardcoded, so fixture edits flow through automatically.
-            expect(container.querySelectorAll(".list button.row").length).toBe(
+            expect(container.querySelectorAll(".bx-table-body button.bx-row-btn").length).toBe(
                 fakeCards.length,
             );
             expect(
-                container.querySelector(".count-tag")?.textContent?.trim(),
+                container.querySelector(".bx-toolbar-count")?.textContent?.trim(),
             ).toBe(`${fakeCards.length} of ${fakeCards.length}`);
         } finally {
             unmount(instance);
@@ -290,19 +299,19 @@ describe("BrowsePage contract", () => {
 
             // Phase 11-C: empty-query state shows server page range.
             expect(
-                container.querySelector(".count-tag")?.textContent?.trim(),
+                container.querySelector(".bx-toolbar-count")?.textContent?.trim(),
             ).toBe("1–3 of 3");
 
             setSearch(container, "gato");
 
-            expect(container.querySelectorAll(".list button.row").length).toBe(
+            expect(container.querySelectorAll(".bx-table-body button.bx-row-btn").length).toBe(
                 1,
             );
             // Search-active state shows filtered-of-page so the user sees
             // "how many of THIS page match" — page-range only makes sense
             // when the full page is on display.
             expect(
-                container.querySelector(".count-tag")?.textContent?.trim(),
+                container.querySelector(".bx-toolbar-count")?.textContent?.trim(),
             ).toBe("1 of 3");
         } finally {
             unmount(instance);
@@ -318,21 +327,21 @@ describe("BrowsePage contract", () => {
 
             setSearch(container, "definitely-no-match-xyzzy");
 
-            const emptyTitle = container.querySelector(".empty-title");
+            const emptyTitle = container.querySelector(".bx-empty-title");
             expect(emptyTitle).not.toBeNull();
-            expect(emptyTitle?.textContent).toContain("No cards match");
-            expect(container.querySelectorAll(".list button.row").length).toBe(
+            expect(emptyTitle?.textContent).toContain("no cards match");
+            expect(container.querySelectorAll(".bx-table-body button.bx-row-btn").length).toBe(
                 0,
             );
 
             const clearBtn =
-                container.querySelector<HTMLButtonElement>(".empty-action");
-            if (!clearBtn) throw new Error(".empty-action button missing");
+                container.querySelector<HTMLButtonElement>(".bx-empty-action");
+            if (!clearBtn) throw new Error(".bx-empty-action button missing");
             clearBtn.click();
             flushSync();
 
-            expect(container.querySelector(".empty-title")).toBeNull();
-            expect(container.querySelectorAll(".list button.row").length).toBe(
+            expect(container.querySelector(".bx-empty-title")).toBeNull();
+            expect(container.querySelectorAll(".bx-table-body button.bx-row-btn").length).toBe(
                 3,
             );
         } finally {
@@ -349,31 +358,33 @@ describe("BrowsePage contract", () => {
 
             const titles = Array.from(
                 container.querySelectorAll<HTMLButtonElement>(
-                    ".tree .section-title",
+                    ".bx-sidebar .bx-section-title",
                 ),
             );
             const decksTitle = titles.find((t) =>
-                t.textContent?.includes("Decks"),
+                t.textContent?.includes("decks"),
             );
             if (!decksTitle) throw new Error("Decks section-title not found");
 
-            // All 3 sections open by default (decks/tags/saved).
+            // 4 .bx-section-body elements visible by default: decks/tags/
+            // saved (each gated on its toggle, all open by default) plus
+            // state (always rendered, no collapse).
             const baseline = container.querySelectorAll(
-                ".tree .section-items",
+                ".bx-sidebar .bx-section-body",
             ).length;
-            expect(baseline).toBe(3);
+            expect(baseline).toBe(4);
 
             decksTitle.click();
             flushSync();
             const afterCollapse = container.querySelectorAll(
-                ".tree .section-items",
+                ".bx-sidebar .bx-section-body",
             ).length;
             expect(afterCollapse).toBe(baseline - 1);
 
             decksTitle.click();
             flushSync();
             const afterExpand = container.querySelectorAll(
-                ".tree .section-items",
+                ".bx-sidebar .bx-section-body",
             ).length;
             expect(afterExpand).toBe(baseline);
         } finally {
@@ -650,13 +661,13 @@ describe("BrowsePage contract", () => {
     describe("Phase 9-S tree sidebar", () => {
         function treeDeckButtons(root: HTMLElement): HTMLButtonElement[] {
             const decksTitle = Array.from(
-                root.querySelectorAll<HTMLButtonElement>(".tree .section-title"),
-            ).find((t) => t.textContent?.includes("Decks"));
+                root.querySelectorAll<HTMLButtonElement>(".bx-sidebar .bx-section-title"),
+            ).find((t) => t.textContent?.includes("decks"));
             if (!decksTitle) throw new Error("Decks section-title not found");
-            const section = decksTitle.closest(".section");
+            const section = decksTitle.closest(".bx-section");
             if (!section) throw new Error("Decks section container missing");
             return Array.from(
-                section.querySelectorAll<HTMLButtonElement>(".section-items .item"),
+                section.querySelectorAll<HTMLButtonElement>(".bx-section-body .bx-deck-btn"),
             );
         }
 
@@ -720,11 +731,13 @@ describe("BrowsePage contract", () => {
                 );
                 await settle();
 
-                const search = container.querySelector<HTMLInputElement>(
-                    '.toolbar input[type="search"]',
-                );
-                if (!search) throw new Error("search input not found");
-                expect(search.value).toBe('deck:"Sesame Street English"');
+                // Phase A4-ζ: committed query renders as parsed chips.
+                const chipTexts = Array.from(
+                    container.querySelectorAll(
+                        '.bx-toolbar [data-testid="browse-toolbar-chip"]',
+                    ),
+                ).map((c) => (c.textContent ?? "").trim());
+                expect(chipTexts).toContain('deck:"Sesame Street English"');
             } finally {
                 unmount(instance);
             }
@@ -755,7 +768,7 @@ describe("BrowsePage contract", () => {
                 await settle();
 
                 const input = container.querySelector<HTMLInputElement>(
-                    ".tree .tree-rename",
+                    ".bx-sidebar .bx-tree-rename",
                 );
                 if (!input) throw new Error(".tree-rename input missing");
                 input.value = "日本語 N2";
@@ -775,7 +788,7 @@ describe("BrowsePage contract", () => {
                 const after = treeDeckButtons(container);
                 expect(after.length).toBe(1);
                 expect(after[0]?.textContent).toContain("日本語 N2");
-                expect(container.querySelector(".tree .tree-rename")).toBeNull();
+                expect(container.querySelector(".bx-sidebar .bx-tree-rename")).toBeNull();
                 expect(container.querySelector(".error-banner")).toBeNull();
             } finally {
                 unmount(instance);
@@ -786,13 +799,13 @@ describe("BrowsePage contract", () => {
     describe("Phase 10-A tags sidebar", () => {
         function tagItems(root: HTMLElement): HTMLButtonElement[] {
             const tagsTitle = Array.from(
-                root.querySelectorAll<HTMLButtonElement>(".tree .section-title"),
-            ).find((t) => t.textContent?.includes("Tags"));
+                root.querySelectorAll<HTMLButtonElement>(".bx-sidebar .bx-section-title"),
+            ).find((t) => t.textContent?.includes("tags"));
             if (!tagsTitle) throw new Error("Tags section-title not found");
-            const section = tagsTitle.closest(".section");
+            const section = tagsTitle.closest(".bx-section");
             if (!section) throw new Error("Tags section container missing");
             return Array.from(
-                section.querySelectorAll<HTMLButtonElement>(".section-items .tag-item"),
+                section.querySelectorAll<HTMLButtonElement>(".bx-section-body .bx-tag-pill"),
             );
         }
 
@@ -852,11 +865,13 @@ describe("BrowsePage contract", () => {
                 );
                 await settle();
 
-                const search = container.querySelector<HTMLInputElement>(
-                    '.toolbar input[type="search"]',
-                );
-                if (!search) throw new Error("search input not found");
-                expect(search.value).toBe("tag:leech");
+                // Phase A4-ζ: committed query renders as parsed chips.
+                const chipTexts = Array.from(
+                    container.querySelectorAll(
+                        '.bx-toolbar [data-testid="browse-toolbar-chip"]',
+                    ),
+                ).map((c) => (c.textContent ?? "").trim());
+                expect(chipTexts).toContain("tag:leech");
             } finally {
                 unmount(instance);
             }
@@ -874,10 +889,10 @@ describe("BrowsePage contract", () => {
                 await settle();
 
                 expect(container.querySelector(".error-banner")).toBeNull();
-                // fakeTags slice(0, 8) renders — at least one item should be present.
+                // fakeTags slice(0, 10) renders — at least one item should be present.
                 const items = tagItems(container);
                 expect(items.length).toBeGreaterThan(0);
-                expect(items.length).toBeLessThanOrEqual(8);
+                expect(items.length).toBeLessThanOrEqual(10);
             } finally {
                 unmount(instance);
             }
@@ -1160,7 +1175,7 @@ describe("BrowsePage contract", () => {
                 expect(vi.mocked(fetchCards)).toHaveBeenCalledTimes(1);
                 expect(vi.mocked(fetchCards)).toHaveBeenCalledWith("", 50, 0);
                 expect(
-                    container.querySelector(".count-tag")?.textContent?.trim(),
+                    container.querySelector(".bx-toolbar-count")?.textContent?.trim(),
                 ).toBe("1–50 of 207");
                 // Prev disabled at offset 0; Next enabled because there's more.
                 const prev = container.querySelector<HTMLButtonElement>(
@@ -1204,7 +1219,7 @@ describe("BrowsePage contract", () => {
                     50,
                 );
                 expect(
-                    container.querySelector(".count-tag")?.textContent?.trim(),
+                    container.querySelector(".bx-toolbar-count")?.textContent?.trim(),
                 ).toBe("51–100 of 207");
                 // Prev now enabled (we left offset 0); Next still enabled
                 // (50+50 < 207).
@@ -1263,7 +1278,7 @@ describe("BrowsePage contract", () => {
                     200,
                 );
                 expect(
-                    container.querySelector(".count-tag")?.textContent?.trim(),
+                    container.querySelector(".bx-toolbar-count")?.textContent?.trim(),
                 ).toBe("201–207 of 207");
                 // Tail page reached: Next disabled, Prev still enabled.
                 const next = container.querySelector<HTMLButtonElement>(
@@ -1288,7 +1303,7 @@ describe("BrowsePage contract", () => {
             try {
                 await settle();
                 expect(
-                    container.querySelector(".count-tag")?.textContent?.trim(),
+                    container.querySelector(".bx-toolbar-count")?.textContent?.trim(),
                 ).toBe("1–50 of 207");
 
                 const next = container.querySelector<HTMLButtonElement>(
@@ -1302,7 +1317,7 @@ describe("BrowsePage contract", () => {
                 expect(banner?.textContent).toContain("503 server overloaded");
                 // Offset unchanged on failure — count-tag still page 1.
                 expect(
-                    container.querySelector(".count-tag")?.textContent?.trim(),
+                    container.querySelector(".bx-toolbar-count")?.textContent?.trim(),
                 ).toBe("1–50 of 207");
             } finally {
                 unmount(instance);
@@ -1921,10 +1936,10 @@ describe("BrowsePage contract", () => {
 
                 // Live entries render with their server-canonical names.
                 const items = container.querySelectorAll(
-                    ".saved-row .item.saved span",
+                    ".bx-saved-row .bx-saved-name",
                 );
                 const names = Array.from(items).map((n) =>
-                    n.textContent?.trim(),
+                    (n.textContent ?? "").replace(/^·\s*/, "").trim(),
                 );
                 expect(names).toEqual(["Hard reviews", "Newly added"]);
 
@@ -1933,17 +1948,24 @@ describe("BrowsePage contract", () => {
                 // and refetch /api/cards).
                 const hardBtn = Array.from(
                     container.querySelectorAll<HTMLButtonElement>(
-                        ".saved-row .item.saved",
+                        ".bx-saved-row .bx-saved-btn",
                     ),
                 ).find((b) => b.textContent?.includes("Hard reviews"));
                 expect(hardBtn).toBeDefined();
                 hardBtn!.click();
                 await settle();
 
-                const search = container.querySelector<HTMLInputElement>(
-                    'input[type="search"]',
-                );
-                expect(search?.value).toBe("tag:hard is:due");
+                // Phase A4-ζ: committed query renders as parsed chips inside
+                // the toolbar searchbar, not as the input.value (which is the
+                // live `pendingInput` buffer). Assert the chip strip reflects
+                // the saved-search expression.
+                const chipTexts = Array.from(
+                    container.querySelectorAll(
+                        '.bx-toolbar [data-testid="browse-toolbar-chip"]',
+                    ),
+                ).map((c) => (c.textContent ?? "").trim());
+                expect(chipTexts).toContain("tag:hard");
+                expect(chipTexts).toContain("is:due");
             } finally {
                 unmount(instance);
             }
@@ -1965,7 +1987,7 @@ describe("BrowsePage contract", () => {
                 await settle();
 
                 const newBtn = container.querySelector<HTMLButtonElement>(
-                    "button.saved-new-btn",
+                    'button[aria-label="Add saved search"]',
                 );
                 expect(newBtn).not.toBeNull();
                 newBtn!.click();
@@ -2003,8 +2025,8 @@ describe("BrowsePage contract", () => {
                 });
                 // The new entry appears in the sidebar.
                 const names = Array.from(
-                    container.querySelectorAll(".saved-row .item.saved span"),
-                ).map((n) => n.textContent?.trim());
+                    container.querySelectorAll(".bx-saved-row .bx-saved-name"),
+                ).map((n) => (n.textContent ?? "").replace(/^·\s*/, "").trim());
                 expect(names).toEqual(["Cram"]);
                 // Form collapses back to "+ New saved search" button.
                 expect(
@@ -2013,7 +2035,7 @@ describe("BrowsePage contract", () => {
                     ),
                 ).toBeNull();
                 expect(
-                    container.querySelector("button.saved-new-btn"),
+                    container.querySelector('button[aria-label="Add saved search"]'),
                 ).not.toBeNull();
             } finally {
                 unmount(instance);
@@ -2058,8 +2080,8 @@ describe("BrowsePage contract", () => {
                 );
                 // List shrinks; only "Easy" remains.
                 const names = Array.from(
-                    container.querySelectorAll(".saved-row .item.saved span"),
-                ).map((n) => n.textContent?.trim());
+                    container.querySelectorAll(".bx-saved-row .bx-saved-name"),
+                ).map((n) => (n.textContent ?? "").replace(/^·\s*/, "").trim());
                 expect(names).toEqual(["Easy"]);
             } finally {
                 unmount(instance);
@@ -2168,7 +2190,7 @@ describe("BrowsePage server search wiring (Phase 12-A)", () => {
             // "X-Y of Z" path because filter narrows nothing further on a
             // single-row server result.
             expect(
-                container.querySelector(".count-tag")?.textContent?.trim(),
+                container.querySelector(".bx-toolbar-count")?.textContent?.trim(),
             ).toBe("1 of 1");
         } finally {
             unmount(instance);
@@ -2197,13 +2219,25 @@ describe("BrowsePage server search wiring (Phase 12-A)", () => {
             await settleFake();
             expect(vi.mocked(fetchCards)).toHaveBeenCalledTimes(1);
 
-            // Type three characters quickly — only the last one's debounce
-            // window should make it to the server.
-            setSearch(container, "g");
+            // Phase A4-ζ chip toolbar: type into the pending buffer
+            // without committing (no Enter, no trailing space) until
+            // the final value lands; only the auto-commit on the last
+            // value should hit the debounced fetch path.
+            const input = container.querySelector<HTMLInputElement>(
+                '.bx-toolbar input[type="search"]',
+            );
+            if (!input) throw new Error("search input not found");
+            const typePending = (v: string) => {
+                input.value = v;
+                input.dispatchEvent(new Event("input", { bubbles: true }));
+                flushSync();
+            };
+            typePending("g");
             await vi.advanceTimersByTimeAsync(50);
-            setSearch(container, "ga");
+            typePending("ga");
             await vi.advanceTimersByTimeAsync(50);
-            setSearch(container, "gato");
+            // Trailing space triggers maybeAutoCommit → query="gato".
+            typePending("gato ");
             await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS);
             await settleFake();
 
@@ -2239,7 +2273,7 @@ describe("BrowsePage server search wiring (Phase 12-A)", () => {
         try {
             await settleFake();
             expect(
-                container.querySelectorAll(".list button.row").length,
+                container.querySelectorAll(".bx-table-body button.bx-row-btn").length,
             ).toBe(3);
 
             setSearch(container, "gato");
@@ -2253,12 +2287,12 @@ describe("BrowsePage server search wiring (Phase 12-A)", () => {
             // Local fallback: liveCards untouched (still 3 rows server-side),
             // local substring filter narrows display to "gato" only.
             expect(
-                container.querySelectorAll(".list button.row").length,
+                container.querySelectorAll(".bx-table-body button.bx-row-btn").length,
             ).toBe(1);
             // Search-active count-tag flips to "F of L" form regardless
             // of whether server returned — driven by query !== "".
             expect(
-                container.querySelector(".count-tag")?.textContent?.trim(),
+                container.querySelector(".bx-toolbar-count")?.textContent?.trim(),
             ).toBe("1 of 3");
         } finally {
             unmount(instance);
@@ -2340,10 +2374,10 @@ describe("BrowsePage delete-note flow (Phase 13-A)", () => {
             // Row dropped from list — 3 → 2 visible. count-tag also updates
             // to reflect the new total (3 - 1 = 2).
             expect(
-                container.querySelectorAll(".list button.row").length,
+                container.querySelectorAll(".bx-table-body button.bx-row-btn").length,
             ).toBe(2);
             expect(
-                container.querySelector(".count-tag")?.textContent?.trim(),
+                container.querySelector(".bx-toolbar-count")?.textContent?.trim(),
             ).toBe("1–2 of 2");
         } finally {
             unmount(instance);
@@ -2365,7 +2399,7 @@ describe("BrowsePage delete-note flow (Phase 13-A)", () => {
             expect(vi.mocked(deleteNote)).not.toHaveBeenCalled();
             // List intact at 3 rows.
             expect(
-                container.querySelectorAll(".list button.row").length,
+                container.querySelectorAll(".bx-table-body button.bx-row-btn").length,
             ).toBe(3);
         } finally {
             unmount(instance);
@@ -2390,7 +2424,7 @@ describe("BrowsePage delete-note flow (Phase 13-A)", () => {
             expect(banner?.textContent).toContain("404");
             // No rows removed since the server rejected.
             expect(
-                container.querySelectorAll(".list button.row").length,
+                container.querySelectorAll(".bx-table-body button.bx-row-btn").length,
             ).toBe(3);
         } finally {
             unmount(instance);
@@ -2424,10 +2458,10 @@ describe("BrowsePage delete-note flow (Phase 13-A)", () => {
             // 2 of 3 cards for note 999 were on this page; 1 unrelated
             // card remains. count-tag reflects total = 5 - 3 = 2.
             expect(
-                container.querySelectorAll(".list button.row").length,
+                container.querySelectorAll(".bx-table-body button.bx-row-btn").length,
             ).toBe(1);
             expect(
-                container.querySelector(".count-tag")?.textContent?.trim(),
+                container.querySelector(".bx-toolbar-count")?.textContent?.trim(),
             ).toBe("1–1 of 2");
         } finally {
             unmount(instance);
@@ -2481,24 +2515,24 @@ describe("BrowsePage delete-deck flow (Phase 15-A)", () => {
     // also use the .section-items / .item class names.
     function decksSection(root: HTMLElement): Element {
         const decksTitle = Array.from(
-            root.querySelectorAll<HTMLButtonElement>(".tree .section-title"),
-        ).find((t) => t.textContent?.includes("Decks"));
+            root.querySelectorAll<HTMLButtonElement>(".bx-sidebar .bx-section-title"),
+        ).find((t) => t.textContent?.includes("decks"));
         if (!decksTitle) throw new Error("Decks section-title not found");
-        const section = decksTitle.closest(".section");
+        const section = decksTitle.closest(".bx-section");
         if (!section) throw new Error("Decks section container missing");
         return section;
     }
     function deckRowButtons(root: HTMLElement): HTMLButtonElement[] {
         return Array.from(
             decksSection(root).querySelectorAll<HTMLButtonElement>(
-                ".section-items .item",
+                ".bx-section-body .bx-deck-btn",
             ),
         );
     }
     function deckRowWraps(root: HTMLElement): HTMLElement[] {
         return Array.from(
             decksSection(root).querySelectorAll<HTMLElement>(
-                ".section-items .item-wrap",
+                ".bx-section-body .bx-deck-row",
             ),
         );
     }
@@ -2508,7 +2542,7 @@ describe("BrowsePage delete-deck flow (Phase 15-A)", () => {
     ): HTMLButtonElement {
         const btn = Array.from(
             decksSection(root).querySelectorAll<HTMLButtonElement>(
-                ".section-items .delete-x",
+                ".bx-section-body .bx-row-x",
             ),
         ).find(
             (b) => b.getAttribute("aria-label") === `Delete deck ${deckName}`,
@@ -3131,7 +3165,7 @@ describe("BrowsePage bulk multi-select (Phase 20-B)", () => {
 
     function rowCheckboxes(root: HTMLElement): HTMLInputElement[] {
         return Array.from(
-            root.querySelectorAll<HTMLInputElement>(".list .row-check"),
+            root.querySelectorAll<HTMLInputElement>(".bx-table-body .row-check"),
         );
     }
 

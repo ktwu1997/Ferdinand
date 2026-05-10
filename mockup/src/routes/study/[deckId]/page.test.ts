@@ -139,14 +139,14 @@ describe("StudyPage contract", () => {
             ).not.toBeNull();
 
             expect(
-                container.querySelector(".count-new")?.textContent?.trim(),
-            ).toBe("5");
+                container.querySelector(".c-new")?.textContent?.trim(),
+            ).toBe("5 new");
             expect(
-                container.querySelector(".count-learn")?.textContent?.trim(),
-            ).toBe("2");
+                container.querySelector(".c-learn")?.textContent?.trim(),
+            ).toBe("2 learn");
             expect(
-                container.querySelector(".count-review")?.textContent?.trim(),
-            ).toBe("3");
+                container.querySelector(".c-review")?.textContent?.trim(),
+            ).toBe("3 review");
         } finally {
             unmount(instance);
         }
@@ -203,8 +203,8 @@ describe("StudyPage contract", () => {
 
             // Counts reflect the next response.
             expect(
-                container.querySelector(".count-new")?.textContent?.trim(),
-            ).toBe("4");
+                container.querySelector(".c-new")?.textContent?.trim(),
+            ).toBe("4 new");
             // Back face resets because showAnswer flips to false.
             expect(
                 container.querySelector('[data-testid="card-face-back"]'),
@@ -249,7 +249,7 @@ describe("StudyPage contract", () => {
 
             const title = container.querySelector(".empty-title");
             expect(title).not.toBeNull();
-            expect(title?.textContent).toContain("All caught up");
+            expect(title?.textContent).toContain("all caught up");
         } finally {
             unmount(instance);
         }
@@ -328,7 +328,7 @@ describe("StudyPage contract", () => {
                 await settle();
 
                 const chips = container.querySelectorAll(
-                    '[data-testid="tag-edit"] .tag-removable',
+                    '[data-testid="tag-edit"] .tag-chip',
                 );
                 expect(chips.length).toBe(2);
                 expect(chips[0].textContent).toContain("alpha");
@@ -380,7 +380,7 @@ describe("StudyPage contract", () => {
                 });
 
                 const chips = container.querySelectorAll(
-                    '[data-testid="tag-edit"] .tag-removable',
+                    '[data-testid="tag-edit"] .tag-chip',
                 );
                 expect(chips.length).toBe(3);
                 expect(chips[2].textContent).toContain("gamma");
@@ -416,7 +416,7 @@ describe("StudyPage contract", () => {
                 });
 
                 const chips = container.querySelectorAll(
-                    '[data-testid="tag-edit"] .tag-removable',
+                    '[data-testid="tag-edit"] .tag-chip',
                 );
                 expect(chips.length).toBe(1);
                 expect(chips[0].textContent).toContain("beta");
@@ -457,7 +457,7 @@ describe("StudyPage contract", () => {
                 expect(vi.mocked(patchNote)).not.toHaveBeenCalled();
 
                 const chips = container.querySelectorAll(
-                    '[data-testid="tag-edit"] .tag-removable',
+                    '[data-testid="tag-edit"] .tag-chip',
                 );
                 expect(chips.length).toBe(2);
             } finally {
@@ -487,7 +487,7 @@ describe("StudyPage contract", () => {
 
                 // Optimistic remove was reverted → both chips back.
                 const chips = container.querySelectorAll(
-                    '[data-testid="tag-edit"] .tag-removable',
+                    '[data-testid="tag-edit"] .tag-chip',
                 );
                 expect(chips.length).toBe(2);
 
@@ -523,7 +523,7 @@ describe("StudyPage contract", () => {
                 await settle();
 
                 const chips = container.querySelectorAll(
-                    '[data-testid="tag-edit"] .tag-removable',
+                    '[data-testid="tag-edit"] .tag-chip',
                 );
                 expect(chips.length).toBe(1);
                 expect(chips[0].textContent).toContain("delta");
