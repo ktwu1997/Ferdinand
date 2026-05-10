@@ -67,6 +67,12 @@ RUN apt-get update \
         pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
+# Anki's rslib/proto/build.rs (set_protoc_path) only honours PROTOC /
+# PROTOC_BINARY env vars — it does NOT search PATH. Without this,
+# prost-build fails with "Could not find protoc" even though
+# /usr/bin/protoc exists.
+ENV PROTOC=/usr/bin/protoc
+
 WORKDIR /build
 
 # Copy the entire workspace. The Anki workspace has many crates and
