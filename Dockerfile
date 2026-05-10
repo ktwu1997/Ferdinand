@@ -30,12 +30,21 @@ WORKDIR /build/mockup
 # Copy manifests first so npm install caches when only sources change.
 COPY mockup/package.json mockup/package-lock.json* mockup/yarn.lock* ./
 
-# Use `npm install` (not `npm ci`) so rollup's platform-specific native
-# binary (e.g. @rollup/rollup-linux-x64-gnu) is re-resolved into node_modules.
-# Known npm bug: `npm ci` can silently skip the platform optional dep that
-# `rollup/dist/native.js` requires at runtime, causing
-# `Cannot find module @rollup/rollup-linux-x64-gnu`. See npm/cli#4828.
-RUN npm install --no-audit --no-fund
+# Install deps + force-install rollup's platform-specific native binary.
+# Both `npm ci` AND `npm install` can silently skip rollup's optional
+# native package (npm/cli#4828), so we install it explicitly for the
+# build-target arch. Without this, `vite build` fails with
+# `Cannot find module @rollup/rollup-linux-x64-gnu` at
+# rollup/dist/native.js. The arch detection keeps it portable across
+# linux/amd64 and linux/arm64 build hosts.
+RUN npm install --no-audit --no-fund \
+    && ARCH="$(uname -m)" \
+    && case "$ARCH" in \
+        x86_64)  NATIVE=@rollup/rollup-linux-x64-gnu ;; \
+        aarch64) NATIVE=@rollup/rollup-linux-arm64-gnu ;; \
+        *) echo "unsupported build arch: $ARCH" >&2 ; exit 1 ;; \
+    esac \
+    && npm install --no-audit --no-fund --no-save "$NATIVE"
 
 # Now bring in the rest of the mockup source and build the static bundle.
 COPY mockup/ ./
