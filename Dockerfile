@@ -30,13 +30,12 @@ WORKDIR /build/mockup
 # Copy manifests first so npm install caches when only sources change.
 COPY mockup/package.json mockup/package-lock.json* mockup/yarn.lock* ./
 
-# Prefer reproducible install when a lockfile is present; fall back to
-# `npm install` for a cold checkout that has no lockfile yet.
-RUN if [ -f package-lock.json ]; then \
-        npm ci --no-audit --no-fund; \
-    else \
-        npm install --no-audit --no-fund; \
-    fi
+# Use `npm install` (not `npm ci`) so rollup's platform-specific native
+# binary (e.g. @rollup/rollup-linux-x64-gnu) is re-resolved into node_modules.
+# Known npm bug: `npm ci` can silently skip the platform optional dep that
+# `rollup/dist/native.js` requires at runtime, causing
+# `Cannot find module @rollup/rollup-linux-x64-gnu`. See npm/cli#4828.
+RUN npm install --no-audit --no-fund
 
 # Now bring in the rest of the mockup source and build the static bundle.
 COPY mockup/ ./
