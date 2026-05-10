@@ -138,10 +138,17 @@ clone_or_update_repo() {
         if ! git -C "$INSTALL_DIR" pull --ff-only --quiet; then
             log "WARNING: git pull --ff-only failed (local divergence?). Leaving as-is."
         fi
+        # Keep submodules (ftl/core-repo, ftl/qt-repo) in sync with the
+        # superproject pointer.
+        git -C "$INSTALL_DIR" submodule update --init --recursive --quiet \
+            || log "WARNING: submodule update failed; rslib/i18n/build.rs may panic."
     else
         log "cloning repo into $INSTALL_DIR..."
         mkdir -p "$(dirname "$INSTALL_DIR")"
-        git clone --quiet "$REPO_URL" "$INSTALL_DIR"
+        # ftl/core-repo + ftl/qt-repo are git submodules; without
+        # --recurse-submodules rslib/i18n/build.rs panics at gather.rs:62
+        # (read_dir on the empty stub dir).
+        git clone --quiet --recurse-submodules "$REPO_URL" "$INSTALL_DIR"
     fi
 
     chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR"
