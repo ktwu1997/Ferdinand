@@ -92,18 +92,23 @@ RUN cargo build \
         --features embed-mockup
 
 # Locate the produced binary regardless of which release profile dir
-# Cargo chose (release-lto vs release fallback) and stage it.
+# Cargo chose (release-lto vs release fallback) and stage it OUTSIDE
+# /build/anki_server (which is the source crate directory — using the
+# same name collides and the cp lands the file *inside* the source
+# directory, then stage 3 COPYs that whole directory to
+# /usr/local/bin/anki_server, making the runtime exec target a dir).
 RUN set -eux; \
+    mkdir -p /dist; \
     if [ -x /build/target/release-lto/anki_server ]; then \
-        cp /build/target/release-lto/anki_server /build/anki_server; \
+        cp /build/target/release-lto/anki_server /dist/anki_server; \
     elif [ -x /build/target/release/anki_server ]; then \
-        cp /build/target/release/anki_server /build/anki_server; \
+        cp /build/target/release/anki_server /dist/anki_server; \
     else \
         echo "anki_server binary not found in expected target dirs" >&2; \
         ls -la /build/target/ >&2; \
         exit 1; \
     fi; \
-    strip /build/anki_server || true
+    strip /dist/anki_server || true
 
 # ---------------------------------------------------------------------------
 # Stage 3: runtime — slim Debian with binary + curl for HEALTHCHECK
@@ -127,7 +132,7 @@ RUN groupadd --system --gid 1000 ferdinand \
 
 WORKDIR /app
 
-COPY --from=rust-builder /build/anki_server /usr/local/bin/anki_server
+COPY --from=rust-builder /dist/anki_server /usr/local/bin/anki_server
 
 ENV ANKI_COLLECTION=/data/collection.anki2 \
     ANKI_SERVER_PORT=40001 \
