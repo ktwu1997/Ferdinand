@@ -1,17 +1,29 @@
 #!/usr/bin/env node
 // a13_live_multiuser_smoke.mjs
-// Phase B-test pre-write: runs against deployed VPS instance, NOT localhost.
-// Required env: BASE_URL, BASIC_AUTH_USER, BASIC_AUTH_PASS,
-//               FERDINAND_USER1, FERDINAND_PASS1, FERDINAND_USER2, FERDINAND_PASS2.
-// Run:
+// Phase B-test pre-write: runs against deployed instance, NOT localhost.
+//
+// Required env (all paths):
+//   BASE_URL, FERDINAND_USER1, FERDINAND_PASS1, FERDINAND_USER2, FERDINAND_PASS2
+// Optional env (raw-VPS path only — Caddy basic_auth gate):
+//   BASIC_AUTH_USER, BASIC_AUTH_PASS
+//
+// Run (Zeabur path — no basic_auth gate):
+//   BASE_URL=https://yourdomain.example.com \
+//     FERDINAND_USER1=... FERDINAND_PASS1=... \
+//     FERDINAND_USER2=... FERDINAND_PASS2=... \
+//     node mockup/tests/e2e/a13_live_multiuser_smoke.mjs
+//
+// Run (raw-VPS path — basic_auth in front of the app):
 //   BASE_URL=https://yourdomain.example.com \
 //     BASIC_AUTH_USER=... BASIC_AUTH_PASS=... \
 //     FERDINAND_USER1=... FERDINAND_PASS1=... \
 //     FERDINAND_USER2=... FERDINAND_PASS2=... \
 //     node mockup/tests/e2e/a13_live_multiuser_smoke.mjs
+//
 // See tests/e2e/README-live-smoke.md for full SOP.
 //
-// Scope (live multi-user smoke against deployed Caddy + anki_server):
+// Scope (live multi-user smoke against deployed anki_server, with or
+// without a Caddy basic_auth edge):
 //   1. ctxA login (USER1) → 200 + cookie set
 //   2. ctxB login (USER2) → 200 + cookie set (parallel)
 //   3. ctxA /study/<deck>: empty-state OR card visible + click "Again" rating
@@ -21,8 +33,10 @@
 //   7. ctxA logout + ctxB logout
 //   8. /api/auth/me from BOTH contexts post-logout → 401
 //
-// Skip path: any required env var missing → exit 0 with a clear "skipping live
-// smoke" message so the file is safe to invoke from CI without leaking creds.
+// Skip path: any of BASE_URL / FERDINAND_USER{1,2} / FERDINAND_PASS{1,2}
+// missing → exit 0 with a clear "skipping live smoke" message so the file
+// is safe to invoke from CI without leaking creds. BASIC_AUTH_* may be
+// absent — that's the Zeabur-path happy case (no gateway-level auth).
 
 import { chromium } from "playwright";
 import path from "node:path";
@@ -43,10 +57,12 @@ const FERDINAND_USER2 = process.env.FERDINAND_USER2 || "";
 const FERDINAND_PASS2 = process.env.FERDINAND_PASS2 || "";
 const CHROME = process.env.CHROME_EXECUTABLE || undefined;
 
+// BASIC_AUTH_USER + BASIC_AUTH_PASS are OPTIONAL: only the raw-VPS Caddy
+// edge enforces them. On Zeabur the platform gateway has no basic_auth gate,
+// so absence here is the happy case. We only require BASE_URL + the two
+// app-login pairs.
 const REQUIRED = {
     BASE_URL,
-    BASIC_AUTH_USER,
-    BASIC_AUTH_PASS,
     FERDINAND_USER1,
     FERDINAND_PASS1,
     FERDINAND_USER2,
@@ -57,15 +73,27 @@ const missing = Object.entries(REQUIRED)
     .map(([k]) => k);
 if (missing.length > 0) {
     console.log(
-        `SKIP: a13_live_multiuser_smoke — live smoke requires deployed VPS env. ` +
+        `SKIP: a13_live_multiuser_smoke — live smoke requires deployed env. ` +
             `Missing: ${missing.join(", ")}.`,
     );
     console.log(
-        `Set BASE_URL + BASIC_AUTH_* + FERDINAND_USER1/2 + FERDINAND_PASS1/2 ` +
-            `to run; see mockup/tests/e2e/README-live-smoke.md.`,
+        `Set BASE_URL + FERDINAND_USER1/2 + FERDINAND_PASS1/2 to run ` +
+            `(BASIC_AUTH_USER/PASS optional, raw-VPS path only); ` +
+            `see mockup/tests/e2e/README-live-smoke.md.`,
     );
     process.exit(0);
 }
+
+// Compose httpCredentials only if BOTH basic_auth env vars are set.
+// Partial config (one set, the other empty) is treated as "not configured"
+// to avoid silently sending empty credentials.
+const useBasicAuth = Boolean(BASIC_AUTH_USER && BASIC_AUTH_PASS);
+const httpCredentials = useBasicAuth
+    ? { username: BASIC_AUTH_USER, password: BASIC_AUTH_PASS }
+    : undefined;
+console.log(
+    `[a13] basic_auth gate: ${useBasicAuth ? "ENABLED (raw-VPS path)" : "disabled (Zeabur path)"}`,
+);
 
 // ---- result accumulator ------------------------------------------------
 const result = {
@@ -86,16 +114,18 @@ const browser = await chromium.launch({
     ...(CHROME ? { executablePath: CHROME } : {}),
 });
 
-// Two contexts, both behind Caddy basic_auth. Each has an isolated cookie
-// jar so we can prove session-cookie isolation per-user.
+// Two contexts, optionally behind Caddy basic_auth (raw-VPS only). Each
+// has an isolated cookie jar so we can prove session-cookie isolation
+// per-user. On Zeabur, httpCredentials is undefined → context omits the
+// Authorization header entirely.
 const ctxA = await browser.newContext({
     viewport: { width: 1280, height: 900 },
-    httpCredentials: { username: BASIC_AUTH_USER, password: BASIC_AUTH_PASS },
+    ...(httpCredentials ? { httpCredentials } : {}),
     baseURL: BASE_URL,
 });
 const ctxB = await browser.newContext({
     viewport: { width: 1280, height: 900 },
-    httpCredentials: { username: BASIC_AUTH_USER, password: BASIC_AUTH_PASS },
+    ...(httpCredentials ? { httpCredentials } : {}),
     baseURL: BASE_URL,
 });
 

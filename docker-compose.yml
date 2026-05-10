@@ -1,32 +1,32 @@
-# Ferdinand — production docker-compose for the friend-self-host VPS path
-# (Phase B-deploy).
+# Ferdinand — Zeabur-native docker-compose (default deploy path).
 #
-# Two services:
+# This file is consumed by Zeabur's Docker build pipeline. It deliberately
+# contains ONLY the `ferdinand` service: no Caddy, no host port binding, no
+# named volume for TLS certs.
 #
-#   1. ferdinand   — the Rust anki_server binary (built from ./Dockerfile,
-#                    embeds the SvelteKit mockup via the `embed-mockup` cargo
-#                    feature, so it serves both /api/* and the SPA itself).
-#   2. caddy       — official caddy:2-alpine, terminates TLS via Let's Encrypt,
-#                    enforces an HTTP basic_auth gate as a "soft" pre-app
-#                    barrier, and reverse-proxies everything else to ferdinand.
+# Why? Zeabur's gateway pod owns 0.0.0.0:80/443 on every project VPS. A
+# Caddy compose service can never bind those ports, which makes the older
+# hybrid (Caddy + own scripts on Zeabur VPS) impossible. Zeabur instead
+# terminates TLS, manages the LE cert, and routes the project's public
+# domain to the EXPOSE-d container port (40001) on its own. See the
+# "Zeabur Quick Start" section in deploy/README.md.
 #
-# The ferdinand service is NOT exposed on a public host port; Caddy reaches it
-# over the internal `web` bridge network using the service name `ferdinand`.
-# A loopback publish (127.0.0.1:40001) is included so an operator on the VPS
-# can `curl localhost:40001/api/health` for debugging without going through
-# Caddy or basic_auth.
+# For a non-Zeabur VPS where YOU own ports 80/443 and need to run your own
+# TLS edge + basic_auth, use the preserved sibling file:
 #
-# All secrets and the domain come from a `.env` file next to this compose
-# file. See deploy/README.md for `.env` setup, Let's Encrypt prerequisites
-# (DNS, ports 80/443 open), and backup / restore SOPs.
+#   docker compose -f docker-compose.raw-vps.yml up -d
 #
-# Usage:
-#     # 1) Provision .env (see deploy/README.md)
-#     # 2) docker compose up -d
-#     # 3) docker compose logs -f
+# Usage on Zeabur:
+#   - Zeabur's UI builds from this file's `ferdinand` service automatically.
+#   - Required env vars (FERDINAND_SESSION_KEY, ANKI_ADMIN_USERNAME, etc.) are
+#     set via the Zeabur dashboard, NOT a `.env` file. The
+#     `${VAR:?...}` interpolation below still works because Zeabur
+#     materializes those vars into the build/runtime environment.
+#   - Persistent storage for /data is provisioned through the dashboard
+#     "Volumes" panel; see deploy/README.md.
 #
-# To wipe everything (collection + auth db + caddy certs):
-#     docker compose down -v
+# To wipe local state when running this compose file directly on a dev box:
+#   docker compose down -v
 
 services:
   ferdinand:
@@ -35,19 +35,19 @@ services:
       dockerfile: Dockerfile
     image: ferdinand:local
     container_name: ferdinand
-    # Bind to 0.0.0.0 inside the container so Caddy (different container,
-    # same compose bridge) can reach us as `ferdinand:40001`. The cookie
-    # session-key check in main.rs requires FERDINAND_SESSION_KEY when bind
-    # is non-loopback, which is enforced via env below.
+    # Bind to 0.0.0.0 inside the container so Zeabur's gateway pod can reach
+    # the EXPOSE-d 40001. The cookie session-key check in main.rs requires
+    # FERDINAND_SESSION_KEY when bind is non-loopback, enforced via env below.
     environment:
       ANKI_BIND: "0.0.0.0"
       ANKI_SERVER_PORT: "40001"
       ANKI_USERS_DIR: /data/users
       ANKI_AUTH_DB: /data/auth.db
-      RUST_LOG: "info,anki_server=debug"
+      RUST_LOG: "${RUST_LOG:-info,anki_server=debug}"
       # Required for non-loopback bind. Generate with:
       #   openssl rand -base64 64
-      FERDINAND_SESSION_KEY: "${FERDINAND_SESSION_KEY:?set in .env (run openssl rand -base64 64)}"
+      # Set in Zeabur dashboard, NOT in a .env file.
+      FERDINAND_SESSION_KEY: "${FERDINAND_SESSION_KEY:?set in Zeabur dashboard (run openssl rand -base64 64)}"
       # Phase B2: only the named user can hit /api/admin/*. Empty / unset →
       # admin endpoints 403 for everyone.
       ANKI_ADMIN_USERNAME: "${ANKI_ADMIN_USERNAME:-}"
@@ -58,12 +58,13 @@ services:
       FERDINAND_SEED_PASSWORD: "${FERDINAND_SEED_PASSWORD:-}"
     volumes:
       - anki_data:/data
-    # Loopback-only host publish for `curl localhost:40001/api/health` from
-    # the VPS itself. NOT public — public traffic goes through Caddy on 443.
-    ports:
-      - "127.0.0.1:40001:40001"
-    networks:
-      - web
+    # NOTE: deliberately no `ports:` block — Zeabur's gateway pod owns
+    # 0.0.0.0:80/443 and routes inbound traffic to the container's EXPOSE-d
+    # 40001 internally. Publishing host ports here would conflict with the
+    # gateway and is unnecessary on Zeabur. The Dockerfile retains
+    # `EXPOSE 40001` so the gateway can discover the upstream port.
+    expose:
+      - "40001"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:40001/api/health"]
@@ -72,47 +73,9 @@ services:
       start_period: 15s
       retries: 3
 
-  caddy:
-    image: caddy:2-alpine
-    container_name: ferdinand-caddy
-    ports:
-      - "80:80"
-      - "443:443"
-      # ACME-over-TLS-ALPN may use 443; HTTP-01 uses 80. QUIC support uses
-      # 443/udp — published below so HTTP/3 works once you enable it in the
-      # Caddyfile. Cheap to leave on, doesn't break anything if unused.
-      - "443:443/udp"
-    environment:
-      DOMAIN: "${DOMAIN:?set in .env (e.g. anki.example.com)}"
-      BASIC_AUTH_USER: "${BASIC_AUTH_USER:?set in .env (e.g. friend)}"
-      # bcrypt hash of the password. Generate with:
-      #   docker run --rm caddy:2-alpine caddy hash-password --plaintext '<your-pass>'
-      BASIC_AUTH_HASH: "${BASIC_AUTH_HASH:?set in .env (bcrypt hash)}"
-      # Let's Encrypt contact email. Optional but recommended; LE will email
-      # you on cert-renewal failures.
-      ACME_EMAIL: "${ACME_EMAIL:-}"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    networks:
-      - web
-    depends_on:
-      - ferdinand
-    restart: unless-stopped
-
 volumes:
-  # The Anki collection + auth.db live here. Back this up. See deploy/README.md
-  # for the cron tar SOP.
+  # The Anki collection + auth.db live here. On Zeabur, attach a persistent
+  # volume to `/data` via the dashboard "Volumes" panel so it survives
+  # redeploys. On a dev box this is a docker-managed local volume.
   anki_data:
     name: ferdinand_anki_data
-  # Caddy's internal cert/key store. Losing this triggers a Let's Encrypt
-  # re-issue on next boot (subject to LE rate limits — back this up too).
-  caddy_data:
-    name: ferdinand_caddy_data
-  caddy_config:
-    name: ferdinand_caddy_config
-
-networks:
-  web:
-    driver: bridge

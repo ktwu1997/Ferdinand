@@ -1,0 +1,123 @@
+# Ferdinand — raw-VPS docker-compose for the Caddy + basic_auth + TLS path.
+#
+# Use this file when self-hosting on a non-Zeabur VPS where YOU own ports
+# 80/443 and need to run your own TLS edge:
+#
+#   docker compose -f docker-compose.raw-vps.yml up -d
+#
+# The Zeabur-native path uses the default `docker-compose.yml` (ferdinand
+# service only, no caddy, no host port binding). On Zeabur the platform's
+# gateway pod owns 0.0.0.0:80/443 already, so a Caddy compose service can
+# never bind those ports — that's why this file exists separately.
+#
+# Two services (preserved 1:1 from the pre-Zeabur-migrate compose):
+#
+#   1. ferdinand   — the Rust anki_server binary (built from ./Dockerfile,
+#                    embeds the SvelteKit mockup via the `embed-mockup` cargo
+#                    feature, so it serves both /api/* and the SPA itself).
+#   2. caddy       — official caddy:2-alpine, terminates TLS via Let's Encrypt,
+#                    enforces an HTTP basic_auth gate as a "soft" pre-app
+#                    barrier, and reverse-proxies everything else to ferdinand.
+#
+# The ferdinand service is NOT exposed on a public host port; Caddy reaches it
+# over the internal `web` bridge network using the service name `ferdinand`.
+# A loopback publish (127.0.0.1:40001) is included so an operator on the VPS
+# can `curl localhost:40001/api/health` for debugging without going through
+# Caddy or basic_auth.
+#
+# All secrets and the domain come from a `.env` file next to this compose
+# file. See deploy/README.md "Self-Hosting on a Raw VPS" for `.env` setup,
+# Let's Encrypt prerequisites (DNS, ports 80/443 open), and backup / restore
+# SOPs.
+#
+# To wipe everything (collection + auth db + caddy certs):
+#     docker compose -f docker-compose.raw-vps.yml down -v
+
+services:
+  ferdinand:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ferdinand:local
+    container_name: ferdinand
+    # Bind to 0.0.0.0 inside the container so Caddy (different container,
+    # same compose bridge) can reach us as `ferdinand:40001`. The cookie
+    # session-key check in main.rs requires FERDINAND_SESSION_KEY when bind
+    # is non-loopback, which is enforced via env below.
+    environment:
+      ANKI_BIND: "0.0.0.0"
+      ANKI_SERVER_PORT: "40001"
+      ANKI_USERS_DIR: /data/users
+      ANKI_AUTH_DB: /data/auth.db
+      RUST_LOG: "info,anki_server=debug"
+      # Required for non-loopback bind. Generate with:
+      #   openssl rand -base64 64
+      FERDINAND_SESSION_KEY: "${FERDINAND_SESSION_KEY:?set in .env (run openssl rand -base64 64)}"
+      # Phase B2: only the named user can hit /api/admin/*. Empty / unset →
+      # admin endpoints 403 for everyone.
+      ANKI_ADMIN_USERNAME: "${ANKI_ADMIN_USERNAME:-}"
+      # Optional: override apkg import size cap. Default is set in code.
+      ANKI_IMPORT_MAX_BYTES: "${ANKI_IMPORT_MAX_BYTES:-}"
+      # Optional: seed a single user on first boot (idempotent).
+      FERDINAND_SEED_USER: "${FERDINAND_SEED_USER:-}"
+      FERDINAND_SEED_PASSWORD: "${FERDINAND_SEED_PASSWORD:-}"
+    volumes:
+      - anki_data:/data
+    # Loopback-only host publish for `curl localhost:40001/api/health` from
+    # the VPS itself. NOT public — public traffic goes through Caddy on 443.
+    ports:
+      - "127.0.0.1:40001:40001"
+    networks:
+      - web
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:40001/api/health"]
+      interval: 30s
+      timeout: 3s
+      start_period: 15s
+      retries: 3
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: ferdinand-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+      # ACME-over-TLS-ALPN may use 443; HTTP-01 uses 80. QUIC support uses
+      # 443/udp — published below so HTTP/3 works once you enable it in the
+      # Caddyfile. Cheap to leave on, doesn't break anything if unused.
+      - "443:443/udp"
+    environment:
+      DOMAIN: "${DOMAIN:?set in .env (e.g. anki.example.com)}"
+      BASIC_AUTH_USER: "${BASIC_AUTH_USER:?set in .env (e.g. friend)}"
+      # bcrypt hash of the password. Generate with:
+      #   docker run --rm caddy:2-alpine caddy hash-password --plaintext '<your-pass>'
+      BASIC_AUTH_HASH: "${BASIC_AUTH_HASH:?set in .env (bcrypt hash)}"
+      # Let's Encrypt contact email. Optional but recommended; LE will email
+      # you on cert-renewal failures.
+      ACME_EMAIL: "${ACME_EMAIL:-}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - web
+    depends_on:
+      - ferdinand
+    restart: unless-stopped
+
+volumes:
+  # The Anki collection + auth.db live here. Back this up. See deploy/README.md
+  # for the cron tar SOP.
+  anki_data:
+    name: ferdinand_anki_data
+  # Caddy's internal cert/key store. Losing this triggers a Let's Encrypt
+  # re-issue on next boot (subject to LE rate limits — back this up too).
+  caddy_data:
+    name: ferdinand_caddy_data
+  caddy_config:
+    name: ferdinand_caddy_config
+
+networks:
+  web:
+    driver: bridge
