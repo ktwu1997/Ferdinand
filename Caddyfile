@@ -1,0 +1,93 @@
+# Ferdinand Caddyfile — TLS edge + HTTP basic_auth + reverse proxy.
+# (Phase B-deploy.)
+#
+# Caddy terminates Let's Encrypt TLS for {$DOMAIN}, gates every request
+# behind HTTP basic_auth (a soft pre-app barrier in case the underlying
+# session-auth in anki_server is misconfigured or being patched), and
+# reverse-proxies to the `ferdinand` container on the internal compose
+# network at port 40001.
+#
+# All variables come from compose env (see docker-compose.yml + .env).
+#
+# Why basic_auth in front of anki_server's own auth?
+#   - Defence-in-depth: anki_server has its own argon2 + tower-sessions
+#     login, but the friend self-host route assumes a small audience and
+#     wants a single shared "you've got the URL + password" gate visible
+#     in the browser before any app surface loads.
+#   - Health probe and ACME endpoints are exempt below.
+#
+# Validate this file (with all env vars populated to dummies) via:
+#   docker run --rm \
+#     -e DOMAIN=example.com \
+#     -e BASIC_AUTH_USER=test \
+#     -e BASIC_AUTH_HASH='$2a$14$dummy' \
+#     -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
+#     caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile
+
+{
+	# Global options block.
+	# `auto_https` is on by default; left implicit so this stays minimal.
+	# Set ACME contact email if provided — LE will email on renewal failures.
+	email {$ACME_EMAIL}
+
+	# Structured JSON logs to stdout; the docker-compose service captures
+	# stdout into the daemon log driver (default journald or json-file).
+	log {
+		output stdout
+		format json
+		level INFO
+	}
+}
+
+{$DOMAIN} {
+	# Per-site access log: separate file would need a volume; keep it on
+	# stdout-via-default and let the global `log` block handle aggregation.
+	log
+
+	# Hardening headers. Caddy sets some good defaults already; these
+	# tighten further for an app surface served behind a single domain.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options    "nosniff"
+		X-Frame-Options           "DENY"
+		Referrer-Policy           "strict-origin-when-cross-origin"
+		Permissions-Policy        "camera=(), microphone=(), geolocation=()"
+		# Strip server identification.
+		-Server
+	}
+
+	# /api/health is exempt from basic_auth so external uptime monitors
+	# (UptimeRobot, healthchecks.io, etc.) can probe without a credential.
+	# It does NOT leak any user data; see anki_server/src/routes/mod.rs.
+	@health path /api/health
+	handle @health {
+		reverse_proxy ferdinand:40001
+	}
+
+	# Everything else: basic_auth gate, then proxy.
+	# Caddy 2.8+ uses `basic_auth` (underscored); the hash MUST be bcrypt
+	# (generate with `docker run --rm caddy:2-alpine caddy hash-password`).
+	handle {
+		basic_auth {
+			{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
+		}
+
+		reverse_proxy ferdinand:40001 {
+			# Pass real-IP + scheme to the app so server-side logging
+			# attributes events to the actual client, not Caddy.
+			header_up X-Real-IP        {remote_host}
+			header_up X-Forwarded-For  {remote_host}
+			header_up X-Forwarded-Proto https
+			header_up X-Forwarded-Host  {host}
+
+			# Generous timeouts: apkg imports + media sync can take a
+			# while; the rate-limited login endpoint also benefits from
+			# not being clipped at 60s.
+			transport http {
+				read_timeout       300s
+				write_timeout      300s
+				dial_timeout         5s
+			}
+		}
+	}
+}

@@ -56,7 +56,16 @@ docs/
 # Local data dir mounted at runtime — never bake into the image
 data/
 
+# Agent / experiment scratch and unrelated build outputs
+tmp/
+dist/
+**/dist/
+
+# Phase B-deploy: the deploy/ docs aren't needed inside the image.
+deploy/
+
 # Self
 Dockerfile
 docker-compose.yml
 .dockerignore
+Caddyfile
