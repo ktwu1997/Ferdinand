@@ -5,7 +5,7 @@
 <header class="topbar" aria-label="Top bar">
     <a class="brand" href="/" aria-label="Home">
         <span class="dot" aria-hidden="true"></span>
-        <span class="name">Anki</span>
+        <span class="name">Ferdinand</span>
     </a>
     <div class="spacer"></div>
     <button class="icon-btn" type="button" aria-label="Search" title="Search">

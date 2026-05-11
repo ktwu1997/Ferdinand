@@ -3,6 +3,7 @@
     import { page } from "$app/stores";
     import ThemeToggle from "./ThemeToggle.svelte";
     import Kbd from "./Kbd.svelte";
+    import { FerdinandMark } from "$lib/components/sketch";
     import { fetchDecks, type ApiDeckSummary } from "$lib/api";
 
     const nav = [
@@ -48,9 +49,8 @@
 
 <aside>
     <div class="brand">
-        <span class="dot"></span>
-        <span class="name">Anki</span>
-        <span class="tag">redesign</span>
+        <span class="mark"><FerdinandMark size={22} /></span>
+        <span class="name mono">Ferdinand</span>
     </div>
 
     <button class="palette-trigger" type="button">
@@ -131,30 +131,20 @@
 
     .brand {
         display: flex;
-        align-items: baseline;
+        align-items: center;
         gap: var(--space-2);
         padding: 0 var(--space-2);
     }
-    .brand .dot {
-        width: 10px;
-        height: 10px;
-        background: var(--accent);
-        border-radius: 50%;
-        display: inline-block;
-        margin-right: 2px;
-        align-self: center;
+    .brand .mark {
+        display: inline-flex;
+        align-items: center;
+        color: var(--text);
+        flex: 0 0 auto;
     }
     .brand .name {
         font-weight: 600;
         font-size: var(--text-base);
-        letter-spacing: -0.01em;
-    }
-    .brand .tag {
-        font-family: var(--font-mono);
-        font-size: 0.7rem;
-        color: var(--text-subtle);
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
+        letter-spacing: 0.01em;
     }
 
     .palette-trigger {
