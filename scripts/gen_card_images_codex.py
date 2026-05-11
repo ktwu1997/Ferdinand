@@ -41,8 +41,10 @@ import secrets
 import shutil
 import subprocess
 import sys
+import http.cookiejar
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -130,9 +132,31 @@ After saving, print exactly one line: SAVED: <absolute path>
 # HTTP helpers (urllib — no extra deps)
 # ---------------------------------------------------------------------------
 
+# Cookie-aware opener so `--login` lets this script upload media + patch
+# notes on a session-guarded server (e.g. the deployed instance). Without
+# `--login` it behaves exactly like the bare urlopen this file used before.
+# CookieJar is internally locked, so the --workers>1 thread pool is fine.
+_OPENER = urllib.request.build_opener(
+    urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar())
+)
+
+
+def login(base: str, username: str, password: str) -> None:
+    body = json.dumps({"username": username, "password": password}).encode("utf-8")
+    req = urllib.request.Request(
+        f"{base}/api/auth/login", data=body,
+        headers={"Content-Type": "application/json"}, method="POST",
+    )
+    try:
+        with _OPENER.open(req, timeout=15) as r:
+            r.read()
+    except urllib.error.HTTPError as exc:
+        sys.exit(f"login failed for {username!r}: HTTP {exc.code} {exc.reason}")
+    print(f"[init] logged in as {username!r} — session cookie attached", flush=True)
+
 
 def http_get_json(url: str) -> dict:
-    with urllib.request.urlopen(url, timeout=15) as r:
+    with _OPENER.open(url, timeout=15) as r:
         return json.loads(r.read())
 
 
@@ -141,7 +165,7 @@ def http_patch_json(url: str, payload: dict) -> dict:
     req = urllib.request.Request(
         url, data=body, headers={"Content-Type": "application/json"}, method="PATCH"
     )
-    with urllib.request.urlopen(req, timeout=20) as r:
+    with _OPENER.open(req, timeout=20) as r:
         return json.loads(r.read())
 
 
@@ -373,7 +397,7 @@ def upload_media(base: str, filename: str, jpeg_bytes: bytes) -> dict:
         headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=30) as r:
+    with _OPENER.open(req, timeout=30) as r:
         return json.loads(r.read())
 
 
@@ -470,6 +494,9 @@ def parse_args() -> argparse.Namespace:
                     help="deck profile name or path (decks/<name>.json); "
                          "default = legacy TOEIC profile (data/toeic, Concept-Deep)")
     ap.add_argument("--base", default=DEFAULT_BASE)
+    ap.add_argument("--login", default=None, metavar="USER:PASS",
+                    help="authenticate before uploading — needed for a session-guarded "
+                         "server like https://ferdinand.zeabur.app. Format: username:password")
     ap.add_argument("--model", default=GEMINI_MODEL_DEFAULT)
     ap.add_argument("--limit", type=int, default=None,
                     help="cap pending notes (use small N for first try)")
@@ -488,6 +515,11 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if args.login:
+        if ":" not in args.login:
+            sys.exit("--login must be USERNAME:PASSWORD")
+        _user, _pw = args.login.split(":", 1)
+        login(args.base, _user, _pw)
     profile = load_profile(args.profile) if args.profile else default_toeic_profile()
     work_dir = Path(args.work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)

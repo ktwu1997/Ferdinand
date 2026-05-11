@@ -18,8 +18,10 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import http.cookiejar
 import json
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -33,9 +35,31 @@ FIELD_ORDER = (
 )
 DEFAULT_BASE = "http://127.0.0.1:40001"
 
+# Cookie-aware opener so `--login` lets this script hit a session-guarded
+# server (e.g. the deployed instance) and not just a local no-auth dev
+# server. Without `--login` it behaves exactly like the bare urlopen this
+# file used before.
+_OPENER = urllib.request.build_opener(
+    urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar())
+)
+
+
+def login(base: str, username: str, password: str) -> None:
+    body = json.dumps({"username": username, "password": password}).encode("utf-8")
+    req = urllib.request.Request(
+        f"{base}/api/auth/login", data=body,
+        headers={"Content-Type": "application/json"}, method="POST",
+    )
+    try:
+        with _OPENER.open(req, timeout=15) as r:
+            r.read()
+    except urllib.error.HTTPError as exc:
+        sys.exit(f"login failed for {username!r}: HTTP {exc.code} {exc.reason}")
+    print(f"[ingest] logged in as {username!r} — session cookie attached")
+
 
 def http_get_json(url: str) -> dict:
-    with urllib.request.urlopen(url, timeout=10) as r:
+    with _OPENER.open(url, timeout=10) as r:
         return json.loads(r.read())
 
 
@@ -44,7 +68,7 @@ def http_post_json(url: str, payload: dict) -> dict:
     req = urllib.request.Request(
         url, data=body, headers={"Content-Type": "application/json"}, method="POST"
     )
-    with urllib.request.urlopen(req, timeout=15) as r:
+    with _OPENER.open(req, timeout=15) as r:
         return json.loads(r.read())
 
 
@@ -118,6 +142,9 @@ def main() -> int:
                     help="path or shorthand for deck profile (e.g. 'sesame' → decks/sesame.json). "
                          "Default = legacy TOEIC vocab paths + TOEIC::Vocabulary::L{level}.")
     ap.add_argument("--base", default=DEFAULT_BASE)
+    ap.add_argument("--login", default=None, metavar="USER:PASS",
+                    help="authenticate before ingesting — needed for a session-guarded "
+                         "server like https://ferdinand.zeabur.app. Format: username:password")
     ap.add_argument("--deck", default=None,
                     help="override single-deck name (otherwise from profile). Ignored if profile uses deck_template.")
     ap.add_argument("--deck-template", default=None,
@@ -126,6 +153,12 @@ def main() -> int:
                     help="POST /api/decks for any deck not already present")
     ap.add_argument("--only", default=None, help="ingest one specific word")
     args = ap.parse_args()
+
+    if args.login:
+        if ":" not in args.login:
+            sys.exit("--login must be USERNAME:PASSWORD")
+        _user, _pw = args.login.split(":", 1)
+        login(args.base, _user, _pw)
 
     profile = load_profile(args.profile) if args.profile else default_toeic_profile()
     deck_name = args.deck or profile.deck
