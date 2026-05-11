@@ -1,3 +1,35 @@
+<!--
+  / dashboard — rev 2 design ("the deck ledger").
+
+  Visual reference: design_handoff_ferdinand/screenshots/02-dashboard.png is
+  THE authority (the rev-1 React source dashboard.jsx is stale on captions
+  and structure). The screenshot shows the ledger / list composition:
+
+    1. THE.DECK.LEDGER caption + a big mono "decks" title with a hand-drawn
+       underline squiggle, and a "another round" hand-font aside.
+    2. A TODAY row banded by 1.5px ink rules: date + "good morning, …"
+       subtitle on the left, then three stat cells — DUE NOW / REVIEWED /
+       STREAK — laid out as a grid.
+    3. An IDX · DECK table. Each row: zero-padded index · a small bordered
+       glyph square (JP / RS / …) · deck name + meta sub-line · the
+       NEW / LEARN / REVIEW counts right-aligned · a stacked queue bar.
+       A dashed "+ new deck" row closes the table.
+    4. (below the screenshot crop) the 7-day forecast bar chart and the
+       last-30-days reviews panel are kept for product completeness.
+
+  The sketch / kraft-paper skin (.sketch-skin .grain, paper texture, hand
+  comments) is unchanged — this is layout work, not a re-skin.
+
+  Test contract notes:
+   * data-testid="dash-root" / "dash-hero" / "dash-greeting" stay.
+   * the ledger ROWS carry data-testid="deck-card" + data-deck-id +
+     data-deck-name (the deck-grid contract — e2e a4/a5 + vitest depend
+     on it); .deck-card-name / .deck-card-sub are still the per-row name +
+     "<n> cards" sub-line.
+   * the resume-hero accent CTA is gone in rev 2 (the screenshot has no
+     room for it between TODAY and the table) — "continue where you left
+     off" is now just clicking the first ledger row.
+-->
 <script lang="ts">
     import { onMount, tick } from "svelte";
     import {
@@ -8,7 +40,6 @@
     } from "$lib/components/ui";
     import {
         SketchArrow,
-        SketchCardStack,
         SketchPlant,
         SketchPlus,
         SketchSearch,
@@ -16,6 +47,7 @@
         SketchClock,
         SketchLeaf,
         SketchUser,
+        SketchUnderline,
         FerdinandMark,
     } from "$lib/components/sketch";
     import { auth } from "$lib/auth.svelte";
@@ -229,10 +261,14 @@
     let activeDeckCount = $derived(
         decks.filter((d) => totalDue(d) > 0).length,
     );
+    // "REVIEWED" stat = today's review count. The recent-history series is
+    // chronological, so the last entry is today; fall back to 0 if empty.
+    let reviewedToday = $derived(history[history.length - 1]?.reviews ?? 0);
 
-    // Derive 2-char glyph from deck name. Strips spaces + dots so "日文 N2"
-    // → "日文" and "Rust ownership" → "RU". Unicode-aware via Array.from
-    // so multi-byte CJK chars don't get split mid-codepoint.
+    // Derive a 2-char glyph from the deck name for the bordered tag square.
+    // Strips spaces + dots so "日文 N2" → "日文" and "Rust ownership" → "RU".
+    // Unicode-aware via Array.from so multi-byte CJK chars aren't split
+    // mid-codepoint.
     function deriveGlyph(name: string): string {
         const chars = Array.from(name.trim()).filter(
             (c) => c !== " " && c !== "·" && c !== "_",
@@ -244,15 +280,35 @@
         return (first + second).toUpperCase();
     }
 
+    // Stacked queue-bar segments — proportional widths of new / learn /
+    // review against the larger of (sum of those counts) or totalCards so a
+    // deck with mostly-mature cards doesn't render a full bar.
+    function queueSegments(deck: Deck): {
+        new: number;
+        learn: number;
+        review: number;
+    } {
+        const due = deck.new + deck.learning + deck.review;
+        const denom = Math.max(due, deck.totalCards, 1);
+        return {
+            new: (deck.new / denom) * 100,
+            learn: (deck.learning / denom) * 100,
+            review: (deck.review / denom) * 100,
+        };
+    }
+
     // Date label for the // caption. Locale matches the design exemplar
-    // (2026·05·08) — middle-dot separators read as a deliberate aesthetic
-    // choice rather than the default "May 8, 2026" prose.
+    // (2026·05·08 thursday) — middle-dot separators + lowercase weekday read
+    // as a deliberate aesthetic choice rather than "May 8, 2026" prose.
     const today = (() => {
         const d = new Date();
         const y = d.getFullYear();
         const m = String(d.getMonth() + 1).padStart(2, "0");
         const day = String(d.getDate()).padStart(2, "0");
-        return `${y}·${m}·${day}`;
+        const weekday = d
+            .toLocaleDateString("en-US", { weekday: "long" })
+            .toLowerCase();
+        return `${y}·${m}·${day} ${weekday}`;
     })();
 
     let greetingName = $derived(auth.user?.username ?? "friend");
@@ -263,28 +319,20 @@
 <svelte:head><title>Today — Ferdinand</title></svelte:head>
 
 <div class="sketch-skin grain page" data-testid="dash-root">
-    <!-- ============== DESKTOP V2 (today-focused) ============== -->
+    <!-- ============== DESKTOP V2 (the deck ledger) ============== -->
     <div class="dash-desktop">
         <header class="dash-head" data-testid="dash-hero">
             <div class="dash-head-left">
-                <Caption>{today}</Caption>
-                <h1 class="greeting" data-testid="dash-greeting">
-                    morning, {greetingName}.
+                <Caption>the.deck.ledger</Caption>
+                <h1 class="dash-title">
+                    decks
                     <span class="dash-title-hand hand">another round</span>
-                    <span class="sun" aria-hidden="true">☉</span>
                 </h1>
-                <p class="dash-subtitle mono">
-                    you have <strong>{totalDueAll} cards</strong> due across {activeDeckCount} active deck{activeDeckCount === 1 ? "" : "s"}.
-                </p>
+                <div class="dash-title-rule" aria-hidden="true">
+                    <SketchUnderline width={96} />
+                </div>
             </div>
             <div class="dash-head-right">
-                <div class="streak">
-                    <Caption>streak</Caption>
-                    <div class="streak-value mono">
-                        14d <SketchFlame size={14} />
-                    </div>
-                </div>
-                <div class="vrule" role="presentation"></div>
                 <SketchPlant size={56} />
                 {#if auth.user}
                     <Btn kind="ghost" size="sm" onclick={handleLogout}>
@@ -301,27 +349,38 @@
             </div>
         {/if}
 
-        <!-- big "continue" CTA card (accent ground) -->
-        <a class="hero-cta" href="/study/{resume.id}" data-testid="dash-hero-cta">
-            <div class="hero-text">
-                <div class="hero-eye mono">start where you left off</div>
-                <div class="hero-title mono">
-                    <span class="hero-glyph">{resumeGlyph}</span>
-                    <span class="hero-name">{resume.name}</span>
+        <!-- TODAY band: date + greeting subtitle, then three stat cells -->
+        <section class="today-row" data-testid="dash-today">
+            <div class="today-meta">
+                <Caption>today</Caption>
+                <div class="today-date mono">{today}</div>
+                <p class="dash-subtitle mono" data-testid="dash-greeting">
+                    good morning, {greetingName} —
+                    <strong>{totalDueAll} cards</strong>
+                    waiting across {activeDeckCount} active deck{activeDeckCount === 1 ? "" : "s"}.
+                </p>
+            </div>
+            <div class="today-stat">
+                <Caption>due now</Caption>
+                <div class="today-value mono" style="--stat-color: var(--due)">
+                    {totalDueAll}
                 </div>
-                <div class="hero-stats mono">
-                    {resume.new} new · {resume.learning} learning · {resume.review} review{resumeDue > 0 ? ` · ~${Math.max(1, Math.round(resumeDue * 0.45))} min` : " · all clear"}
+            </div>
+            <div class="today-stat">
+                <Caption>reviewed</Caption>
+                <div class="today-value mono" style="--stat-color: var(--accent)">
+                    {reviewedToday}
                 </div>
             </div>
-            <div class="hero-arrow" aria-hidden="true">
-                <SketchArrow size={28} />
+            <div class="today-stat">
+                <Caption>streak</Caption>
+                <div class="today-value mono" style="--stat-color: var(--warn)">
+                    14d <SketchFlame size={16} />
+                </div>
             </div>
-            <div class="hero-deco" aria-hidden="true">
-                <SketchCardStack size={140} />
-            </div>
-        </a>
+        </section>
 
-        <!-- all decks -->
+        <!-- all decks — the ledger table -->
         <section class="deck-section">
             <div class="section-head">
                 <Caption>all decks</Caption>
@@ -448,76 +507,75 @@
                 <div class="error-banner mono" role="alert">{newFilteredError}</div>
             {/if}
 
-            <div class="deck-grid" data-testid="deck-grid">
+            <div class="deck-ledger" data-testid="deck-grid">
+                <div class="ledger-head mono" role="presentation">
+                    <span class="lh-idx">idx</span>
+                    <span class="lh-deck">deck</span>
+                    <span class="lh-num">new</span>
+                    <span class="lh-num">learn</span>
+                    <span class="lh-num">review</span>
+                    <span class="lh-queue">queue</span>
+                </div>
+
                 {#each decks as deck, i (deck.id)}
                     {@const due = totalDue(deck)}
                     {@const glyph = deriveGlyph(deck.name)}
+                    {@const seg = queueSegments(deck)}
                     <a
-                        class="deck-card"
-                        data-tilt={i % 3}
+                        class="deck-row"
+                        class:resting={due === 0}
                         data-testid="deck-card"
                         data-deck-id={deck.id}
                         data-deck-name={deck.name}
                         href="/study/{deck.id}"
                     >
-                        <div class="deck-card-head">
-                            <span class="deck-card-eye mono">
-                                {String(i + 1).padStart(2, "0")} · {glyph}
+                        <span class="deck-row-idx mono">
+                            {String(i + 1).padStart(2, "0")}
+                        </span>
+
+                        <div class="deck-row-id">
+                            <span class="deck-row-glyph mono" aria-hidden="true">{glyph}</span>
+                            <div class="deck-row-text">
+                                <div class="deck-card-name mono">{deck.name}</div>
+                                <div class="deck-card-sub mono">
+                                    <SketchClock size={11} />
+                                    {deck.totalCards.toLocaleString()} cards
+                                    {#if due > 0}
+                                        <span class="deck-row-tag">{due} due</span>
+                                    {:else}
+                                        <span class="deck-row-tag resting">resting</span>
+                                    {/if}
+                                </div>
+                            </div>
+                        </div>
+
+                        <span
+                            class="deck-row-num mono"
+                            class:has={deck.new > 0}
+                            style="--num-color: var(--due)"
+                        >{deck.new}</span>
+                        <span
+                            class="deck-row-num mono"
+                            class:has={deck.learning > 0}
+                            style="--num-color: var(--warn)"
+                        >{deck.learning}</span>
+                        <span
+                            class="deck-row-num mono"
+                            class:has={deck.review > 0}
+                            style="--num-color: var(--accent)"
+                        >{deck.review}</span>
+
+                        <span class="deck-row-queue" aria-hidden="true">
+                            <span class="qbar">
+                                <span class="qseg qnew" style="width: {seg.new}%"></span>
+                                <span class="qseg qlearn" style="width: {seg.learn}%"></span>
+                                <span class="qseg qreview" style="width: {seg.review}%"></span>
                             </span>
-                            {#if due > 0}
-                                <Chip color="var(--due)" bg="color-mix(in oklch, var(--due) 12%, transparent)">{due} due</Chip>
-                            {:else}
-                                <Chip color="var(--ink-mute)" bg="transparent">resting</Chip>
-                            {/if}
-                        </div>
-
-                        <div class="deck-card-body">
-                            <div class="deck-card-name mono">{deck.name}</div>
-                            <div class="deck-card-sub mono">
-                                {deck.totalCards.toLocaleString()} cards
-                            </div>
-                        </div>
-
-                        <div class="deck-card-counters">
-                            <div class="counter">
-                                <div class="mono counter-label">new</div>
-                                <div
-                                    class="mono counter-value"
-                                    class:has={deck.new > 0}
-                                    style="--counter-color: var(--due)"
-                                >{deck.new}</div>
-                            </div>
-                            <div class="counter">
-                                <div class="mono counter-label">learn</div>
-                                <div
-                                    class="mono counter-value"
-                                    class:has={deck.learning > 0}
-                                    style="--counter-color: var(--warn)"
-                                >{deck.learning}</div>
-                            </div>
-                            <div class="counter">
-                                <div class="mono counter-label">review</div>
-                                <div
-                                    class="mono counter-value"
-                                    class:has={deck.review > 0}
-                                    style="--counter-color: var(--accent)"
-                                >{deck.review}</div>
-                            </div>
-                        </div>
-
-                        <div class="deck-card-foot">
-                            <span class="mono deck-card-meta">
-                                <SketchClock size={11} />
-                                {deck.totalCards.toLocaleString()}
-                            </span>
-                            <span
-                                class="mono deck-card-cta"
-                                class:has-due={due > 0}
-                            >
+                            <span class="deck-row-cta mono" class:has-due={due > 0}>
                                 {due > 0 ? "study" : "review"}
                                 <SketchArrow size={12} />
                             </span>
-                        </div>
+                        </span>
                     </a>
                 {/each}
 
@@ -528,12 +586,22 @@
                     disabled={liveDecks === null}
                     aria-label="Create new deck"
                 >
-                    <SketchPlus size={28} />
-                    <div class="mono">new deck</div>
-                    <div class="hand new-deck-prompt">
+                    <SketchPlus size={20} />
+                    <span class="mono">new deck</span>
+                    <span class="hand new-deck-prompt">
                         what do you want to remember?
-                    </div>
+                    </span>
                 </button>
+            </div>
+
+            <div class="deck-foot">
+                <Caption>
+                    {decks.length} deck{decks.length === 1 ? "" : "s"} · {decks.reduce((a, d) => a + d.totalCards, 0).toLocaleString()} cards
+                </Caption>
+                <span class="deck-foot-hand">
+                    <SketchLeaf size={18} />
+                    <span class="hand">steady wins.</span>
+                </span>
             </div>
         </section>
 
@@ -637,9 +705,10 @@
             {/if}
         </header>
 
-        <Caption>{today}</Caption>
-        <h1 class="m-greeting">morning, {greetingName}.</h1>
+        <Caption>the.deck.ledger</Caption>
+        <h1 class="m-title">decks</h1>
         <p class="m-sub mono">
+            good morning, {greetingName} ·
             <strong>{totalDueAll}</strong> due · 14d streak
             <SketchFlame size={11} />
         </p>
@@ -650,16 +719,20 @@
             </div>
         {/if}
 
-        <a class="m-hero" href="/study/{resume.id}">
-            <div>
-                <div class="mono m-hero-eye">continue</div>
-                <div class="mono m-hero-title">{resume.name}</div>
-                <div class="mono m-hero-meta">
-                    {resumeDue} due · ~{Math.max(1, Math.round(resumeDue * 0.45))} min
-                </div>
+        <div class="m-today" data-testid="m-today">
+            <div class="m-today-cell">
+                <Caption>due now</Caption>
+                <div class="m-today-value mono" style="--stat-color: var(--due)">{totalDueAll}</div>
             </div>
-            <SketchArrow size={20} />
-        </a>
+            <div class="m-today-cell">
+                <Caption>reviewed</Caption>
+                <div class="m-today-value mono" style="--stat-color: var(--accent)">{reviewedToday}</div>
+            </div>
+            <div class="m-today-cell">
+                <Caption>streak</Caption>
+                <div class="m-today-value mono" style="--stat-color: var(--warn)">14d</div>
+            </div>
+        </div>
 
         <Caption>decks</Caption>
 
@@ -669,11 +742,14 @@
                 {@const glyph = deriveGlyph(deck.name)}
                 <a class="m-deck-row" href="/study/{deck.id}">
                     <div class="m-deck-head">
-                        <div>
-                            <div class="mono m-deck-eye">
-                                {String(i + 1).padStart(2, "0")} · {glyph}
+                        <div class="m-deck-id">
+                            <span class="m-deck-glyph mono" aria-hidden="true">{glyph}</span>
+                            <div>
+                                <div class="mono m-deck-eye">
+                                    {String(i + 1).padStart(2, "0")}
+                                </div>
+                                <div class="mono m-deck-name">{deck.name}</div>
                             </div>
-                            <div class="mono m-deck-name">{deck.name}</div>
                         </div>
                         {#if due > 0}
                             <Chip color="var(--due)" bg="color-mix(in oklch, var(--due) 12%, transparent)">{due} due</Chip>
@@ -795,43 +871,46 @@
         }
     }
 
-    /* — desktop header ————————————————————— */
+    /* — desktop header / title ————————————————— */
     .dash-head {
         display: flex;
         justify-content: space-between;
         align-items: flex-start;
         gap: 24px;
-        margin-bottom: 28px;
+        margin-bottom: 26px;
     }
     .dash-head-left {
         flex: 1;
         min-width: 0;
     }
-    .greeting {
+    .dash-title {
         font-family: var(--font-mono);
-        font-size: 32px;
-        font-weight: 500;
-        letter-spacing: -0.01em;
-        margin: 6px 0 0;
-        line-height: 1.15;
-    }
-    .greeting .sun {
-        color: var(--accent);
-        font-size: 24px;
-        margin-left: 12px;
+        font-size: 38px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        margin: 8px 0 0;
+        line-height: 1.1;
+        display: flex;
+        align-items: baseline;
+        gap: 16px;
+        flex-wrap: wrap;
     }
     .dash-title-hand {
         font-family: var(--font-hand);
         color: var(--accent);
-        font-size: 22px;
-        margin-left: 12px;
+        font-size: 24px;
         letter-spacing: 0;
         text-transform: lowercase;
     }
+    .dash-title-rule {
+        margin-top: 6px;
+        color: var(--accent);
+    }
     .dash-subtitle {
-        font-size: 14px;
+        font-size: 13px;
         color: var(--ink-soft);
-        margin: 8px 0 0;
+        margin: 6px 0 0;
+        line-height: 1.5;
     }
     .dash-subtitle strong {
         color: var(--due);
@@ -844,100 +923,50 @@
         gap: 16px;
         flex-shrink: 0;
     }
-    .streak {
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-    }
-    .streak-value {
-        font-size: 22px;
-        font-weight: 500;
-        color: var(--warn);
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-    }
-    .vrule {
-        width: 1px;
-        height: 40px;
-        background: var(--rule);
-    }
 
-    /* — hero CTA card ————————————————————— */
-    .hero-cta {
-        position: relative;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
+    /* — TODAY band ————————————————————————— */
+    .today-row {
+        display: grid;
+        grid-template-columns: 1.7fr 1fr 1fr 1.1fr;
         gap: 24px;
-        margin: 0 0 32px;
-        padding: 26px 32px;
-        background: var(--accent);
-        color: var(--bg);
-        border: var(--border-w) solid var(--ink);
-        border-radius: var(--radius-md);
-        box-shadow: var(--shadow-stamp-lg);
-        text-decoration: none;
-        overflow: hidden;
-        transition:
-            transform 120ms ease,
-            box-shadow 120ms ease;
+        align-items: center;
+        padding: 22px 0;
+        border-top: var(--border-w) solid var(--ink);
+        border-bottom: var(--border-w) solid var(--ink);
+        margin-bottom: 28px;
     }
-    .hero-cta:hover {
-        transform: translate(-1px, -1px);
-        box-shadow: 6px 6px 0 var(--ink);
-    }
-    .hero-cta:active {
-        transform: translate(2px, 2px);
-        box-shadow: 3px 3px 0 var(--ink);
-    }
-    .hero-cta:focus-visible {
-        outline: 2px solid var(--bg);
-        outline-offset: 4px;
-    }
-    .hero-text {
-        position: relative;
-        z-index: 1;
+    .today-meta {
         min-width: 0;
     }
-    .hero-eye {
-        font-size: 11px;
-        letter-spacing: 0.16em;
-        text-transform: uppercase;
-        opacity: 0.85;
+    .today-date {
+        font-size: 18px;
+        font-weight: 500;
+        margin-top: 6px;
+        letter-spacing: -0.01em;
     }
-    .hero-title {
-        font-size: 26px;
-        font-weight: 600;
-        margin: 6px 0 4px;
+    .today-stat {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+    .today-value {
+        font-size: 32px;
+        font-weight: 500;
+        letter-spacing: -0.02em;
+        color: var(--stat-color, var(--ink));
+        font-variant-numeric: tabular-nums;
         display: inline-flex;
         align-items: baseline;
-        gap: 12px;
+        gap: 6px;
     }
-    .hero-glyph {
-        font-size: 15px;
-        font-weight: 500;
-        opacity: 0.85;
-        letter-spacing: 0.06em;
-    }
-    .hero-stats {
-        font-size: 12px;
-        opacity: 0.9;
-    }
-    .hero-arrow {
-        position: relative;
-        z-index: 1;
-        flex-shrink: 0;
-        color: var(--bg);
-    }
-    .hero-deco {
-        position: absolute;
-        right: -12px;
-        top: -16px;
-        opacity: 0.18;
-        z-index: 0;
-        color: var(--bg);
-        pointer-events: none;
+    @media (max-width: 1024px) {
+        .today-row {
+            grid-template-columns: 1fr 1fr 1fr;
+        }
+        .today-meta {
+            grid-column: 1 / -1;
+            margin-bottom: 8px;
+        }
     }
 
     /* — sections ————————————————————————— */
@@ -950,7 +979,7 @@
         display: flex;
         justify-content: space-between;
         align-items: center;
-        margin-bottom: 14px;
+        margin-bottom: 12px;
     }
     .section-actions {
         display: inline-flex;
@@ -972,6 +1001,7 @@
         display: flex;
         gap: 12px;
         align-items: center;
+        margin-bottom: 12px;
     }
     .inline-form-2col .inline-input:nth-of-type(2) {
         flex: 1.4;
@@ -998,138 +1028,176 @@
         border-bottom-color: var(--accent);
     }
 
-    /* — deck grid ————————————————————————— */
-    .deck-grid {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 18px;
-    }
-    @media (max-width: 1024px) {
-        .deck-grid {
-            grid-template-columns: repeat(2, 1fr);
-        }
-    }
-
-    .deck-card {
-        position: relative;
+    /* — ledger table ————————————————————————— */
+    .deck-ledger {
         display: flex;
         flex-direction: column;
-        gap: 12px;
-        padding: 20px 22px 18px;
-        background: var(--paper);
-        border: var(--border-w) solid var(--ink);
-        border-radius: var(--radius);
-        box-shadow: var(--shadow-stamp-md);
-        text-decoration: none;
-        color: var(--ink);
-        min-height: 200px;
-        transition:
-            transform 120ms ease,
-            box-shadow 120ms ease;
     }
-    .deck-card[data-tilt="0"] { transform: rotate(-0.2deg); }
-    .deck-card[data-tilt="1"] { transform: rotate(0.4deg); }
-    .deck-card[data-tilt="2"] { transform: rotate(-0.6deg); }
-    .deck-card:hover {
-        transform: rotate(0deg) translate(-1px, -1px);
-        box-shadow: 5px 5px 0 var(--ink);
+    /* Shared column template — keep .ledger-head + .deck-row in lockstep. */
+    .ledger-head,
+    .deck-row {
+        display: grid;
+        grid-template-columns: 38px minmax(0, 1fr) 64px 64px 64px minmax(140px, 1.3fr);
+        gap: 16px;
+        align-items: center;
     }
-    .deck-card:active {
-        transform: rotate(0deg) translate(2px, 2px);
-        box-shadow: 1px 1px 0 var(--ink);
-    }
-    .deck-card:focus-visible {
-        outline: 2px solid var(--accent);
-        outline-offset: 3px;
-    }
-
-    .deck-card-head {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 12px;
-    }
-    .deck-card-eye {
+    .ledger-head {
         font-size: 10px;
-        color: var(--ink-mute);
         letter-spacing: 0.16em;
         text-transform: uppercase;
+        color: var(--ink-mute);
+        padding: 10px 8px;
+        border-bottom: 1px dashed var(--rule);
+    }
+    .ledger-head .lh-num {
+        text-align: right;
+    }
+
+    .deck-row {
+        padding: 16px 8px;
+        border-bottom: 1px solid var(--rule-soft);
+        text-decoration: none;
+        color: var(--ink);
+        position: relative;
+        transition: background-color 120ms ease;
+    }
+    .deck-row:hover {
+        background: color-mix(in oklch, var(--accent) 7%, transparent);
+    }
+    .deck-row:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: -2px;
+        border-radius: var(--radius);
+    }
+    .deck-row.resting {
+        opacity: 0.72;
+    }
+    .deck-row-idx {
+        font-size: 11px;
+        color: var(--ink-mute);
+        font-variant-numeric: tabular-nums;
+    }
+    .deck-row-id {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        min-width: 0;
+    }
+    .deck-row-glyph {
+        flex: 0 0 40px;
+        width: 40px;
+        height: 40px;
+        display: grid;
+        place-items: center;
+        border: 1.4px solid var(--ink);
+        border-radius: var(--radius);
+        background: var(--paper);
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        line-height: 1;
+        text-align: center;
+    }
+    .deck-row-text {
+        min-width: 0;
     }
     .deck-card-name {
-        font-size: 19px;
+        font-size: 16px;
         font-weight: 600;
         word-break: break-word;
     }
     .deck-card-sub {
+        margin-top: 3px;
         font-size: 11px;
         color: var(--ink-mute);
-        margin-top: 2px;
-    }
-
-    .deck-card-counters {
         display: flex;
-        gap: 18px;
-        margin-top: 4px;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
     }
-    .counter-label {
-        font-size: 10px;
-        color: var(--ink-mute);
-        letter-spacing: 0.1em;
+    .deck-row-tag {
+        border: 1px solid color-mix(in oklch, var(--due) 45%, transparent);
+        color: var(--due);
+        border-radius: var(--radius-pill);
+        padding: 1px 8px;
+        font-size: 9px;
+        letter-spacing: 0.08em;
         text-transform: uppercase;
     }
-    .counter-value {
-        font-size: 18px;
+    .deck-row-tag.resting {
+        border-color: var(--rule);
         color: var(--ink-mute);
+    }
+
+    .deck-row-num {
+        text-align: right;
+        font-size: 16px;
         font-weight: 400;
+        color: var(--ink-mute);
         font-variant-numeric: tabular-nums;
     }
-    .counter-value.has {
-        color: var(--counter-color);
+    .deck-row-num.has {
+        color: var(--num-color);
         font-weight: 600;
     }
 
-    .deck-card-foot {
+    .deck-row-queue {
         display: flex;
-        justify-content: space-between;
         align-items: center;
-        margin-top: auto;
-        padding-top: 10px;
-        border-top: 1px dashed var(--rule);
+        gap: 12px;
+        min-width: 0;
     }
-    .deck-card-meta {
+    .qbar {
+        flex: 1;
+        min-width: 0;
+        height: 8px;
+        display: flex;
+        background: color-mix(in oklch, var(--ink) 8%, transparent);
+        border: 1px solid var(--rule);
+        border-radius: var(--radius-pill);
+        overflow: hidden;
+    }
+    .qseg {
+        height: 100%;
+    }
+    .qseg.qnew {
+        background: var(--due);
+    }
+    .qseg.qlearn {
+        background: var(--warn);
+    }
+    .qseg.qreview {
+        background: var(--accent);
+    }
+    .deck-row-cta {
+        flex-shrink: 0;
         font-size: 10px;
         color: var(--ink-mute);
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-    }
-    .deck-card-cta {
-        font-size: 11px;
-        color: var(--ink-mute);
-        letter-spacing: 0.06em;
+        letter-spacing: 0.08em;
         text-transform: uppercase;
         display: inline-flex;
         align-items: center;
         gap: 4px;
     }
-    .deck-card-cta.has-due {
+    .deck-row-cta.has-due {
         color: var(--accent);
     }
 
     .deck-card-new {
         display: flex;
-        flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 10px;
-        padding: 22px;
+        gap: 12px;
+        padding: 16px 8px;
+        margin-top: 4px;
         background: transparent;
         border: 1.5px dashed var(--rule);
         border-radius: var(--radius);
         color: var(--ink-soft);
         cursor: pointer;
-        min-height: 200px;
         font-family: inherit;
+        font-size: 12px;
+        letter-spacing: 0.08em;
         transition:
             border-color 120ms ease,
             color 120ms ease;
@@ -1144,8 +1212,27 @@
     }
     .new-deck-prompt {
         color: var(--accent);
+        font-size: 17px;
+        letter-spacing: 0;
+        text-transform: none;
+    }
+
+    .deck-foot {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-top: 18px;
+        padding-top: 14px;
+        border-top: 1px dashed var(--rule);
+    }
+    .deck-foot-hand {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--accent);
+    }
+    .deck-foot-hand .hand {
         font-size: 18px;
-        margin-top: 4px;
     }
 
     /* — forecast bar chart ————————————————— */
@@ -1272,52 +1359,47 @@
         font-size: 12px;
         font-weight: 600;
     }
-    .m-greeting {
+    .m-title {
         font-family: var(--font-mono);
-        font-size: 22px;
-        font-weight: 500;
+        font-size: 26px;
+        font-weight: 600;
         margin: 6px 0 0;
-        letter-spacing: -0.01em;
+        letter-spacing: -0.02em;
     }
     .m-sub {
         font-size: 12px;
         color: var(--ink-soft);
-        margin: 6px 0 18px;
+        margin: 6px 0 16px;
         display: inline-flex;
         align-items: center;
         gap: 4px;
+        flex-wrap: wrap;
     }
     .m-sub strong {
         color: var(--due);
         font-weight: 600;
     }
 
-    .m-hero {
+    .m-today {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+        padding: 14px 0;
+        border-top: 1.2px solid var(--ink);
+        border-bottom: 1.2px solid var(--ink);
+        margin-bottom: 18px;
+    }
+    .m-today-cell {
         display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 14px 16px;
-        background: var(--accent);
-        color: var(--bg);
-        border: 1.4px solid var(--ink);
-        border-radius: var(--radius-md);
-        box-shadow: var(--shadow-stamp-md);
-        text-decoration: none;
-        margin-bottom: 22px;
+        flex-direction: column;
+        gap: 4px;
     }
-    .m-hero-eye {
-        font-size: 9px;
-        letter-spacing: 0.18em;
-        opacity: 0.85;
-    }
-    .m-hero-title {
-        font-size: 16px;
-        font-weight: 600;
-        margin-top: 4px;
-    }
-    .m-hero-meta {
-        font-size: 10px;
-        opacity: 0.85;
+    .m-today-value {
+        font-size: 22px;
+        font-weight: 500;
+        letter-spacing: -0.02em;
+        color: var(--stat-color, var(--ink));
+        font-variant-numeric: tabular-nums;
     }
 
     .m-deck-list {
@@ -1341,6 +1423,26 @@
         justify-content: space-between;
         align-items: flex-start;
         gap: 10px;
+    }
+    .m-deck-id {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+    }
+    .m-deck-glyph {
+        flex: 0 0 32px;
+        width: 32px;
+        height: 32px;
+        display: grid;
+        place-items: center;
+        border: 1.2px solid var(--ink);
+        border-radius: var(--radius);
+        background: var(--bg-soft);
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        line-height: 1;
     }
     .m-deck-eye {
         font-size: 9px;

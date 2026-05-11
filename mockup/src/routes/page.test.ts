@@ -12,8 +12,12 @@ import type {
 
 // Phase B-test-fix-1: page no longer renders LiveIndicator (and no
 // longer calls fetchHealth) — A5b dashboard polish moved the framing
-// to the .dash-hero CTA. We mock the four onMount fetches plus the
-// two inline-form mutators; everything else stays real.
+// to the .dash-hero CTA. Design rev 2 ("the deck ledger") then dropped
+// the accent resume-CTA entirely — the deck-grid is now a ledger table
+// whose rows carry data-testid="deck-card" + data-deck-id + the
+// /study/<id> href, so "continue where you left off" is just clicking
+// the first row. We mock the four onMount fetches plus the two
+// inline-form mutators; everything else stays real.
 vi.mock("$lib/api", async (importOriginal) => {
     const actual = await importOriginal<typeof import("$lib/api")>();
     return {
@@ -92,7 +96,7 @@ describe("HomePage contract", () => {
         container.remove();
     });
 
-    test("fetchDecks success: backend decks drive desktop deck card and totalDueAll subtitle", async () => {
+    test("fetchDecks success: backend decks drive desktop ledger row and totalDueAll subtitle", async () => {
         vi.mocked(fetchDecks).mockResolvedValueOnce(decksOk);
 
         const instance = mount(Page, { target: container, props: {} });
@@ -109,8 +113,9 @@ describe("HomePage contract", () => {
             expect(subtitleStrong?.textContent).toContain("10");
 
             // level >= 1 + id !== 0 filter leaves exactly one live row.
-            // [data-testid="deck-card"] is desktop-only; mobile uses a
-            // separate .m-deck-row which we do not assert here.
+            // [data-testid="deck-card"] is desktop-only (the ledger
+            // rows); mobile uses a separate .m-deck-row which we do not
+            // assert here.
             const cards = container.querySelectorAll(
                 '[data-testid="deck-card"]',
             );
@@ -118,22 +123,14 @@ describe("HomePage contract", () => {
 
             const card = cards[0]!;
             expect(card.getAttribute("data-deck-name")).toBe("Spanish");
+            expect(card.getAttribute("data-deck-id")).toBe("42");
+            expect(card.getAttribute("href")).toBe("/study/42");
             expect(
                 card.querySelector(".deck-card-name")?.textContent?.trim(),
             ).toBe("Spanish");
             expect(
                 card.querySelector(".deck-card-sub")?.textContent,
             ).toContain("10 cards");
-
-            // Resume hero takes decks[0] → Spanish; .hero-name carries
-            // the resume deck's display label.
-            const heroCta = container.querySelector<HTMLAnchorElement>(
-                '[data-testid="dash-hero-cta"]',
-            );
-            expect(heroCta?.getAttribute("href")).toBe("/study/42");
-            expect(
-                heroCta?.querySelector(".hero-name")?.textContent?.trim(),
-            ).toBe("Spanish");
         } finally {
             unmount(instance);
         }
@@ -180,10 +177,14 @@ describe("HomePage contract", () => {
                 String(expectedTotalDue),
             );
 
-            const heroName = container.querySelector(
-                '[data-testid="dash-hero-cta"] .hero-name',
+            // First ledger row mirrors the first fake deck — clicking it
+            // is the rev-2 "continue where you left off" path.
+            const firstRow = container.querySelector(
+                '[data-testid="deck-card"]',
             );
-            expect(heroName?.textContent?.trim()).toBe(fakeDecks[0].name);
+            expect(
+                firstRow?.querySelector(".deck-card-name")?.textContent?.trim(),
+            ).toBe(fakeDecks[0].name);
         } finally {
             unmount(instance);
         }
@@ -202,25 +203,25 @@ describe("HomePage contract", () => {
         }
     });
 
-    test("Resume hero CTA links to first deck's study route with sketch-skin labels", async () => {
+    test("first ledger row links to first deck's study route (rev-2 resume path)", async () => {
         vi.mocked(fetchDecks).mockResolvedValueOnce(decksOk);
 
         const instance = mount(Page, { target: container, props: {} });
         try {
             await settle();
 
-            // Live deck id 42 is mapped to string in +page.svelte.
-            const cta = container.querySelector<HTMLAnchorElement>(
-                '[data-testid="dash-hero-cta"]',
+            // Design rev 2 dropped the accent resume-CTA — the deck-grid
+            // is a ledger table now, and "continue where you left off"
+            // is just clicking row 1. Live deck id 42 is mapped to
+            // string in +page.svelte.
+            const firstRow = container.querySelector<HTMLAnchorElement>(
+                '[data-testid="deck-card"]',
             );
-            expect(cta).not.toBeNull();
-            expect(cta!.getAttribute("href")).toBe("/study/42");
-            // The eye + glyph + name combo replaces the old "Start
-            // studying" copy. We pin the eye phrase because it is
-            // part of the dash-hero contract.
-            expect(cta!.textContent).toContain("start where you left off");
+            expect(firstRow).not.toBeNull();
+            expect(firstRow!.getAttribute("href")).toBe("/study/42");
+            expect(firstRow!.getAttribute("data-deck-id")).toBe("42");
             expect(
-                cta!.querySelector(".hero-name")?.textContent?.trim(),
+                firstRow!.querySelector(".deck-card-name")?.textContent?.trim(),
             ).toBe("Spanish");
         } finally {
             unmount(instance);
