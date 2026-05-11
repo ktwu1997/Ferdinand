@@ -1729,7 +1729,7 @@
     }
 </script>
 
-<svelte:head><title>Browse — Anki</title></svelte:head>
+<svelte:head><title>Browse — Ferdinand</title></svelte:head>
 
 <div class="sketch-skin grain page bx-page" data-testid="browse-root">
     <!-- inner sidebar (tree) — Phase A4-ε₁ sketch-skin port -->
@@ -1746,7 +1746,7 @@
                 onclick={() => toggle("decks")}
                 aria-expanded={openSection.decks}
             >
-                <Caption>decks</Caption>
+                <Caption>// decks</Caption>
             </button>
             {#if openSection.decks}
                 <div class="bx-section-body" data-testid="browse-deck-list">
@@ -1798,7 +1798,7 @@
 
         <div class="bx-section">
             <div class="bx-section-title">
-                <Caption>state</Caption>
+                <Caption>// state</Caption>
             </div>
             <div class="bx-section-body" data-testid="browse-state-filters">
                 {#each STATE_FILTERS as s (s.key)}
@@ -1827,7 +1827,7 @@
                 onclick={() => toggle("tags")}
                 aria-expanded={openSection.tags}
             >
-                <Caption>tags</Caption>
+                <Caption>// tags</Caption>
             </button>
             {#if openSection.tags}
                 <div class="bx-section-body bx-tag-cloud">
@@ -1851,7 +1851,7 @@
                     onclick={() => toggle("saved")}
                     aria-expanded={openSection.saved}
                 >
-                    <Caption>pinned searches</Caption>
+                    <Caption>// pinned searches</Caption>
                 </button>
                 {#if liveSaved !== null && !isCreatingSaved && openSection.saved}
                     <button
@@ -1952,7 +1952,7 @@
     <main class="bx-main">
         <header class="bx-hero" data-testid="browse-hero">
             <div class="bx-hero-left">
-                <Caption>the.card.archive</Caption>
+                <Caption>// the.card.archive</Caption>
                 <h1 class="bx-title mono" data-testid="browse-title">
                     browse
                     <span class="hand bx-tag-everything" aria-hidden="true">everything</span>
@@ -2330,7 +2330,7 @@
             </div>
 
             <div class="bx-table-foot mono">
-                <Caption>{filtered.length} of {liveTotal ?? rows.length} · sorted by due asc</Caption>
+                <Caption>// {filtered.length} of {liveTotal ?? rows.length} · sorted by due asc</Caption>
                 <div class="bx-table-keys">
                     <span>↑↓ navigate</span>
                     <span>↵ open</span>

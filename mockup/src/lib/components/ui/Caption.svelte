@@ -1,26 +1,26 @@
 <!--
-  Mono uppercase caption. README §Captions: text is prefixed with "// "
-  in source code (intentional aesthetic choice). We auto-prefix here so
-  callers write `<Caption>session 01</Caption>` without baking the slashes
-  into every label string — but if a caller already includes "// " we
-  don't double up.
+  Mono uppercase caption. Design rev 2 keeps a single leading "// " on
+  section labels (see screenshots: "// SECTIONS", "// NAV", "// THE.LEDGER").
+  The "// " is NOT auto-prepended here — call sites pass it as part of the
+  slot text, matching the design source (primitives.jsx Caption renders the
+  children verbatim). That keeps the prefix opt-out-able and avoids the old
+  "//// " doubling bug from when this component auto-prefixed AND callers
+  also wrote "// ".
 -->
 <script lang="ts">
     import type { Snippet } from "svelte";
     interface Props {
         children?: Snippet;
         color?: string;
-        /** Skip the leading `// ` when the caller wants raw mono text. */
-        bare?: boolean;
     }
-    let { children, color, bare = false }: Props = $props();
+    let { children, color }: Props = $props();
 </script>
 
 <div
     class="caption mono"
     style={color ? `color: ${color}` : ""}
 >
-    {#if !bare}<span aria-hidden="true">// </span>{/if}{@render children?.()}
+    {@render children?.()}
 </div>
 
 <style>

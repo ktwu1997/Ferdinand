@@ -304,7 +304,7 @@
 </script>
 
 <svelte:window onkeydown={onKey} />
-<svelte:head><title>Studying {deckName} — Anki</title></svelte:head>
+<svelte:head><title>Studying {deckName} — Ferdinand</title></svelte:head>
 
 <div class="sketch-skin grain stage" data-testid="study-root">
     <header class="study-head">
@@ -314,14 +314,14 @@
             </a>
             <div class="glyph mono" aria-hidden="true">{glyph}</div>
             <div class="deck-meta">
-                <Caption>session · <span data-testid="study-deck-name">{deckName}</span></Caption>
+                <Caption>// session · <span data-testid="study-deck-name">{deckName}</span></Caption>
                 <div class="card-count mono">card {position} of {total}</div>
             </div>
         </div>
 
         <div class="head-progress">
             <div class="progress-meta">
-                <Caption>progress</Caption>
+                <Caption>// progress</Caption>
                 {#if mode === "live" && counts}
                     <span class="counts mono" data-testid="study-counts">
                         <span class="c-new" class:zero={counts.new === 0}>{counts.new} new</span>
