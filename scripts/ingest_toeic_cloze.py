@@ -14,8 +14,10 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import http.cookiejar
 import json
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -29,9 +31,30 @@ DEFAULT_BASE = "http://127.0.0.1:40001"
 DEFAULT_DECK = "Default"
 DEFAULT_DECK_TEMPLATE = None
 
+# Cookie-aware opener so `--login` lets this script hit a session-guarded
+# server (e.g. the deployed instance). Without `--login` it behaves exactly
+# like the bare urlopen this file used before.
+_OPENER = urllib.request.build_opener(
+    urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar())
+)
+
+
+def login(base: str, username: str, password: str) -> None:
+    body = json.dumps({"username": username, "password": password}).encode("utf-8")
+    req = urllib.request.Request(
+        f"{base}/api/auth/login", data=body,
+        headers={"Content-Type": "application/json"}, method="POST",
+    )
+    try:
+        with _OPENER.open(req, timeout=15) as r:
+            r.read()
+    except urllib.error.HTTPError as exc:
+        sys.exit(f"login failed for {username!r}: HTTP {exc.code} {exc.reason}")
+    print(f"[ingest-cloze] logged in as {username!r} — session cookie attached")
+
 
 def http_get_json(url: str) -> dict:
-    with urllib.request.urlopen(url, timeout=10) as r:
+    with _OPENER.open(url, timeout=10) as r:
         return json.loads(r.read())
 
 
@@ -40,7 +63,7 @@ def http_post_json(url: str, payload: dict) -> dict:
     req = urllib.request.Request(
         url, data=body, headers={"Content-Type": "application/json"}, method="POST"
     )
-    with urllib.request.urlopen(req, timeout=15) as r:
+    with _OPENER.open(req, timeout=15) as r:
         return json.loads(r.read())
 
 
@@ -106,12 +129,21 @@ def build_tags(card: dict) -> list[str]:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--base", default=DEFAULT_BASE)
+    ap.add_argument("--login", default=None, metavar="USER:PASS",
+                    help="authenticate before ingesting — needed for a session-guarded "
+                         "server like https://ferdinand.zeabur.app. Format: username:password")
     ap.add_argument("--deck", default=DEFAULT_DECK)
     ap.add_argument("--deck-template", default=DEFAULT_DECK_TEMPLATE,
                     help="route via _meta keys, e.g. 'TOEIC::Cloze::L{level}'")
     ap.add_argument("--auto-create", action="store_true")
     ap.add_argument("--only", default=None, help="ingest one specific cloze id")
     args = ap.parse_args()
+
+    if args.login:
+        if ":" not in args.login:
+            sys.exit("--login must be USERNAME:PASSWORD")
+        _user, _pw = args.login.split(":", 1)
+        login(args.base, _user, _pw)
 
     if not CARDS_IN.exists():
         sys.exit(f"cards file missing: {CARDS_IN}")
