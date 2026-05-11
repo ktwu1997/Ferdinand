@@ -3,6 +3,18 @@
 // Phase B-test pre-write: runs against deployed instance, NOT localhost.
 // WebKit + iPhone 13 device emulation. Mobile-only smoke (touch/IME/cookie).
 //
+// ── WebKit-vs-chromium fallback note ────────────────────────────────────
+// The PREFERRED engine is WebKit (real Safari rendering/JS engine), launched
+// via Playwright's bundled `webkit`. Some sandboxes/CI images can't run it —
+// `npx playwright install webkit` fails host-requirements validation, or
+// `webkit.launch()` throws on missing system libraries. In that case this
+// script FALLS BACK to chromium with `devices['iPhone 13']` emulation so the
+// touch/IME/cookie flow still gets exercised. That fallback is NOT a true
+// Safari run — Blink ≠ WebKit. A genuine Safari smoke needs an environment
+// with WebKit's runtime deps installed (or a real macOS/iOS device). The
+// chosen engine is logged at startup and recorded in result.json.
+// ─────────────────────────────────────────────────────────────────────────
+//
 // Required env (all paths):
 //   BASE_URL, FERDINAND_USER1, FERDINAND_PASS1
 // Optional env (raw-VPS path only — Caddy basic_auth gate):
@@ -35,10 +47,14 @@
 // exit 0 with a "skipping live smoke" message. BASIC_AUTH_* may be absent —
 // that's the Zeabur-path happy case (no gateway-level auth).
 
-import { webkit, devices } from "playwright";
+import { webkit, chromium, devices } from "playwright";
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
+
+// Optional override: A14_ENGINE=chromium forces the fallback engine without
+// even attempting WebKit (useful when you already know WebKit is unavailable).
+const FORCE_ENGINE = (process.env.A14_ENGINE || "").toLowerCase();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ART = path.join(__dirname, "artifacts", "a14_live_iphone_safari_smoke");
@@ -91,6 +107,7 @@ console.log(
 const result = {
     base: BASE_URL,
     started: new Date().toISOString(),
+    engine: null, // "webkit" (preferred) | "chromium-iphone-emulation" (fallback)
     checks: [],
     consoleErrors: [],
     failedRequests: [],
@@ -100,8 +117,99 @@ const record = (name, passed, detail) => {
     console.log(`${passed ? "✓" : "✗"} ${name}${detail ? "  — " + detail : ""}`);
 };
 
-// ---- launch ------------------------------------------------------------
-const browser = await webkit.launch({ headless: true });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Retry a thunk on a thrown error OR a 5xx-status result (Zeabur cold-start
+// idle-sleep produces both), with linear backoff.
+async function retryTransient(label, thunk, { tries = 4, baseMs = 1500 } = {}) {
+    let lastErr;
+    for (let i = 1; i <= tries; i++) {
+        try {
+            const out = await thunk();
+            if (out && typeof out.status === "function" && out.status() >= 500) {
+                if (i < tries) {
+                    console.log(
+                        `  [retry] ${label}: status ${out.status()} (attempt ${i}/${tries}), backing off…`,
+                    );
+                    await sleep(baseMs * i);
+                    continue;
+                }
+            }
+            return out;
+        } catch (err) {
+            lastErr = err;
+            if (i < tries) {
+                console.log(
+                    `  [retry] ${label}: ${err?.message ?? err} (attempt ${i}/${tries}), backing off…`,
+                );
+                await sleep(baseMs * i);
+                continue;
+            }
+        }
+    }
+    if (lastErr) throw lastErr;
+}
+
+// Best-effort warm-up against the cheap public /api/health endpoint.
+async function warmUp(ctx, { tries = 8, baseMs = 2000 } = {}) {
+    for (let i = 1; i <= tries; i++) {
+        try {
+            const res = await ctx.request.get(`${BASE_URL}/api/health`);
+            if (res.status() === 200) {
+                console.log(`[a14] warm-up: /api/health 200 on attempt ${i}`);
+                return true;
+            }
+            console.log(
+                `[a14] warm-up: /api/health ${res.status()} (attempt ${i}/${tries})`,
+            );
+        } catch (err) {
+            console.log(
+                `[a14] warm-up: ${err?.message ?? err} (attempt ${i}/${tries})`,
+            );
+        }
+        if (i < tries) await sleep(baseMs);
+    }
+    console.log("[a14] warm-up: gave up polling /api/health — proceeding anyway");
+    return false;
+}
+
+// ---- launch (prefer WebKit; fall back to chromium iPhone emulation) ----
+async function launchEngine() {
+    if (FORCE_ENGINE === "chromium") {
+        console.log(
+            "[a14] A14_ENGINE=chromium → using chromium iPhone-13 emulation (NOT a true Safari run)",
+        );
+        return {
+            browser: await chromium.launch({ headless: true }),
+            engine: "chromium-iphone-emulation",
+        };
+    }
+    if (FORCE_ENGINE === "webkit") {
+        console.log("[a14] A14_ENGINE=webkit → forcing WebKit (no fallback)");
+        return { browser: await webkit.launch({ headless: true }), engine: "webkit" };
+    }
+    // Default: try WebKit first, fall back to chromium if it can't launch
+    // (missing host libraries, browser binary not installed, …).
+    try {
+        const browser = await webkit.launch({ headless: true });
+        console.log("[a14] engine: WebKit (real Safari engine) ✓");
+        return { browser, engine: "webkit" };
+    } catch (err) {
+        console.log(
+            `[a14] WebKit unavailable (${err?.message ?? err}).\n` +
+                "[a14] FALLING BACK to chromium with devices['iPhone 13'] emulation.\n" +
+                "[a14] NOTE: this is Blink, not WebKit — a true Safari smoke needs a\n" +
+                "[a14]       different environment (WebKit runtime deps / real iOS device).",
+        );
+        return {
+            browser: await chromium.launch({ headless: true }),
+            engine: "chromium-iphone-emulation",
+        };
+    }
+}
+
+const { browser, engine } = await launchEngine();
+result.engine = engine;
 const iPhone = devices["iPhone 13"];
 const ctx = await browser.newContext({
     ...iPhone,
@@ -120,13 +228,18 @@ ctx.on("requestfailed", (req) => {
 });
 
 try {
+    // ===== 0. Warm-up: wake the (possibly idle-slept) container =====
+    await warmUp(ctx);
+
     // ===== 1. Login as USER1 via API (mobile UI happy-path is covered by
     //         a3 against localhost; this smoke just needs the cookie). =====
     {
-        const res = await ctx.request.post(`${BASE_URL}/api/auth/login`, {
-            data: { username: FERDINAND_USER1, password: FERDINAND_PASS1 },
-            headers: { "content-type": "application/json" },
-        });
+        const res = await retryTransient("login (USER1)", () =>
+            ctx.request.post(`${BASE_URL}/api/auth/login`, {
+                data: { username: FERDINAND_USER1, password: FERDINAND_PASS1 },
+                headers: { "content-type": "application/json" },
+            }),
+        );
         record(
             "1. POST /api/auth/login (USER1) → 200",
             res.status() === 200,
@@ -137,14 +250,28 @@ try {
     // ===== 2. Dashboard /: sketch-skin .dash-head + .dash-title-hand =====
     {
         const page = await ctx.newPage();
-        await page.goto(`${BASE_URL}/`, { waitUntil: "networkidle" });
-        const dashHead = page.locator(".dash-head");
-        const dashTitleHand = page.locator(".dash-title-hand");
-        await dashHead
-            .waitFor({ state: "visible", timeout: 8000 })
+        await retryTransient("goto /", () =>
+            page.goto(`${BASE_URL}/`, { waitUntil: "networkidle" }),
+        );
+        // At iPhone-13 width (390px ≤ 640px breakpoint) the dashboard renders
+        // its `.dash-mobile` branch, NOT `.dash-desktop` — `.dash-head` /
+        // `.dash-title-hand` live inside `.dash-desktop` (display:none here).
+        // The mobile markup exposes `data-testid="dash-root"` plus `.m-head`,
+        // `.m-greeting`, `.m-hero`, and the `.m-deck-list` container.
+        const dashRoot = page.locator('[data-testid="dash-root"]');
+        await dashRoot
+            .waitFor({ state: "visible", timeout: 12000 })
             .catch(() => null);
-        const dashHeadVisible = await dashHead.isVisible().catch(() => false);
-        const dashTitleHandVisible = await dashTitleHand
+        const mHead = page.locator(".m-head");
+        const mGreeting = page.locator(".m-greeting");
+        const mDeckList = page.locator(".m-deck-list");
+        const rootVisible = await dashRoot.isVisible().catch(() => false);
+        const mHeadVisible = await mHead.isVisible().catch(() => false);
+        const mGreetingVisible = await mGreeting.isVisible().catch(() => false);
+        const mDeckListVisible = await mDeckList.isVisible().catch(() => false);
+        // Sanity: the desktop branch must NOT be visible on a phone viewport.
+        const dashDesktopVisible = await page
+            .locator(".dash-desktop")
             .isVisible()
             .catch(() => false);
         await page.screenshot({
@@ -152,16 +279,23 @@ try {
             fullPage: true,
         });
         record(
-            "2. mobile dashboard: .dash-head + .dash-title-hand render",
-            dashHeadVisible && dashTitleHandVisible,
-            `dash_head=${dashHeadVisible} dash_title_hand=${dashTitleHandVisible}`,
+            "2. mobile dashboard: dash-root + .m-head + .m-greeting + .m-deck-list render (desktop branch hidden)",
+            rootVisible &&
+                mHeadVisible &&
+                mGreetingVisible &&
+                mDeckListVisible &&
+                !dashDesktopVisible,
+            `root=${rootVisible} m_head=${mHeadVisible} m_greeting=${mGreetingVisible} ` +
+                `m_deck_list=${mDeckListVisible} desktop_hidden=${!dashDesktopVisible}`,
         );
         await page.close();
     }
 
     // ===== 3. /study/<deckId>: tap (touch event, NOT click) on Again =====
     {
-        const apiRes = await ctx.request.get(`${BASE_URL}/api/decks`);
+        const apiRes = await retryTransient("GET /api/decks", () =>
+            ctx.request.get(`${BASE_URL}/api/decks`),
+        );
         const apiBody = await apiRes.json().catch(() => null);
         const decks = (apiBody?.decks ?? []).filter(
             (d) => d.id !== 0 && (d.level ?? 1) >= 1,
@@ -176,26 +310,60 @@ try {
             outcome = "no-deck";
             detail = `decks=${decks.length}`;
         } else {
-            await page.goto(`${BASE_URL}/study/${deckId}`, {
-                waitUntil: "networkidle",
-            });
+            // /study fans out to /api/deck_config* + /api/fsrs/* — cold-start
+            // 5xx culprits, so retry the navigation.
+            await retryTransient(`goto /study/${deckId}`, () =>
+                page.goto(`${BASE_URL}/study/${deckId}`, {
+                    waitUntil: "networkidle",
+                }),
+            );
             const reveal = page.locator('[data-testid="reveal-btn"]');
             const empty = page.locator('[data-testid="study-empty"]');
+            const errBanner = page.locator('[data-testid="study-error"]');
             await Promise.race([
                 reveal
-                    .waitFor({ state: "visible", timeout: 8000 })
+                    .waitFor({ state: "visible", timeout: 12000 })
                     .catch(() => null),
                 empty
-                    .waitFor({ state: "visible", timeout: 8000 })
+                    .waitFor({ state: "visible", timeout: 12000 })
+                    .catch(() => null),
+                errBanner
+                    .waitFor({ state: "visible", timeout: 12000 })
                     .catch(() => null),
             ]);
+            // Cold-start error banner → wait + reload once before deciding.
+            if (await errBanner.isVisible().catch(() => false)) {
+                console.log("  [study] error banner visible — reloading once");
+                await sleep(2500);
+                await page.reload({ waitUntil: "networkidle" }).catch(() => null);
+                await Promise.race([
+                    reveal
+                        .waitFor({ state: "visible", timeout: 12000 })
+                        .catch(() => null),
+                    empty
+                        .waitFor({ state: "visible", timeout: 12000 })
+                        .catch(() => null),
+                ]);
+            }
             const emptyVisible = await empty.isVisible().catch(() => false);
+            // Queue-exhausted edge: fetchQueue returned 0 cards → study page
+            // shows neither study-empty (needs sessionStartedWith>0) nor an
+            // enabled reveal-btn (disabled while !currentCard). A visible-but-
+            // disabled reveal-btn is the "nothing to study" signal.
+            const revealVisible = await reveal.isVisible().catch(() => false);
+            const revealEnabled = revealVisible
+                ? await reveal.isEnabled().catch(() => false)
+                : false;
             if (emptyVisible) {
                 outcome = "empty";
                 detail = `deckId=${deckId}`;
+            } else if (revealVisible && !revealEnabled) {
+                outcome = "empty-queue";
+                detail = `deckId=${deckId}`;
             } else {
-                // .tap() drives a real touchstart/touchend pair under
-                // WebKit + iPhone emulation, which `.click()` would not.
+                // .tap() drives a real touchstart/touchend pair under WebKit +
+                // iPhone emulation (and chromium with hasTouch from the
+                // iPhone-13 device descriptor), which `.click()` would not.
                 await reveal.tap();
                 const again = page.locator('[data-testid="ans-again"]');
                 await again.waitFor({ state: "visible", timeout: 5000 });
@@ -217,8 +385,8 @@ try {
         });
         await page.close();
         record(
-            "3. /study mobile tap path: tapped-again OR empty OR no-deck",
-            ["tapped-again", "empty", "no-deck"].includes(outcome),
+            "3. /study mobile tap path: tapped-again OR empty OR empty-queue OR no-deck",
+            ["tapped-again", "empty", "empty-queue", "no-deck"].includes(outcome),
             `outcome=${outcome} ${detail}`,
         );
     }
@@ -226,7 +394,9 @@ try {
     // ===== 4. /browse mobile IME chip: type 'テスト' + Enter =====
     {
         const page = await ctx.newPage();
-        await page.goto(`${BASE_URL}/browse`, { waitUntil: "networkidle" });
+        await retryTransient("goto /browse", () =>
+            page.goto(`${BASE_URL}/browse`, { waitUntil: "networkidle" }),
+        );
         const input = page.locator('[data-testid="browse-toolbar-input"]');
         await input.waitFor({ state: "visible", timeout: 8000 });
         // Tap to focus first (mobile pattern), then fill.
@@ -253,9 +423,13 @@ try {
     // ===== 5. Reload + cookie persistence: /api/auth/me still 200 =====
     {
         const page = await ctx.newPage();
-        await page.goto(`${BASE_URL}/`, { waitUntil: "networkidle" });
+        await retryTransient("goto / (reload step)", () =>
+            page.goto(`${BASE_URL}/`, { waitUntil: "networkidle" }),
+        );
         await page.reload({ waitUntil: "networkidle" });
-        const me = await ctx.request.get(`${BASE_URL}/api/auth/me`);
+        const me = await retryTransient("GET /api/auth/me", () =>
+            ctx.request.get(`${BASE_URL}/api/auth/me`),
+        );
         const body = await me.json().catch(() => null);
         await page.screenshot({
             path: path.join(ART, "05-after-reload.png"),
@@ -267,22 +441,44 @@ try {
         );
         await page.close();
     }
+} catch (err) {
+    // A thrown error mid-flow (stale selector, transient 5xx outlasting the
+    // retries, navigation timeout, …) must be RECORDED, never swallowed. The
+    // summary then shows the partial run + this entry and the finally block
+    // exits non-zero — which is the correct signal, not something to hide.
+    const msg = err?.stack || err?.message || String(err);
+    console.error(`\n!!! a14 flow aborted by thrown error:\n${msg}\n`);
+    record("FLOW ABORTED (uncaught error mid-smoke)", false, msg.split("\n")[0]);
 } finally {
-    await ctx.close();
-    await browser.close();
+    await ctx.close().catch(() => {});
+    await browser.close().catch(() => {});
     result.finished = new Date().toISOString();
+    // This smoke has 5 named steps; fewer means the flow died early.
+    const EXPECTED_STEPS = 5;
     result.summary = {
         total: result.checks.length,
         passed: result.checks.filter((c) => c.passed).length,
         failed: result.checks.filter((c) => !c.passed).length,
+        expectedSteps: EXPECTED_STEPS,
+        incomplete: result.checks.length < EXPECTED_STEPS,
     };
     fs.writeFileSync(
         path.join(ART, "result.json"),
         JSON.stringify(result, null, 2),
     );
     console.log(
-        `\n=== ${result.summary.passed}/${result.summary.total} passed (${result.summary.failed} failed) ===`,
+        `\n=== engine=${result.engine} :: ${result.summary.passed}/${result.summary.total} passed (${result.summary.failed} failed) ===`,
     );
+    if (result.engine !== "webkit") {
+        console.log(
+            "!!! ran on FALLBACK engine (chromium iPhone-13 emulation), NOT WebKit — not a true Safari run",
+        );
+    }
+    if (result.summary.incomplete) {
+        console.log(
+            `!!! incomplete run: only ${result.checks.length}/${EXPECTED_STEPS} steps recorded — treating as FAILED`,
+        );
+    }
     if (result.consoleErrors.length) {
         console.log(`\nConsole errors (${result.consoleErrors.length}):`);
         for (const e of result.consoleErrors) console.log(`  ${e}`);
@@ -291,5 +487,6 @@ try {
         console.log(`\nFailed requests (${result.failedRequests.length}):`);
         for (const r of result.failedRequests) console.log(`  ${r}`);
     }
-    process.exit(result.summary.failed > 0 ? 1 : 0);
+    const ok = result.summary.failed === 0 && !result.summary.incomplete;
+    process.exit(ok ? 0 : 1);
 }

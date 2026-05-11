@@ -108,6 +108,67 @@ const record = (name, passed, detail) => {
     console.log(`${passed ? "✓" : "✗"} ${name}${detail ? "  — " + detail : ""}`);
 };
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Zeabur idle-sleeps the container; the first hit after wake (and the first
+// hit to /api/deck_config* or /api/fsrs/* once the SQLite layer is cold)
+// commonly returns a transient 5xx. retryTransient retries a thunk a few
+// times on a thrown error OR on a 5xx-status result, with linear backoff.
+async function retryTransient(label, thunk, { tries = 4, baseMs = 1500 } = {}) {
+    let lastErr;
+    for (let i = 1; i <= tries; i++) {
+        try {
+            const out = await thunk();
+            // Playwright APIResponse-ish: has .status(). Treat 5xx as transient.
+            if (out && typeof out.status === "function" && out.status() >= 500) {
+                if (i < tries) {
+                    console.log(
+                        `  [retry] ${label}: status ${out.status()} (attempt ${i}/${tries}), backing off…`,
+                    );
+                    await sleep(baseMs * i);
+                    continue;
+                }
+            }
+            return out;
+        } catch (err) {
+            lastErr = err;
+            if (i < tries) {
+                console.log(
+                    `  [retry] ${label}: ${err?.message ?? err} (attempt ${i}/${tries}), backing off…`,
+                );
+                await sleep(baseMs * i);
+                continue;
+            }
+        }
+    }
+    if (lastErr) throw lastErr;
+}
+
+// Warm-up: poll the cheap public /api/health (and, once we have a logged-in
+// context, an authenticated probe) until it 200s, so a cold-start 5xx does
+// not break the first real step. Best-effort — never throws.
+async function warmUp(ctx, { tries = 8, baseMs = 2000 } = {}) {
+    for (let i = 1; i <= tries; i++) {
+        try {
+            const res = await ctx.request.get(`${BASE_URL}/api/health`);
+            if (res.status() === 200) {
+                console.log(`[a13] warm-up: /api/health 200 on attempt ${i}`);
+                return true;
+            }
+            console.log(
+                `[a13] warm-up: /api/health ${res.status()} (attempt ${i}/${tries})`,
+            );
+        } catch (err) {
+            console.log(
+                `[a13] warm-up: ${err?.message ?? err} (attempt ${i}/${tries})`,
+            );
+        }
+        if (i < tries) await sleep(baseMs);
+    }
+    console.log("[a13] warm-up: gave up polling /api/health — proceeding anyway");
+    return false;
+}
+
 // ---- launch ------------------------------------------------------------
 const browser = await chromium.launch({
     headless: true,
@@ -147,10 +208,17 @@ async function apiLogin(ctx, username, password) {
 }
 
 try {
+    // ===== 0. Warm-up: wake the (possibly idle-slept) container =====
+    await warmUp(ctxA);
+
     // ===== 1 + 2. Parallel login as USER1 (ctxA) and USER2 (ctxB) =====
     const [resA, resB] = await Promise.all([
-        apiLogin(ctxA, FERDINAND_USER1, FERDINAND_PASS1),
-        apiLogin(ctxB, FERDINAND_USER2, FERDINAND_PASS2),
+        retryTransient("login ctxA", () =>
+            apiLogin(ctxA, FERDINAND_USER1, FERDINAND_PASS1),
+        ),
+        retryTransient("login ctxB", () =>
+            apiLogin(ctxB, FERDINAND_USER2, FERDINAND_PASS2),
+        ),
     ]);
     record(
         "1. ctxA login as USER1 → 200",
@@ -177,7 +245,9 @@ try {
     // ===== 3. ctxA + ctxB run /study and /browse + /notes/new flows in parallel =====
     const studyTask = (async () => {
         // /api/decks to find a deck; pick the first non-zero, level≥1 deck.
-        const apiRes = await ctxA.request.get(`${BASE_URL}/api/decks`);
+        const apiRes = await retryTransient("GET /api/decks (study)", () =>
+            ctxA.request.get(`${BASE_URL}/api/decks`),
+        );
         const apiBody = await apiRes.json().catch(() => null);
         const decks = (apiBody?.decks ?? []).filter(
             (d) => d.id !== 0 && (d.level ?? 1) >= 1,
@@ -197,16 +267,43 @@ try {
                 detail: `decks_count=${decks.length}`,
             };
         }
-        await page.goto(`${BASE_URL}/study/${deckId}`, {
-            waitUntil: "networkidle",
+        // The study route fans out to /api/deck_config* and /api/fsrs/* which
+        // are the classic cold-start 5xx culprits — retry the navigation.
+        await retryTransient(`goto /study/${deckId}`, async () => {
+            const resp = await page.goto(`${BASE_URL}/study/${deckId}`, {
+                waitUntil: "networkidle",
+            });
+            // page.goto returns the main-document response; SvelteKit serves
+            // 200 HTML even when an inner XHR 500s, so a 5xx here is rare but
+            // still worth catching.
+            return resp;
         });
         // Wait for either the reveal-btn (card present) OR study-empty.
         const reveal = page.locator('[data-testid="reveal-btn"]');
         const empty = page.locator('[data-testid="study-empty"]');
+        const errBanner = page.locator('[data-testid="study-error"]');
         await Promise.race([
-            reveal.waitFor({ state: "visible", timeout: 8000 }).catch(() => null),
-            empty.waitFor({ state: "visible", timeout: 8000 }).catch(() => null),
+            reveal.waitFor({ state: "visible", timeout: 12000 }).catch(() => null),
+            empty.waitFor({ state: "visible", timeout: 12000 }).catch(() => null),
+            errBanner
+                .waitFor({ state: "visible", timeout: 12000 })
+                .catch(() => null),
         ]);
+        // If a cold-start error banner showed, give the backend a moment and
+        // reload once before deciding the step failed.
+        if (await errBanner.isVisible().catch(() => false)) {
+            console.log("  [study] error banner visible — reloading once");
+            await sleep(2500);
+            await page.reload({ waitUntil: "networkidle" }).catch(() => null);
+            await Promise.race([
+                reveal
+                    .waitFor({ state: "visible", timeout: 12000 })
+                    .catch(() => null),
+                empty
+                    .waitFor({ state: "visible", timeout: 12000 })
+                    .catch(() => null),
+            ]);
+        }
         const emptyVisible = await empty.isVisible().catch(() => false);
         if (emptyVisible) {
             await page.screenshot({
@@ -214,6 +311,22 @@ try {
             });
             await page.close();
             return { outcome: "empty", detail: `deckId=${deckId}` };
+        }
+        // Queue-exhausted edge: when fetchQueue returns 0 cards for a deck
+        // whose session started empty, the study page shows neither
+        // study-empty (it needs sessionStartedWith>0) nor an enabled
+        // reveal-btn (disabled while !currentCard). A visible-but-disabled
+        // reveal-btn is therefore the "no cards to study" signal.
+        const revealVisible = await reveal.isVisible().catch(() => false);
+        const revealEnabled = revealVisible
+            ? await reveal.isEnabled().catch(() => false)
+            : false;
+        if (revealVisible && !revealEnabled) {
+            await page.screenshot({
+                path: path.join(ART, "03b2-study-empty-queue.png"),
+            });
+            await page.close();
+            return { outcome: "empty-queue", detail: `deckId=${deckId}` };
         }
         // Show answer → click Again (rating 1).
         await reveal.click();
@@ -235,7 +348,9 @@ try {
 
     const browseTask = (async () => {
         const page = await ctxB.newPage();
-        await page.goto(`${BASE_URL}/browse`, { waitUntil: "networkidle" });
+        await retryTransient("goto /browse", () =>
+            page.goto(`${BASE_URL}/browse`, { waitUntil: "networkidle" }),
+        );
         const input = page.locator('[data-testid="browse-toolbar-input"]');
         await input.waitFor({ state: "visible", timeout: 8000 });
         await input.click();
@@ -253,7 +368,9 @@ try {
 
     const importTask = (async () => {
         const page = await ctxB.newPage();
-        await page.goto(`${BASE_URL}/notes/new`, { waitUntil: "networkidle" });
+        await retryTransient("goto /notes/new", () =>
+            page.goto(`${BASE_URL}/notes/new`, { waitUntil: "networkidle" }),
+        );
         const toggle = page.locator('[data-testid="import-apkg-toggle"]');
         const toggleVisible = await toggle
             .waitFor({ state: "visible", timeout: 5000 })
@@ -280,8 +397,10 @@ try {
         importTask,
     ]);
     record(
-        "3. ctxA /study: card-rated OR empty-state OR no-deck handled",
-        ["rated-again", "empty", "no-deck"].includes(studyOut.outcome),
+        "3. ctxA /study: card-rated OR empty-state OR empty-queue OR no-deck handled",
+        ["rated-again", "empty", "empty-queue", "no-deck"].includes(
+            studyOut.outcome,
+        ),
         `outcome=${studyOut.outcome} ${studyOut.detail}`,
     );
     record(
@@ -330,15 +449,28 @@ try {
         meA.status() === 401 && meB.status() === 401,
         `ctxA=${meA.status()} ctxB=${meB.status()}`,
     );
+} catch (err) {
+    // A thrown error mid-flow (stale selector, transient 5xx that outlasted
+    // the retries, navigation timeout, …) must be RECORDED as a failure —
+    // never swallowed. The summary then shows the partial run + this entry,
+    // and the finally block exits non-zero. That non-zero exit is the
+    // correct signal, not something to hide.
+    const msg = err?.stack || err?.message || String(err);
+    console.error(`\n!!! a13 flow aborted by thrown error:\n${msg}\n`);
+    record("FLOW ABORTED (uncaught error mid-smoke)", false, msg.split("\n")[0]);
 } finally {
-    await ctxA.close();
-    await ctxB.close();
-    await browser.close();
+    await ctxA.close().catch(() => {});
+    await ctxB.close().catch(() => {});
+    await browser.close().catch(() => {});
     result.finished = new Date().toISOString();
+    // This smoke has 8 named steps; anything fewer means the flow died early.
+    const EXPECTED_STEPS = 8;
     result.summary = {
         total: result.checks.length,
         passed: result.checks.filter((c) => c.passed).length,
         failed: result.checks.filter((c) => !c.passed).length,
+        expectedSteps: EXPECTED_STEPS,
+        incomplete: result.checks.length < EXPECTED_STEPS,
     };
     fs.writeFileSync(
         path.join(ART, "result.json"),
@@ -347,6 +479,11 @@ try {
     console.log(
         `\n=== ${result.summary.passed}/${result.summary.total} passed (${result.summary.failed} failed) ===`,
     );
+    if (result.summary.incomplete) {
+        console.log(
+            `!!! incomplete run: only ${result.checks.length}/${EXPECTED_STEPS} steps recorded — treating as FAILED`,
+        );
+    }
     if (result.consoleErrors.length) {
         console.log(`\nConsole errors (${result.consoleErrors.length}):`);
         for (const e of result.consoleErrors) console.log(`  ${e}`);
@@ -355,5 +492,6 @@ try {
         console.log(`\nFailed requests (${result.failedRequests.length}):`);
         for (const r of result.failedRequests) console.log(`  ${r}`);
     }
-    process.exit(result.summary.failed > 0 ? 1 : 0);
+    const ok = result.summary.failed === 0 && !result.summary.incomplete;
+    process.exit(ok ? 0 : 1);
 }
