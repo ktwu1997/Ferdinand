@@ -57,17 +57,17 @@
     // panel correctly without a manual reload.
     let sections = $derived.by(() => {
         const list = [
-            { id: "profile", label: "Profile" },
-            { id: "scheduling", label: "Scheduling" },
-            { id: "fsrs", label: "FSRS" },
-            { id: "notetypes", label: "Notetypes" },
-            { id: "recovery", label: "Recovery" },
-            { id: "sync", label: "Sync" },
-            { id: "appearance", label: "Appearance" },
-            { id: "advanced", label: "Advanced" },
+            { id: "profile", label: "Profile", sub: "account, password" },
+            { id: "scheduling", label: "Scheduling", sub: "presets, learning steps" },
+            { id: "fsrs", label: "FSRS", sub: "weights, optimize" },
+            { id: "notetypes", label: "Notetypes", sub: "fields, templates" },
+            { id: "recovery", label: "Recovery", sub: "check, restore" },
+            { id: "sync", label: "Sync", sub: "self-hosted server" },
+            { id: "appearance", label: "Appearance", sub: "theme, fonts" },
+            { id: "advanced", label: "Advanced", sub: "preview features" },
         ];
         if (auth.user?.is_admin) {
-            list.push({ id: "admin", label: "Admin" });
+            list.push({ id: "admin", label: "Admin", sub: "users, access" });
         }
         return list;
     });
@@ -995,7 +995,7 @@
     }
 </script>
 
-<svelte:head><title>Settings — Anki</title></svelte:head>
+<svelte:head><title>Settings — Ferdinand</title></svelte:head>
 
 <div class="sketch-skin grain page tx-page" data-testid="settings-root">
     <header class="tx-head" data-testid="settings-hero">
@@ -1007,7 +1007,6 @@
             </h1>
             <p class="tx-subtitle mono">
                 configure how this collection behaves
-                <span class="tx-subtitle-kbd mono">data layer wired live</span>
             </p>
         </div>
         <div class="tx-head-right" aria-hidden="true">
@@ -1050,7 +1049,10 @@
                                     <SketchUser size={13} />
                                 {/if}
                             </span>
-                            <span class="tx-nav-label">{s.label.toLowerCase()}</span>
+                            <span class="tx-nav-text">
+                                <span class="tx-nav-label">{s.label.toLowerCase()}</span>
+                                <span class="tx-nav-sub mono">{s.sub}</span>
+                            </span>
                         </button>
                     {/each}
                 </nav>
@@ -1166,14 +1168,6 @@
                 {/if}
             </div>
 
-            <div class="tx-sidebar-block tx-sidebar-build">
-                <Caption>// build</Caption>
-                <div class="tx-build mono">
-                    <div>ferdinand</div>
-                    <div class="tx-build-mute">phase A4-ε₂</div>
-                    <div class="tx-build-ok">sketch-skin ✓</div>
-                </div>
-            </div>
         </aside>
 
         <div class="tx-panel" data-testid="settings-panel">
@@ -2328,14 +2322,6 @@
         align-items: baseline;
         flex-wrap: wrap;
     }
-    .tx-subtitle-kbd {
-        font-size: 10px;
-        color: var(--ink-mute);
-        letter-spacing: 0.1em;
-        padding: 2px 8px;
-        border: 1px dashed var(--rule);
-        border-radius: 999px;
-    }
     .tx-head-right {
         color: var(--ink);
         opacity: 0.55;
@@ -2376,7 +2362,7 @@
     }
     .tx-nav-item {
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         gap: 10px;
         padding: 8px 10px;
         font-size: 12px;
@@ -2412,10 +2398,26 @@
         width: 18px;
         flex: 0 0 auto;
         color: var(--ink);
+        margin-top: 1px;
+    }
+    .tx-nav-text {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        flex: 1;
+        min-width: 0;
     }
     .tx-nav-label {
-        flex: 1;
         text-transform: lowercase;
+    }
+    .tx-nav-sub {
+        font-size: 9.5px;
+        letter-spacing: 0.06em;
+        color: var(--ink-mute);
+        text-transform: lowercase;
+    }
+    .tx-nav-item-active .tx-nav-sub {
+        color: var(--ink-soft);
     }
 
     .tx-sidebar-account {
@@ -2647,24 +2649,6 @@
         margin-top: 14px;
         padding-top: 10px;
         border-top: 1px dashed var(--rule);
-    }
-
-    .tx-sidebar-build {
-        padding-top: 14px;
-        border-top: 1px dashed var(--rule);
-    }
-    .tx-build {
-        font-size: 11px;
-        color: var(--ink-soft);
-        line-height: 1.6;
-        margin-top: 4px;
-    }
-    .tx-build-mute {
-        color: var(--ink-mute);
-    }
-    .tx-build-ok {
-        color: var(--accent);
-        margin-top: 4px;
     }
 
     /* ============== PANEL ============== */
@@ -3421,9 +3405,6 @@
         }
         .tx-title-hand {
             font-size: 18px;
-        }
-        .tx-subtitle-kbd {
-            display: none;
         }
         .tx-head-right {
             display: none;
