@@ -202,10 +202,34 @@ impl FromRequestParts<ServerState> for AppState {
             .ok_or_else(|| ServerError {
                 source: anyhow::anyhow!("AppState requested without AuthedUser in extensions"),
                 status: StatusCode::UNAUTHORIZED,
+                retry_after_secs: None,
             })?;
-        Ok(state.app_state_for(user.username()).await?)
+        state.app_state_for(user.username()).await.map_err(|err| {
+            // The collection open is lazy (first request from each user
+            // opens it). When it fails — typically the very first request
+            // after the container wakes from idle-sleep, where the previous
+            // process hasn't released the on-disk SQLite lock yet — surface
+            // a *retryable* 503 + `Retry-After`, not a 500. A reload then
+            // succeeds because the open path is fine on the second try; a
+            // bare 500 would have the client treat it as permanent.
+            tracing::warn!(
+                user = %user.username(),
+                error = ?err,
+                "collection not ready — replying 503 Retry-After",
+            );
+            ServerError::service_unavailable(
+                format!("collection not ready: {err}"),
+                COLLECTION_OPEN_RETRY_AFTER_SECS,
+            )
+        })
     }
 }
+
+/// `Retry-After` (seconds) advertised when a collection open fails on the
+/// cold path. One second: the contended on-disk lock clears almost
+/// immediately once the previous process is fully gone, and a short value
+/// keeps the user-visible "waking up" window tight.
+const COLLECTION_OPEN_RETRY_AFTER_SECS: u64 = 1;
 
 fn ensure_media_dir(user_dir: &Path) -> anyhow::Result<PathBuf> {
     // Anki convention: collection.anki2 → collection.media/ as siblings.
@@ -266,5 +290,60 @@ mod tests {
             !Arc::ptr_eq(&a.col, &b.col),
             "different users must not share a Collection"
         );
+    }
+
+    /// A users-dir that is actually a regular file: `open_for_user` will
+    /// fail at `create_dir_all(<file>/alice)`. Stands in for the cold-start
+    /// "collection can't be opened yet" condition the 503 path exists for.
+    fn broken_users_dir() -> PathBuf {
+        let p = std::env::temp_dir().join(format!(
+            "ferdinand_state_broken_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&p, b"not a directory").unwrap();
+        p
+    }
+
+    fn parts_with_user(username: &str) -> Parts {
+        let mut req = axum::http::Request::builder().body(()).unwrap();
+        req.extensions_mut().insert(AuthedUser(username.to_string()));
+        req.into_parts().0
+    }
+
+    #[tokio::test]
+    async fn app_state_extractor_returns_503_with_retry_after_when_open_fails() {
+        let server = ServerState::new(tmp_auth_db(), broken_users_dir());
+        let mut parts = parts_with_user("alice");
+        match AppState::from_request_parts(&mut parts, &server).await {
+            Ok(_) => panic!("a broken users-dir must fail the collection open"),
+            Err(err) => {
+                assert_eq!(
+                    err.status,
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "a cold-start collection-open failure must be a retryable 503, not a 500",
+                );
+                assert_eq!(
+                    err.retry_after_secs,
+                    Some(COLLECTION_OPEN_RETRY_AFTER_SECS),
+                    "503 must advertise Retry-After so clients retry instead of \
+                     showing a hard error",
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn app_state_extractor_succeeds_on_a_healthy_users_dir() {
+        // Counterpart to the 503 test: a normal users-dir resolves cleanly,
+        // so the extractor is not blanket-503-ing every request.
+        let server = ServerState::new(tmp_auth_db(), tmp_users_dir());
+        let mut parts = parts_with_user("alice");
+        if AppState::from_request_parts(&mut parts, &server).await.is_err() {
+            panic!("a healthy users-dir must resolve an AppState");
+        }
     }
 }
