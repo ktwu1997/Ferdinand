@@ -267,7 +267,7 @@
     <div class="dash-desktop">
         <header class="dash-head" data-testid="dash-hero">
             <div class="dash-head-left">
-                <Caption>// {today}</Caption>
+                <Caption>{today}</Caption>
                 <h1 class="greeting" data-testid="dash-greeting">
                     morning, {greetingName}.
                     <span class="dash-title-hand hand">another round</span>
@@ -279,7 +279,7 @@
             </div>
             <div class="dash-head-right">
                 <div class="streak">
-                    <Caption>// streak</Caption>
+                    <Caption>streak</Caption>
                     <div class="streak-value mono">
                         14d <SketchFlame size={14} />
                     </div>
@@ -304,7 +304,7 @@
         <!-- big "continue" CTA card (accent ground) -->
         <a class="hero-cta" href="/study/{resume.id}" data-testid="dash-hero-cta">
             <div class="hero-text">
-                <div class="hero-eye mono">// start where you left off</div>
+                <div class="hero-eye mono">start where you left off</div>
                 <div class="hero-title mono">
                     <span class="hero-glyph">{resumeGlyph}</span>
                     <span class="hero-name">{resume.name}</span>
@@ -324,7 +324,7 @@
         <!-- all decks -->
         <section class="deck-section">
             <div class="section-head">
-                <Caption>// all decks</Caption>
+                <Caption>all decks</Caption>
                 <div class="section-actions">
                     {#if !isCreatingDeck && !isCreatingFilteredDeck}
                         <Btn
@@ -541,7 +541,7 @@
         {#if forecast}
             <section class="forecast-section">
                 <div class="section-head">
-                    <Caption>// next 7 days</Caption>
+                    <Caption>next 7 days</Caption>
                     <span class="ghost-link mono" aria-hidden="true">forecast</span>
                 </div>
                 {#if forecastError}
@@ -586,7 +586,7 @@
         {:else if forecastError}
             <section class="forecast-section">
                 <div class="section-head">
-                    <Caption>// next 7 days</Caption>
+                    <Caption>next 7 days</Caption>
                 </div>
                 <div class="error-banner mono" role="alert">
                     couldn't load forecast. ({forecastError})
@@ -597,7 +597,7 @@
         <!-- last 30 days -->
         <section class="recent-section">
             <div class="section-head">
-                <Caption>// last 30 days</Caption>
+                <Caption>last 30 days</Caption>
                 <a class="ghost-link mono" href="/stats">see full stats →</a>
             </div>
             {#if statsError}
@@ -637,7 +637,7 @@
             {/if}
         </header>
 
-        <Caption>// {today}</Caption>
+        <Caption>{today}</Caption>
         <h1 class="m-greeting">morning, {greetingName}.</h1>
         <p class="m-sub mono">
             <strong>{totalDueAll}</strong> due · 14d streak
@@ -652,7 +652,7 @@
 
         <a class="m-hero" href="/study/{resume.id}">
             <div>
-                <div class="mono m-hero-eye">// continue</div>
+                <div class="mono m-hero-eye">continue</div>
                 <div class="mono m-hero-title">{resume.name}</div>
                 <div class="mono m-hero-meta">
                     {resumeDue} due · ~{Math.max(1, Math.round(resumeDue * 0.45))} min
@@ -661,7 +661,7 @@
             <SketchArrow size={20} />
         </a>
 
-        <Caption>// decks</Caption>
+        <Caption>decks</Caption>
 
         <div class="m-deck-list">
             {#each decks as deck, i (deck.id)}
@@ -741,7 +741,7 @@
         {/if}
 
         {#if forecast}
-            <Caption>// next 7 days</Caption>
+            <Caption>next 7 days</Caption>
             <Panel padding="16px 18px">
                 <div class="m-forecast-grid">
                     {#each forecast as day (day.offset)}

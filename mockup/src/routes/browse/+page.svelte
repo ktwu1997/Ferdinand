@@ -1746,7 +1746,7 @@
                 onclick={() => toggle("decks")}
                 aria-expanded={openSection.decks}
             >
-                <Caption>// decks</Caption>
+                <Caption>decks</Caption>
             </button>
             {#if openSection.decks}
                 <div class="bx-section-body" data-testid="browse-deck-list">
@@ -1798,7 +1798,7 @@
 
         <div class="bx-section">
             <div class="bx-section-title">
-                <Caption>// state</Caption>
+                <Caption>state</Caption>
             </div>
             <div class="bx-section-body" data-testid="browse-state-filters">
                 {#each STATE_FILTERS as s (s.key)}
@@ -1827,7 +1827,7 @@
                 onclick={() => toggle("tags")}
                 aria-expanded={openSection.tags}
             >
-                <Caption>// tags</Caption>
+                <Caption>tags</Caption>
             </button>
             {#if openSection.tags}
                 <div class="bx-section-body bx-tag-cloud">
@@ -1851,7 +1851,7 @@
                     onclick={() => toggle("saved")}
                     aria-expanded={openSection.saved}
                 >
-                    <Caption>// pinned searches</Caption>
+                    <Caption>pinned searches</Caption>
                 </button>
                 {#if liveSaved !== null && !isCreatingSaved && openSection.saved}
                     <button
@@ -1941,7 +1941,7 @@
                     {/if}
 
                     {#if savedError}
-                        <div class="bx-saved-error mono" role="alert">// {savedError}</div>
+                        <div class="bx-saved-error mono" role="alert">{savedError}</div>
                     {/if}
                 </div>
             {/if}
@@ -1952,7 +1952,7 @@
     <main class="bx-main">
         <header class="bx-hero" data-testid="browse-hero">
             <div class="bx-hero-left">
-                <Caption>// the.card.archive</Caption>
+                <Caption>the.card.archive</Caption>
                 <h1 class="bx-title mono" data-testid="browse-title">
                     browse
                     <span class="hand bx-tag-everything" aria-hidden="true">everything</span>
@@ -2079,7 +2079,7 @@
             >
                 <header class="bx-filter-header">
                     <Caption
-                        ><span id="bx-filter-title">// filters</span></Caption
+                        ><span id="bx-filter-title">filters</span></Caption
                     >
                     <Btn
                         kind="ghost"
@@ -2091,7 +2091,7 @@
                 </header>
                 <div class="bx-filter-body">
                     <section class="bx-filter-row">
-                        <Caption>// state</Caption>
+                        <Caption>state</Caption>
                         <div class="bx-filter-chips">
                             {#each STATE_FILTERS as s}
                                 <button
@@ -2115,7 +2115,7 @@
                     </section>
                     {#if (liveTags ?? []).length > 0}
                         <section class="bx-filter-row">
-                            <Caption>// tags</Caption>
+                            <Caption>tags</Caption>
                             <div class="bx-filter-chips">
                                 {#each liveTags ?? [] as t}
                                     <button
@@ -2252,7 +2252,7 @@
                         aria-live="polite"
                         data-testid="browse-empty"
                     >
-                        <div class="bx-empty-title">// no cards match</div>
+                        <div class="bx-empty-title">no cards match</div>
                         <div class="bx-empty-hint">
                             try a broader query, or
                             <button
@@ -2330,7 +2330,7 @@
             </div>
 
             <div class="bx-table-foot mono">
-                <Caption>// {filtered.length} of {liveTotal ?? rows.length} · sorted by due asc</Caption>
+                <Caption>{filtered.length} of {liveTotal ?? rows.length} · sorted by due asc</Caption>
                 <div class="bx-table-keys">
                     <span>↑↓ navigate</span>
                     <span>↵ open</span>

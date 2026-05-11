@@ -210,7 +210,7 @@
 <div class="sketch-skin grain page nx-page" data-testid="notes-new-root">
     <header class="nx-head" data-testid="notes-new-hero">
         <div class="nx-head-left">
-            <Caption>// the.workshop</Caption>
+            <Caption>the.workshop</Caption>
             <h1 class="nx-title mono" data-testid="notes-new-title">
                 new note
                 <span class="nx-title-hand hand" aria-hidden="true">add to library</span>
@@ -253,7 +253,7 @@
          has no data-layer hook in this build). -->
     <section class="nx-toolbar" data-testid="notes-new-toolbar">
         <div class="nx-toolbar-col" data-testid="notes-new-deck-col">
-            <Caption>// deck</Caption>
+            <Caption>deck</Caption>
             {#if loadError}
                 <div class="nx-toolbar-hint mono">unavailable</div>
             {:else if decks === null}
@@ -279,7 +279,7 @@
         </div>
 
         <div class="nx-toolbar-col" data-testid="notes-new-notetype-col">
-            <Caption>// notetype</Caption>
+            <Caption>notetype</Caption>
             {#if loadError}
                 <div class="nx-toolbar-hint mono">unavailable</div>
             {:else if notetypes === null}
@@ -311,7 +311,7 @@
         </div>
 
         <div class="nx-toolbar-col nx-toolbar-status" data-testid="notes-new-status-col">
-            <Caption>// status</Caption>
+            <Caption>status</Caption>
             <div class="nx-toolbar-status-row mono">
                 <span class="nx-status-dot" class:nx-status-dot-on={canSubmit} aria-hidden="true"></span>
                 <span>{canSubmit ? "ready to save" : saving ? "saving…" : "fill the first field"}</span>
@@ -339,7 +339,7 @@
                         data-testid="notes-new-field-{i}"
                     >
                         <div class="nx-field-label">
-                            <Caption>// {fieldName}</Caption>
+                            <Caption>{fieldName}</Caption>
                             {#if i === 0}
                                 <span class="nx-field-hint mono">required</span>
                             {:else if uploadingFieldIdx === i}
@@ -373,7 +373,7 @@
 
             <div class="nx-field" data-testid="notes-new-tags-field">
                 <div class="nx-field-label">
-                    <Caption>// tags</Caption>
+                    <Caption>tags</Caption>
                     <span class="nx-field-hint mono">
                         space- or comma-separated{#if parsedTags.length > 0} · {parsedTags.length} tag{parsedTags.length === 1 ? "" : "s"}{/if}
                     </span>
@@ -398,7 +398,7 @@
 
         <aside class="nx-preview-col" data-testid="notes-new-preview">
             <div class="nx-preview-head">
-                <Caption>// preview · live</Caption>
+                <Caption>preview · live</Caption>
                 {#if selectedDeck}
                     <span class="nx-preview-deck mono">→ {selectedDeck.name}</span>
                 {/if}

@@ -175,7 +175,7 @@
                         role="alert"
                         data-testid="login-error"
                     >
-                        // {errorMessage}
+                        {errorMessage}
                     </div>
                 {/if}
 

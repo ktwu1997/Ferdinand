@@ -109,7 +109,7 @@
 <div class="sketch-skin grain page sx-page" data-testid="stats-root">
     <header class="sx-head" data-testid="stats-head">
         <div class="sx-head-left">
-            <Caption>// the.ledger</Caption>
+            <Caption>the.ledger</Caption>
             <h1 class="sx-title mono" data-testid="stats-title">
                 statistics
                 <span class="sx-title-hand hand" aria-hidden="true">{RANGE_LABEL[range]}</span>
@@ -139,25 +139,25 @@
 
     <section class="sx-kpi-grid" data-testid="stats-kpi-grid">
         <article class="sx-tile" data-testid="stats-tile-reviews">
-            <Caption>// reviews</Caption>
+            <Caption>reviews</Caption>
             <div class="sx-tile-value mono">
                 {totalReviews.toLocaleString()}<span class="sx-tile-unit">in {RANGE_DAYS[range]}d</span>
             </div>
         </article>
         <article class="sx-tile sx-tile-accent" data-testid="stats-tile-streak">
-            <Caption>// streak</Caption>
+            <Caption>streak</Caption>
             <div class="sx-tile-value mono">
                 {streak}<span class="sx-tile-unit">days</span>
             </div>
         </article>
         <article class="sx-tile" data-testid="stats-tile-avg">
-            <Caption>// avg / active day</Caption>
+            <Caption>avg / active day</Caption>
             <div class="sx-tile-value mono">
                 {avgPerActiveDay.toLocaleString()}<span class="sx-tile-unit">cards</span>
             </div>
         </article>
         <article class="sx-tile" data-testid="stats-tile-best">
-            <Caption>// best day</Caption>
+            <Caption>best day</Caption>
             <div class="sx-tile-value mono">
                 {bestDay.toLocaleString()}<span class="sx-tile-unit">cards</span>
             </div>
@@ -167,7 +167,7 @@
     <section class="sx-charts" data-testid="stats-charts">
         <article class="sx-panel" data-testid="stats-bars-panel">
             <header class="sx-panel-head">
-                <Caption>// reviews per day</Caption>
+                <Caption>reviews per day</Caption>
                 <span class="sx-panel-meta mono">last {RANGE_DAYS[range]}d</span>
             </header>
             {#if loaded && values.length === 0}
@@ -223,7 +223,7 @@
 
         <article class="sx-panel" data-testid="stats-answer-panel">
             <header class="sx-panel-head">
-                <Caption>// answer mix</Caption>
+                <Caption>answer mix</Caption>
                 <span class="sx-panel-meta mono">{totalAns} total</span>
             </header>
             {#if totalAns === 0}

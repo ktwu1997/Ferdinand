@@ -142,7 +142,7 @@
         data-testid="import-apkg-toggle"
         aria-expanded={open}
     >
-        <Caption>// the.cabinet</Caption>
+        <Caption>the.cabinet</Caption>
         <span class="ipx-toggle-row">
             <span class="ipx-toggle-title">import .apkg</span>
             <span class="ipx-toggle-caret" aria-hidden="true">{open ? "▾" : "▸"}</span>
@@ -185,7 +185,7 @@
                         role="alert"
                         data-testid="import-apkg-error"
                     >
-                        <span>// {phase.message}</span>
+                        <span>{phase.message}</span>
                         <button
                             type="button"
                             class="ipx-error-dismiss mono"

@@ -380,7 +380,7 @@
         adminResetSaving = true;
         try {
             await postAdminResetPassword(adminResetUser, adminResetNew);
-            adminSuccess = `// password reset for ${adminResetUser} — their sessions were revoked`;
+            adminSuccess = `password reset for ${adminResetUser} — their sessions were revoked`;
             closeAdminResetForm();
         } catch (err) {
             adminResetError = err instanceof Error ? err.message : String(err);
@@ -407,7 +407,7 @@
             await postAdminCreateUser(username, adminCreatePassword);
             adminCreateUsername = "";
             adminCreatePassword = "";
-            adminSuccess = `// created ${username} — they can log in with the password you set`;
+            adminSuccess = `created ${username} — they can log in with the password you set`;
             // Refetch so the new row (with its server-assigned id) shows up
             // and any stale list state is reconciled — same move the
             // refresh button makes.
@@ -428,8 +428,8 @@
         try {
             await postAdminDisable(user.username, targetDisabled);
             adminSuccess = targetDisabled
-                ? `// disabled ${user.username} — their sessions were revoked`
-                : `// re-enabled ${user.username}`;
+                ? `disabled ${user.username} — their sessions were revoked`
+                : `re-enabled ${user.username}`;
             // Optimistic local update so the toggle reflects immediately
             // without waiting for a list refetch.
             adminUsers = adminUsers.map((u) =>
@@ -1000,7 +1000,7 @@
 <div class="sketch-skin grain page tx-page" data-testid="settings-root">
     <header class="tx-head" data-testid="settings-hero">
         <div class="tx-head-left">
-            <Caption>// settings</Caption>
+            <Caption>settings</Caption>
             <h1 class="tx-title mono" data-testid="settings-title">
                 preferences
                 <span class="tx-title-hand hand" aria-hidden="true">tune your tools</span>
@@ -1017,7 +1017,7 @@
     <section class="tx-shell" data-testid="settings-shell">
         <aside class="tx-sidebar" data-testid="settings-sidebar">
             <div class="tx-sidebar-block">
-                <Caption>// sections</Caption>
+                <Caption>sections</Caption>
                 <nav class="tx-nav" aria-label="Settings sections">
                     {#each sections as s (s.id)}
                         <button
@@ -1059,7 +1059,7 @@
             </div>
 
             <div class="tx-sidebar-block tx-sidebar-account" data-testid="settings-account-block">
-                <Caption>// account</Caption>
+                <Caption>account</Caption>
                 {#if auth.user}
                     <div class="tx-account-row mono" data-testid="settings-account-row">
                         <span class="tx-account-icon" aria-hidden="true">
@@ -1083,7 +1083,7 @@
                             data-testid="settings-pw-success"
                             role="status"
                         >
-                            // password updated
+                            password updated
                         </p>
                     {/if}
                     {#if !pwOpen}
@@ -1172,7 +1172,7 @@
 
         <div class="tx-panel" data-testid="settings-panel">
             <header class="tx-panel-head">
-                <Caption>// {active}.config</Caption>
+                <Caption>{active}.config</Caption>
                 <h2 class="tx-panel-title mono" data-testid="settings-panel-title">
                     {sections.find((s) => s.id === active)?.label.toLowerCase() ?? ""}
                     {#if active === "fsrs"}
@@ -1211,18 +1211,18 @@
             {#if active === "fsrs"}
                 {#if loadError}
                     <div class="tx-banner tx-banner-error mono" role="alert" data-testid="settings-load-error">
-                        // couldn't reach anki server — settings shown are unsaved defaults until reconnected
+                        couldn't reach anki server — settings shown are unsaved defaults until reconnected
                         <div class="tx-banner-detail">{loadError}</div>
                     </div>
                 {/if}
                 <p class="tx-disclaimer mono">
-                    // editing presets directly. per-deck assignment lands in a later release.
+                    editing presets directly. per-deck assignment lands in a later release.
                 </p>
 
                 {#if presets.length > 0}
                     <div class="tx-card tx-preset-card" data-testid="settings-preset-card">
                         <div class="tx-card-head">
-                            <Caption>// preset</Caption>
+                            <Caption>preset</Caption>
                             <span class="tx-card-hand hand" aria-hidden="true">scheduling profile</span>
                         </div>
                         <div class="tx-preset-row">
@@ -1332,7 +1332,7 @@
 
                 <div class="tx-card" data-testid="settings-fsrs-fields-card">
                     <div class="tx-card-head">
-                        <Caption>// scheduling</Caption>
+                        <Caption>scheduling</Caption>
                         <span class="tx-card-hand hand" aria-hidden="true">caps and cadence</span>
                     </div>
 
@@ -1539,7 +1539,7 @@
 
                 <div class="tx-card" data-testid="settings-optimize-card">
                     <div class="tx-card-head">
-                        <Caption>// optimize</Caption>
+                        <Caption>optimize</Caption>
                         <span class="tx-card-hand hand" aria-hidden="true">trained weights</span>
                     </div>
                     <div class="tx-optimize-actions">
@@ -1599,7 +1599,7 @@
             {:else if active === "appearance"}
                 <div class="tx-card" data-testid="settings-theme-card">
                     <div class="tx-card-head">
-                        <Caption>// theme</Caption>
+                        <Caption>theme</Caption>
                         <span class="tx-card-hand hand" aria-hidden="true">paper or ink</span>
                     </div>
                     <p class="tx-hint mono">
@@ -1644,7 +1644,7 @@
             {:else if active === "notetypes"}
                 <div class="tx-card" data-testid="settings-notetypes-card">
                     <div class="tx-card-head">
-                        <Caption>// notetypes</Caption>
+                        <Caption>notetypes</Caption>
                         <span class="tx-card-hand hand" aria-hidden="true">card templates</span>
                     </div>
                     <p class="tx-hint mono">
@@ -1891,7 +1891,7 @@
             {:else if active === "recovery"}
                 <div class="tx-card" data-testid="settings-recovery-card">
                     <div class="tx-card-head">
-                        <Caption>// recovery</Caption>
+                        <Caption>recovery</Caption>
                         <span class="tx-card-hand hand" aria-hidden="true">undo a slip</span>
                     </div>
                     <p class="tx-hint mono">
@@ -2054,7 +2054,7 @@
             {:else if active === "sync"}
                 <div class="tx-card" data-testid="settings-sync-card">
                     <div class="tx-card-head">
-                        <Caption>// sync</Caption>
+                        <Caption>sync</Caption>
                         <span class="tx-card-hand hand" aria-hidden="true">your collection, your server</span>
                     </div>
                     <div class="tx-sync-status">
@@ -2076,7 +2076,7 @@
             {:else if active === "admin"}
                 <div class="tx-card" data-testid="settings-admin-card">
                     <div class="tx-card-head">
-                        <Caption>// users</Caption>
+                        <Caption>users</Caption>
                         <span class="tx-card-hand hand" aria-hidden="true">friends sharing this server</span>
                     </div>
                     <form
@@ -2084,7 +2084,7 @@
                         data-testid="settings-admin-create-form"
                         onsubmit={submitAdminCreate}
                     >
-                        <Caption>// add user</Caption>
+                        <Caption>add user</Caption>
                         <label class="tx-pw-field">
                             <span class="tx-pw-label">username</span>
                             <input
@@ -2146,9 +2146,9 @@
                         </p>
                     {/if}
                     {#if adminLoading && adminUsers.length === 0}
-                        <p class="tx-hint mono" data-testid="settings-admin-loading">// loading users…</p>
+                        <p class="tx-hint mono" data-testid="settings-admin-loading">loading users…</p>
                     {:else if adminUsers.length === 0 && !adminError}
-                        <p class="tx-hint mono">// no users yet</p>
+                        <p class="tx-hint mono">no users yet</p>
                     {:else}
                         <ul class="tx-admin-list mono" data-testid="settings-admin-list">
                             {#each adminUsers as u (u.username)}
@@ -2260,7 +2260,7 @@
             {:else}
                 <div class="tx-card tx-card-placeholder" data-testid="settings-placeholder-card">
                     <div class="tx-card-head">
-                        <Caption>// {active}</Caption>
+                        <Caption>{active}</Caption>
                         <span class="tx-card-hand hand" aria-hidden="true">coming soon</span>
                     </div>
                     <p class="tx-hint mono">

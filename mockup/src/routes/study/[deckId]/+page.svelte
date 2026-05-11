@@ -314,14 +314,14 @@
             </a>
             <div class="glyph mono" aria-hidden="true">{glyph}</div>
             <div class="deck-meta">
-                <Caption>// session · <span data-testid="study-deck-name">{deckName}</span></Caption>
+                <Caption>session · <span data-testid="study-deck-name">{deckName}</span></Caption>
                 <div class="card-count mono">card {position} of {total}</div>
             </div>
         </div>
 
         <div class="head-progress">
             <div class="progress-meta">
-                <Caption>// progress</Caption>
+                <Caption>progress</Caption>
                 {#if mode === "live" && counts}
                     <span class="counts mono" data-testid="study-counts">
                         <span class="c-new" class:zero={counts.new === 0}>{counts.new} new</span>
@@ -331,7 +331,7 @@
                         <span class="c-review" class:zero={counts.review === 0}>{counts.review} review</span>
                     </span>
                 {:else if mode === "offline"}
-                    <span class="counts mono">// offline · cached preview</span>
+                    <span class="counts mono">offline · cached preview</span>
                 {/if}
             </div>
             <div class="qbar" aria-hidden="true">
@@ -360,7 +360,7 @@
             <div class="empty" data-testid="study-empty">
                 <div class="empty-owl"><SketchOwl size={88} /></div>
                 <h2 class="empty-title hand">all caught up.</h2>
-                <p class="empty-sub mono">// no more cards in <span data-testid="study-empty-deck">{deckName}</span> today</p>
+                <p class="empty-sub mono">no more cards in <span data-testid="study-empty-deck">{deckName}</span> today</p>
                 <Btn href="/" kind="outline" size="md">back to decks</Btn>
             </div>
         {:else}
