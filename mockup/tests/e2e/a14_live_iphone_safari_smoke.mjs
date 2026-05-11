@@ -257,17 +257,17 @@ try {
         // its `.dash-mobile` branch, NOT `.dash-desktop` — `.dash-head` /
         // `.dash-title-hand` live inside `.dash-desktop` (display:none here).
         // The mobile markup exposes `data-testid="dash-root"` plus `.m-head`,
-        // `.m-greeting`, `.m-hero`, and the `.m-deck-list` container.
+        // `.m-sub` and the `.m-deck-list` container.
         const dashRoot = page.locator('[data-testid="dash-root"]');
         await dashRoot
             .waitFor({ state: "visible", timeout: 12000 })
             .catch(() => null);
         const mHead = page.locator(".m-head");
-        const mGreeting = page.locator(".m-greeting");
+        const mSub = page.locator(".m-sub");
         const mDeckList = page.locator(".m-deck-list");
         const rootVisible = await dashRoot.isVisible().catch(() => false);
         const mHeadVisible = await mHead.isVisible().catch(() => false);
-        const mGreetingVisible = await mGreeting.isVisible().catch(() => false);
+        const mSubVisible = await mSub.isVisible().catch(() => false);
         const mDeckListVisible = await mDeckList.isVisible().catch(() => false);
         // Sanity: the desktop branch must NOT be visible on a phone viewport.
         const dashDesktopVisible = await page
@@ -279,13 +279,13 @@ try {
             fullPage: true,
         });
         record(
-            "2. mobile dashboard: dash-root + .m-head + .m-greeting + .m-deck-list render (desktop branch hidden)",
+            "2. mobile dashboard: dash-root + .m-head + .m-sub + .m-deck-list render (desktop branch hidden)",
             rootVisible &&
                 mHeadVisible &&
-                mGreetingVisible &&
+                mSubVisible &&
                 mDeckListVisible &&
                 !dashDesktopVisible,
-            `root=${rootVisible} m_head=${mHeadVisible} m_greeting=${mGreetingVisible} ` +
+            `root=${rootVisible} m_head=${mHeadVisible} m_sub=${mSubVisible} ` +
                 `m_deck_list=${mDeckListVisible} desktop_hidden=${!dashDesktopVisible}`,
         );
         await page.close();
