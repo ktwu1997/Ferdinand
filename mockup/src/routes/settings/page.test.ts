@@ -28,13 +28,20 @@ vi.mock("$lib/api", async (importOriginal) => {
         putFsrsHealthCheck: vi.fn(),
         postFsrsOptimize: vi.fn(),
         resetCardToNew: vi.fn(),
+        // WS2: admin user-list fetch + create-user. The other admin shims
+        // (reset/disable) aren't exercised by these tests, so leave them
+        // real via the spread above.
+        fetchAdminUsers: vi.fn(),
+        postAdminCreateUser: vi.fn(),
     };
 });
 
 import Page from "./+page.svelte";
+import { auth } from "$lib/auth.svelte";
 import {
     deleteDeckConfig,
     deleteNotetypeField,
+    fetchAdminUsers,
     fetchDeckConfigById,
     fetchDeckConfigs,
     fetchFsrsEnabled,
@@ -43,12 +50,15 @@ import {
     getCard,
     patchDeckConfigById,
     patchNotetypeName,
+    postAdminCreateUser,
     postDeckConfig,
     postFsrsOptimize,
     postNotetypeField,
     putFsrsEnabled,
     putFsrsHealthCheck,
     resetCardToNew,
+    type ApiAdminUser,
+    type ApiAdminUserList,
     type ApiCardSummary,
     type ApiDeckConfigDefault,
     type ApiDeckConfigListResponse,
@@ -2661,6 +2671,211 @@ describe("SettingsPage burn-recovery (Phase 20-C)", () => {
             expect(
                 container.querySelector('[data-test="recovery-card-deck"]'),
             ).not.toBeNull();
+        } finally {
+            unmount(instance);
+        }
+    });
+});
+
+// WS2: admin "Add User" inline form. Mirrors the burn-recovery / add-field
+// describe blocks — mount the page with auth stubbed to an admin user,
+// navigate to the admin tab, drive the form, assert the wrapper call +
+// list refetch + form reset / inline-error behaviour.
+describe("SettingsPage admin add-user flow (WS2)", () => {
+    let container: HTMLDivElement;
+    let savedUser: typeof auth.user;
+    let savedStatus: typeof auth.status;
+
+    const adminUser: ApiAdminUser = {
+        id: 1,
+        username: "ktwu",
+        created_at: 1_700_000_000,
+        disabled_at: null,
+    };
+    const graceUser: ApiAdminUser = {
+        id: 2,
+        username: "grace",
+        created_at: 1_700_000_500,
+        disabled_at: null,
+    };
+    const listBefore: ApiAdminUserList = { users: [adminUser] };
+    const listAfter: ApiAdminUserList = { users: [adminUser, graceUser] };
+
+    beforeEach(() => {
+        vi.resetAllMocks();
+        vi.mocked(fetchDeckConfigs).mockResolvedValue(onlyDefaultList);
+        vi.mocked(fetchDeckConfigById).mockResolvedValue(defaultConf);
+        vi.mocked(fetchFsrsEnabled).mockResolvedValue(fsrsOff);
+        vi.mocked(fetchFsrsHealthCheck).mockResolvedValue(healthCheckOff);
+        // Auth: pretend the env-configured admin is logged in so the
+        // "admin" nav row + panel render. Save/restore the singleton so
+        // we don't leak state into other files' tests.
+        savedUser = auth.user;
+        savedStatus = auth.status;
+        auth.user = { username: "ktwu", is_admin: true };
+        auth.status = "authed";
+        container = document.createElement("div");
+        document.body.appendChild(container);
+    });
+
+    afterEach(() => {
+        auth.user = savedUser;
+        auth.status = savedStatus;
+        container.remove();
+    });
+
+    function clickNav(id: string): void {
+        const btn = container.querySelector<HTMLButtonElement>(
+            `[data-testid="settings-nav-${id}"]`,
+        );
+        if (!btn) throw new Error(`nav id "${id}" not found`);
+        btn.click();
+        flushSync();
+    }
+
+    async function openAdminPanel(): Promise<void> {
+        flushSync();
+        clickNav("admin");
+        // $effect-driven first-load fetch resolves on a microtask.
+        for (let i = 0; i < 6; i++) await Promise.resolve();
+        flushSync();
+    }
+
+    test("the admin panel renders the add-user form for an admin user", async () => {
+        vi.mocked(fetchAdminUsers).mockResolvedValue(listBefore);
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await openAdminPanel();
+            expect(
+                container.querySelector('[data-testid="settings-admin-create-form"]'),
+            ).not.toBeNull();
+            expect(
+                container.querySelector('[data-testid="settings-admin-create-username"]'),
+            ).not.toBeNull();
+            const pw = container.querySelector<HTMLInputElement>(
+                '[data-testid="settings-admin-create-password"]',
+            );
+            expect(pw).not.toBeNull();
+            expect(pw?.type).toBe("password");
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("submitting the form calls postAdminCreateUser, refetches the list, and clears the inputs", async () => {
+        vi.mocked(fetchAdminUsers)
+            .mockResolvedValueOnce(listBefore)
+            .mockResolvedValueOnce(listAfter);
+        vi.mocked(postAdminCreateUser).mockResolvedValue(graceUser);
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await openAdminPanel();
+
+            const usernameInput = container.querySelector<HTMLInputElement>(
+                '[data-testid="settings-admin-create-username"]',
+            )!;
+            const passwordInput = container.querySelector<HTMLInputElement>(
+                '[data-testid="settings-admin-create-password"]',
+            )!;
+            usernameInput.value = "grace";
+            usernameInput.dispatchEvent(new Event("input", { bubbles: true }));
+            passwordInput.value = "s3kret-pw";
+            passwordInput.dispatchEvent(new Event("input", { bubbles: true }));
+            flushSync();
+
+            const form = container.querySelector<HTMLFormElement>(
+                '[data-testid="settings-admin-create-form"]',
+            )!;
+            form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+            for (let i = 0; i < 6; i++) await Promise.resolve();
+            flushSync();
+
+            expect(vi.mocked(postAdminCreateUser)).toHaveBeenCalledWith("grace", "s3kret-pw");
+            // List was refetched (1 initial + 1 after create).
+            expect(vi.mocked(fetchAdminUsers)).toHaveBeenCalledTimes(2);
+            // New row is rendered.
+            expect(
+                container.querySelector('[data-testid="settings-admin-row-grace"]'),
+            ).not.toBeNull();
+            // Inputs cleared.
+            expect(usernameInput.value).toBe("");
+            expect(passwordInput.value).toBe("");
+            // No inline error.
+            expect(
+                container.querySelector('[data-testid="settings-admin-create-error"]'),
+            ).toBeNull();
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("a server error surfaces inline and the list is NOT refetched", async () => {
+        vi.mocked(fetchAdminUsers).mockResolvedValue(listBefore);
+        vi.mocked(postAdminCreateUser).mockRejectedValue(
+            new Error("409 user 'grace' already exists"),
+        );
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await openAdminPanel();
+
+            const usernameInput = container.querySelector<HTMLInputElement>(
+                '[data-testid="settings-admin-create-username"]',
+            )!;
+            const passwordInput = container.querySelector<HTMLInputElement>(
+                '[data-testid="settings-admin-create-password"]',
+            )!;
+            usernameInput.value = "grace";
+            usernameInput.dispatchEvent(new Event("input", { bubbles: true }));
+            passwordInput.value = "whatever";
+            passwordInput.dispatchEvent(new Event("input", { bubbles: true }));
+            flushSync();
+
+            const form = container.querySelector<HTMLFormElement>(
+                '[data-testid="settings-admin-create-form"]',
+            )!;
+            form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+            for (let i = 0; i < 6; i++) await Promise.resolve();
+            flushSync();
+
+            const err = container.querySelector(
+                '[data-testid="settings-admin-create-error"]',
+            );
+            expect(err).not.toBeNull();
+            expect(err?.textContent).toContain("already exists");
+            // Only the initial list fetch; no refetch on failure.
+            expect(vi.mocked(fetchAdminUsers)).toHaveBeenCalledTimes(1);
+            // Inputs preserved so the admin can fix the name without retyping.
+            expect(usernameInput.value).toBe("grace");
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("empty username is rejected client-side without hitting the API", async () => {
+        vi.mocked(fetchAdminUsers).mockResolvedValue(listBefore);
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await openAdminPanel();
+
+            const passwordInput = container.querySelector<HTMLInputElement>(
+                '[data-testid="settings-admin-create-password"]',
+            )!;
+            passwordInput.value = "s3kret-pw";
+            passwordInput.dispatchEvent(new Event("input", { bubbles: true }));
+            flushSync();
+
+            const form = container.querySelector<HTMLFormElement>(
+                '[data-testid="settings-admin-create-form"]',
+            )!;
+            form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+            for (let i = 0; i < 6; i++) await Promise.resolve();
+            flushSync();
+
+            expect(vi.mocked(postAdminCreateUser)).not.toHaveBeenCalled();
+            const err = container.querySelector(
+                '[data-testid="settings-admin-create-error"]',
+            );
+            expect(err?.textContent?.toLowerCase()).toContain("username");
         } finally {
             unmount(instance);
         }

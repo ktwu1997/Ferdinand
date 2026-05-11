@@ -265,7 +265,13 @@ async fn change_password(
 /// Tight username validation: 3-64 chars, [a-z0-9_-], lowercase only so
 /// "ktwu" and "KTWU" can't both register and shadow each other on
 /// case-insensitive filesystems.
-fn validate_username(raw: &str) -> Result<String, ServerError> {
+///
+/// `pub(crate)` so the admin create-user endpoint ([`crate::admin`]) can
+/// reuse the exact same policy — an admin-minted account must obey the
+/// same naming rules a self-registered one does, otherwise the two paths
+/// could diverge (e.g. admin creates "Grace", self-service can't, login
+/// case-folds inconsistently).
+pub(crate) fn validate_username(raw: &str) -> Result<String, ServerError> {
     let trimmed = raw.trim();
     if trimmed.len() < 3 || trimmed.len() > 64 {
         return Err(ServerError::bad_request(

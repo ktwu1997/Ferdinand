@@ -32,6 +32,7 @@
         getCard,
         patchDeckConfigById,
         patchNotetypeName,
+        postAdminCreateUser,
         postAdminDisable,
         postAdminResetPassword,
         postAuthChangePassword,
@@ -314,6 +315,15 @@
     let adminResetConfirm = $state("");
     let adminResetError: string | null = $state(null);
     let adminResetSaving = $state(false);
+    // WS2: inline "add user" form state. Mirrors the reset-password form's
+    // shape (own error line, own saving flag) so the two admin sub-forms
+    // behave identically. On success we refetch the list (rather than
+    // optimistically splice) because the server assigns the id/created_at
+    // and we'd rather show the real row than guess it.
+    let adminCreateUsername = $state("");
+    let adminCreatePassword = $state("");
+    let adminCreateError: string | null = $state(null);
+    let adminCreateSaving = $state(false);
 
     async function loadAdminUsers(): Promise<void> {
         adminLoading = true;
@@ -376,6 +386,36 @@
             adminResetError = err instanceof Error ? err.message : String(err);
         } finally {
             adminResetSaving = false;
+        }
+    }
+
+    async function submitAdminCreate(event: Event): Promise<void> {
+        event.preventDefault();
+        if (adminCreateSaving) return;
+        adminCreateError = null;
+        const username = adminCreateUsername.trim();
+        if (!username) {
+            adminCreateError = "username required";
+            return;
+        }
+        if (!adminCreatePassword) {
+            adminCreateError = "password required";
+            return;
+        }
+        adminCreateSaving = true;
+        try {
+            await postAdminCreateUser(username, adminCreatePassword);
+            adminCreateUsername = "";
+            adminCreatePassword = "";
+            adminSuccess = `// created ${username} — they can log in with the password you set`;
+            // Refetch so the new row (with its server-assigned id) shows up
+            // and any stale list state is reconciled — same move the
+            // refresh button makes.
+            await loadAdminUsers();
+        } catch (err) {
+            adminCreateError = err instanceof Error ? err.message : String(err);
+        } finally {
+            adminCreateSaving = false;
         }
     }
 
@@ -2045,6 +2085,54 @@
                         <Caption>// users</Caption>
                         <span class="tx-card-hand hand" aria-hidden="true">friends sharing this server</span>
                     </div>
+                    <form
+                        class="tx-pw-form tx-admin-create-form"
+                        data-testid="settings-admin-create-form"
+                        onsubmit={submitAdminCreate}
+                    >
+                        <Caption>// add user</Caption>
+                        <label class="tx-pw-field">
+                            <span class="tx-pw-label">username</span>
+                            <input
+                                type="text"
+                                autocomplete="off"
+                                autocapitalize="off"
+                                spellcheck="false"
+                                bind:value={adminCreateUsername}
+                                data-testid="settings-admin-create-username"
+                                disabled={adminCreateSaving}
+                            />
+                        </label>
+                        <label class="tx-pw-field">
+                            <span class="tx-pw-label">password</span>
+                            <input
+                                type="password"
+                                autocomplete="new-password"
+                                bind:value={adminCreatePassword}
+                                data-testid="settings-admin-create-password"
+                                disabled={adminCreateSaving}
+                            />
+                        </label>
+                        {#if adminCreateError}
+                            <p
+                                class="tx-account-msg tx-account-msg-err mono"
+                                data-testid="settings-admin-create-error"
+                                role="alert"
+                            >
+                                {adminCreateError}
+                            </p>
+                        {/if}
+                        <div class="tx-pw-actions">
+                            <button
+                                type="submit"
+                                class="tx-pw-submit"
+                                data-testid="settings-admin-create-submit"
+                                disabled={adminCreateSaving}
+                            >
+                                {adminCreateSaving ? "adding…" : "add user"}
+                            </button>
+                        </div>
+                    </form>
                     {#if adminError}
                         <p
                             class="tx-account-msg tx-account-msg-err mono"
@@ -2546,6 +2634,14 @@
     }
     .tx-admin-reset-form {
         margin-top: 8px;
+    }
+    /* WS2: "add user" form sits between the card head and the user list;
+       a dashed underline keeps it visually distinct from the list rows
+       without introducing a new surface treatment. */
+    .tx-admin-create-form {
+        margin-bottom: 14px;
+        padding-bottom: 14px;
+        border-bottom: 1px dashed var(--rule);
     }
     .tx-admin-footer {
         margin-top: 14px;

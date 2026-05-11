@@ -28,6 +28,16 @@
 //! match. With the env var unset, every admin call 403s — the safer
 //! default for a fresh install.
 //!
+//! WS2 addition
+//! ------------
+//! * `POST /api/admin/users` `{ username, password }` — mint a fresh
+//!   account from the panel so the owner can add e.g. a "grace" login
+//!   without redeploying with new `FERDINAND_SEED_*` env vars. Same
+//!   username policy as self-service `/api/auth/register` (reuses
+//!   [`crate::auth::routes::validate_username`]), 409 on a name clash,
+//!   400 on bad input. No session is created — the new user logs in
+//!   themselves with the password the admin handed them.
+//!
 //! Out of scope (deferred on purpose)
 //! ----------------------------------
 //! * `DELETE /api/admin/users/{u}` — destructive (the friend's whole
@@ -81,6 +91,14 @@ pub struct DisableBody {
     pub disabled: bool,
 }
 
+/// Wire shape for `POST /api/admin/users`. Mirrors the self-service
+/// `/api/auth/register` body so the two creation paths stay aligned.
+#[derive(Debug, Deserialize)]
+pub struct CreateUserBody {
+    pub username: String,
+    pub password: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct OkBody {
     pub ok: bool,
@@ -90,7 +108,7 @@ pub struct OkBody {
 /// `require_auth` and `require_admin` on top — both are mandatory.
 pub fn admin_router() -> Router<ServerState> {
     Router::new()
-        .route("/api/admin/users", get(list_users))
+        .route("/api/admin/users", get(list_users).post(create_user))
         .route(
             "/api/admin/users/{username}/reset-password",
             post(reset_password),
@@ -115,6 +133,54 @@ async fn list_users(
         })
         .collect();
     Ok(Json(ApiAdminUserList { users }))
+}
+
+/// `POST /api/admin/users` — create a new account.
+///
+/// Validation mirrors `/api/auth/register`: the username is run through
+/// [`crate::auth::routes::validate_username`] (3-64 chars, lowercase
+/// `[a-z0-9_-]`) and the password must be non-empty (same floor the
+/// register + change-password + admin-reset paths use — bumping the
+/// strength minimum is a project-wide change tracked separately). A name
+/// clash is a **409**; a malformed username or empty password is a
+/// **400**. On success the user row is written with an Argon2id hash and
+/// we return **201** with the new row in [`ApiAdminUser`] shape so the
+/// frontend can append it to the list without a refetch (it refetches
+/// anyway, but a self-describing response keeps the wrapper honest).
+///
+/// No session is minted — the new user authenticates themselves with the
+/// password the admin handed them out-of-band.
+async fn create_user(
+    State(state): State<ServerState>,
+    Json(body): Json<CreateUserBody>,
+) -> ApiResult<impl IntoResponse> {
+    let username = crate::auth::routes::validate_username(&body.username)?;
+    if body.password.is_empty() {
+        return Err(ServerError::bad_request("password must not be empty"));
+    }
+    if state.auth.find_user(&username)?.is_some() {
+        return Err(ServerError::conflict(format!(
+            "user '{username}' already exists"
+        )));
+    }
+    let hash = crate::auth::password::hash(&body.password)?;
+    let id = state.auth.insert_user(&username, &hash)?;
+    // Re-read so `created_at` is the value the row actually got, not a
+    // second `now()` that could skew by a tick.
+    let row = state
+        .auth
+        .find_user(&username)?
+        .ok_or_else(|| anyhow::anyhow!("user '{username}' vanished immediately after insert"))?;
+    tracing::info!(new_user = %username, new_user_id = id, "admin created user");
+    Ok((
+        StatusCode::CREATED,
+        Json(ApiAdminUser {
+            id: row.id,
+            username: row.username,
+            created_at: row.created_at,
+            disabled_at: row.disabled_at,
+        }),
+    ))
 }
 
 async fn reset_password(
@@ -177,4 +243,130 @@ async fn disable_user(
         tracing::info!(target_user = %username, "admin re-enabled user");
     }
     Ok((StatusCode::OK, Json(OkBody { ok: true })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::db::AuthDb;
+    use crate::state::ServerState;
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    /// Stand up a `ServerState` over a throwaway sqlite file + temp users
+    /// dir. Per-call unique paths so `cargo test`'s parallelism doesn't
+    /// collide.
+    fn test_state() -> ServerState {
+        let suffix = format!(
+            "{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let db_path = std::env::temp_dir().join(format!("ferdinand_admin_test_{suffix}.db"));
+        let users_dir = std::env::temp_dir().join(format!("ferdinand_admin_users_{suffix}"));
+        let auth = AuthDb::open(&db_path).expect("open temp auth db");
+        ServerState::new(auth, users_dir)
+    }
+
+    /// Drive the handler and unwrap the response's status code, ignoring
+    /// the body — every code path here returns a JSON body we don't need
+    /// to inspect beyond the DB assertions that follow.
+    async fn create_status(state: &ServerState, username: &str, password: &str) -> StatusCode {
+        let body = CreateUserBody {
+            username: username.to_string(),
+            password: password.to_string(),
+        };
+        match create_user(State(state.clone()), Json(body)).await {
+            Ok(resp) => resp.into_response().status(),
+            Err(err) => err.status,
+        }
+    }
+
+    #[tokio::test]
+    async fn create_user_succeeds_and_appears_in_list_with_usable_hash() {
+        let state = test_state();
+        let status = create_status(&state, "grace", "s3kret-pw").await;
+        assert_eq!(status, StatusCode::CREATED);
+
+        // The new row is visible to the list endpoint's data source.
+        let rows = state.auth.list_users().unwrap();
+        let grace = rows
+            .iter()
+            .find(|r| r.username == "grace")
+            .expect("grace present in user list");
+        assert!(grace.disabled_at.is_none(), "fresh account is active");
+
+        // The stored hash is a real Argon2id PHC string the new user can
+        // authenticate against — and a wrong password is rejected.
+        let row = state.auth.find_user("grace").unwrap().unwrap();
+        assert!(crate::auth::password::verify("s3kret-pw", &row.password_hash).unwrap());
+        assert!(!crate::auth::password::verify("wrong", &row.password_hash).unwrap());
+    }
+
+    #[tokio::test]
+    async fn create_user_duplicate_username_is_conflict() {
+        let state = test_state();
+        assert_eq!(
+            create_status(&state, "grace", "pw-one").await,
+            StatusCode::CREATED
+        );
+        // Second create with the same name → 409, original hash untouched.
+        assert_eq!(
+            create_status(&state, "grace", "pw-two").await,
+            StatusCode::CONFLICT
+        );
+        let row = state.auth.find_user("grace").unwrap().unwrap();
+        assert!(
+            crate::auth::password::verify("pw-one", &row.password_hash).unwrap(),
+            "conflicting create must not overwrite the existing password"
+        );
+        // Still exactly one such user.
+        let count = state
+            .auth
+            .list_users()
+            .unwrap()
+            .iter()
+            .filter(|r| r.username == "grace")
+            .count();
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn create_user_empty_username_is_bad_request() {
+        let state = test_state();
+        assert_eq!(
+            create_status(&state, "", "some-password").await,
+            StatusCode::BAD_REQUEST
+        );
+        // Whitespace-only trims to empty → also rejected.
+        assert_eq!(
+            create_status(&state, "   ", "some-password").await,
+            StatusCode::BAD_REQUEST
+        );
+        // Uppercase / illegal charset is rejected by the shared policy.
+        assert_eq!(
+            create_status(&state, "Grace", "some-password").await,
+            StatusCode::BAD_REQUEST
+        );
+        assert!(
+            state.auth.list_users().unwrap().is_empty(),
+            "no row should have been written for any invalid username"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_user_empty_password_is_bad_request() {
+        let state = test_state();
+        assert_eq!(
+            create_status(&state, "grace", "").await,
+            StatusCode::BAD_REQUEST
+        );
+        assert!(
+            state.auth.find_user("grace").unwrap().is_none(),
+            "no row should have been written when the password was empty"
+        );
+    }
 }

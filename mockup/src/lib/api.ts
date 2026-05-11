@@ -1407,3 +1407,19 @@ export async function postAdminDisable(
     const path = `/api/admin/users/${encodeURIComponent(username)}/disable`;
     return postJson<ApiAuthOk>(path, { disabled });
 }
+
+/**
+ * WS2: POST /api/admin/users — create a new account from the admin panel.
+ * Same username policy as self-service registration (3-64 chars,
+ * lowercase `[a-z0-9_-]`); the password must be non-empty. 201 + the new
+ * {@link ApiAdminUser} row on success, 400 on bad input, 409 if the
+ * username is already taken, 403 if the caller isn't the admin. No
+ * session is created — the new user logs in themselves with the password
+ * the admin hands them.
+ */
+export async function postAdminCreateUser(
+    username: string,
+    password: string,
+): Promise<ApiAdminUser> {
+    return postJson<ApiAdminUser>("/api/admin/users", { username, password });
+}
