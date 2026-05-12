@@ -136,6 +136,101 @@ describe("HomePage contract", () => {
         }
     });
 
+    test("nested deck tree: ledger flattens to the studiable leaf decks (not just the top-level container)", async () => {
+        // GET /api/decks returns a nested tree. A pure-container parent
+        // (TOEIC) holds no cards directly — only its sub-decks do. The
+        // dashboard must flatten to the leaves so every studiable deck
+        // gets a row and DUE NOW sums those rows (not the 0-due parent).
+        const nested: ApiDeckListResponse = {
+            decks: [
+                {
+                    id: 100,
+                    name: "TOEIC",
+                    level: 1,
+                    new_count: 0,
+                    learn_count: 0,
+                    review_count: 0,
+                    total_in_deck: 60,
+                    filtered: false,
+                    collapsed: false,
+                    preset_id: 1,
+                    children: [
+                        {
+                            id: 110,
+                            name: "TOEIC::Vocabulary",
+                            level: 2,
+                            new_count: 0,
+                            learn_count: 0,
+                            review_count: 0,
+                            total_in_deck: 60,
+                            filtered: false,
+                            collapsed: false,
+                            preset_id: 1,
+                            children: [
+                                {
+                                    id: 111,
+                                    name: "TOEIC::Vocabulary::L600",
+                                    level: 3,
+                                    new_count: 12,
+                                    learn_count: 3,
+                                    review_count: 5,
+                                    total_in_deck: 20,
+                                    filtered: false,
+                                    collapsed: false,
+                                    preset_id: 1,
+                                    children: [],
+                                },
+                                {
+                                    id: 112,
+                                    name: "TOEIC::Vocabulary::L700",
+                                    level: 3,
+                                    new_count: 0,
+                                    learn_count: 0,
+                                    review_count: 0,
+                                    total_in_deck: 20,
+                                    filtered: false,
+                                    collapsed: false,
+                                    preset_id: 1,
+                                    children: [],
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        };
+        vi.mocked(fetchDecks).mockResolvedValueOnce(nested);
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            const cards = Array.from(
+                container.querySelectorAll('[data-testid="deck-card"]'),
+            );
+            // Only the two leaf decks become rows — the TOEIC and
+            // TOEIC::Vocabulary container nodes are not rendered.
+            const names = cards.map((c) => c.getAttribute("data-deck-name"));
+            expect(names).toEqual([
+                "TOEIC::Vocabulary::L600",
+                "TOEIC::Vocabulary::L700",
+            ]);
+            const firstRow = cards[0]!;
+            expect(firstRow.getAttribute("data-deck-id")).toBe("111");
+            expect(firstRow.getAttribute("href")).toBe("/study/111");
+
+            // DUE NOW (.dash-subtitle strong) sums the leaf rows:
+            // L600 = 12+3+5 = 20, L700 = 0 → total 20 (not the 0 the
+            // container parent reports).
+            const subtitleStrong = container.querySelector(
+                ".dash-desktop .dash-subtitle strong",
+            );
+            expect(subtitleStrong?.textContent).toContain("20");
+        } finally {
+            unmount(instance);
+        }
+    });
+
     test("fetchDecks rejects: explicit banner surfaces server message; fakeDecks still rendered (Phase 10-B)", async () => {
         vi.mocked(fetchDecks).mockRejectedValueOnce(
             new Error("backend unreachable"),

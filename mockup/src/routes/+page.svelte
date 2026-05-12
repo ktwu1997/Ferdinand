@@ -64,8 +64,46 @@
         postDeck,
         postFilteredDeck,
         type ApiDayCount,
+        type ApiDeckSummary,
         type ApiForecastDay,
     } from "$lib/api";
+
+    // GET /api/decks returns a *nested* tree: the top-level `decks` array
+    // holds level-1 decks, with sub-decks under each `.children`. The
+    // earlier dashboard only mapped the top-level array, so a collection
+    // like TOEIC → TOEIC::Vocabulary::L600/L700/L800 showed a single
+    // "TOEIC" row with 0 due (a parent that holds no cards directly) and
+    // hid every studiable sub-deck. Flatten to the leaf decks (the actual
+    // studiable units — their counts are their own, never aggregates) so
+    // every ledger row maps to a /study/<id> target and the DUE NOW total
+    // is the non-double-counted sum across those rows. The full
+    // "Foo::Bar::Baz" name still carries the hierarchy visually.
+    function flattenLeafDecks(decks: ApiDeckSummary[]): ApiDeckSummary[] {
+        const out: ApiDeckSummary[] = [];
+        for (const d of decks) {
+            if (d.children.length === 0) {
+                out.push(d);
+            } else {
+                out.push(...flattenLeafDecks(d.children));
+            }
+        }
+        return out;
+    }
+
+    function mapApiDecks(decks: ApiDeckSummary[]): Deck[] {
+        return flattenLeafDecks(decks)
+            .filter((d) => d.id !== 0 && d.level >= 1)
+            .map((d) => ({
+                id: String(d.id),
+                name: d.name,
+                emoji: "📚",
+                new: d.new_count,
+                learning: d.learn_count,
+                review: d.review_count,
+                totalCards: d.total_in_deck,
+                lastStudied: new Date().toISOString(),
+            }));
+    }
 
     let liveDecks: Deck[] | null = $state(null);
     let loadError = $state<string | null>(null);
@@ -103,18 +141,7 @@
     onMount(async () => {
         try {
             const res = await fetchDecks();
-            liveDecks = res.decks
-                .filter((d) => d.id !== 0 && d.level >= 1)
-                .map((d) => ({
-                    id: String(d.id),
-                    name: d.name,
-                    emoji: "📚",
-                    new: d.new_count,
-                    learning: d.learn_count,
-                    review: d.review_count,
-                    totalCards: d.total_in_deck,
-                    lastStudied: new Date().toISOString(),
-                }));
+            liveDecks = mapApiDecks(res.decks);
         } catch (e) {
             loadError = e instanceof Error ? e.message : "Couldn't load decks";
         }
@@ -170,18 +197,7 @@
         try {
             await postDeck(trimmed);
             const res = await fetchDecks();
-            liveDecks = res.decks
-                .filter((d) => d.id !== 0 && d.level >= 1)
-                .map((d) => ({
-                    id: String(d.id),
-                    name: d.name,
-                    emoji: "📚",
-                    new: d.new_count,
-                    learning: d.learn_count,
-                    review: d.review_count,
-                    totalCards: d.total_in_deck,
-                    lastStudied: new Date().toISOString(),
-                }));
+            liveDecks = mapApiDecks(res.decks);
             cancelCreateDeck();
         } catch (e) {
             newDeckError =
@@ -230,18 +246,7 @@
                 search: trimmedSearch,
             });
             const res = await fetchDecks();
-            liveDecks = res.decks
-                .filter((d) => d.id !== 0 && d.level >= 1)
-                .map((d) => ({
-                    id: String(d.id),
-                    name: d.name,
-                    emoji: "📚",
-                    new: d.new_count,
-                    learning: d.learn_count,
-                    review: d.review_count,
-                    totalCards: d.total_in_deck,
-                    lastStudied: new Date().toISOString(),
-                }));
+            liveDecks = mapApiDecks(res.decks);
             cancelCreateFilteredDeck();
         } catch (e) {
             newFilteredError =
