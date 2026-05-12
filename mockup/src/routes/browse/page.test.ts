@@ -863,6 +863,106 @@ describe("BrowsePage contract", () => {
                 unmount(instance);
             }
         });
+
+        test(
+            "while fetchDecks is still pending, the DECKS sidebar shows a skeleton — " +
+                "NOT the fake demo deck names (no flash of the wrong data)",
+            async () => {
+                vi.mocked(fetchCards).mockResolvedValueOnce({ total: 0, cards: [] });
+                // fetchDecks never resolves during the assertions below.
+                let resolveDecks!: (v: ApiDeckListResponse) => void;
+                vi.mocked(fetchDecks).mockReturnValueOnce(
+                    new Promise<ApiDeckListResponse>((r) => {
+                        resolveDecks = r;
+                    }),
+                );
+
+                const instance = mount(Page, { target: container, props: {} });
+                try {
+                    await settle();
+
+                    const sidebar = container.querySelector(".bx-sidebar")!;
+                    const fakeFirstName = fakeDecks[0]?.name; // "日文 N2"
+                    expect(fakeFirstName).toBeTruthy();
+                    // pending → must NOT paint the bundled demo decks
+                    expect(sidebar.textContent).not.toContain(fakeFirstName as string);
+                    // …and there are no real deck rows yet, just a skeleton
+                    expect(treeDeckButtons(container).length).toBe(0);
+                    expect(
+                        sidebar.querySelector('[data-testid="browse-deck-skeleton"]'),
+                    ).toBeTruthy();
+
+                    // resolve → real decks replace the skeleton
+                    resolveDecks({
+                        decks: [deck(101, "日本語", { total_in_deck: 137 })],
+                    });
+                    await settle();
+
+                    const items = treeDeckButtons(container);
+                    expect(items.length).toBe(1);
+                    expect(items[0]?.textContent).toContain("日本語");
+                    expect(
+                        container.querySelector('[data-testid="browse-deck-skeleton"]'),
+                    ).toBeNull();
+                } finally {
+                    unmount(instance);
+                }
+            },
+        );
+
+        test(
+            "while fetchTags is still pending, the TAGS sidebar shows no fake demo tag pills",
+            async () => {
+                vi.mocked(fetchCards).mockResolvedValueOnce({ total: 0, cards: [] });
+                vi.mocked(fetchDecks).mockResolvedValueOnce({ decks: [] });
+                let resolveTags!: (v: { tags: string[] }) => void;
+                vi.mocked(fetchTags).mockReturnValueOnce(
+                    new Promise<{ tags: string[] }>((r) => {
+                        resolveTags = r;
+                    }),
+                );
+
+                const instance = mount(Page, { target: container, props: {} });
+                try {
+                    await settle();
+
+                    const sidebar = container.querySelector(".bx-sidebar")!;
+                    // pending → no real tag pills, no fake ones either
+                    expect(
+                        sidebar.querySelectorAll('[data-testid="sidebar-tag"]').length,
+                    ).toBe(0);
+
+                    resolveTags({ tags: ["live-tag-a", "live-tag-b"] });
+                    await settle();
+
+                    const pills = Array.from(
+                        sidebar.querySelectorAll('[data-testid="sidebar-tag"]'),
+                    );
+                    expect(pills.map((p) => p.textContent)).toEqual([
+                        "live-tag-a",
+                        "live-tag-b",
+                    ]);
+                } finally {
+                    unmount(instance);
+                }
+            },
+        );
+
+        test("the browse sidebar brand mark renders at size 28 (matching the shared nav rail)", async () => {
+            vi.mocked(fetchCards).mockResolvedValueOnce({ total: 0, cards: [] });
+            vi.mocked(fetchDecks).mockResolvedValueOnce({ decks: [] });
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+                const svg = container.querySelector(".bx-sidebar .bx-brand svg");
+                expect(svg).toBeTruthy();
+                expect(svg?.getAttribute("width")).toBe("28");
+                expect(svg?.getAttribute("height")).toBe("28");
+            } finally {
+                unmount(instance);
+            }
+        });
     });
 
     describe("Phase 10-A tags sidebar", () => {

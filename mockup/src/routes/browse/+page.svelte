@@ -73,6 +73,15 @@
     let liveCards = $state<ApiCardSummary[] | null>(null);
     let liveDecks = $state<ApiDeckSummary[] | null>(null);
     let liveTags = $state<string[] | null>(null);
+    // True once the supplementary fetchDecks / fetchTags calls have
+    // *settled* (success or failure). The sidebar's DECKS / TAGS sections
+    // render a skeleton until then — they must never paint the bundled
+    // demo fixtures (fakeDecks / fakeTags) while a live fetch is in
+    // flight, or a logged-in user sees a flash of someone else's data on
+    // every navigation into /browse. The fake-data fallback is reserved
+    // for the *failed* fetch case (offline / no-backend preview).
+    let decksReady = $state(false);
+    let tagsReady = $state(false);
     // Phase 18-C: persisted saved-search list. Same fetch-on-mount +
     // silent-fallback shape as liveDecks / liveTags. Empty array is
     // a valid live state (fresh collection, no entries yet) — only
@@ -278,18 +287,26 @@
                 // first paint of skeleton/empty rows is committed.
                 initialLoadDone = true;
             });
-        fetchDecks().then(
-            (res) => {
-                liveDecks = res.decks.filter((d) => d.id !== 0 && d.level >= 1);
-            },
-            () => undefined,
-        );
-        fetchTags().then(
-            (res) => {
-                liveTags = res.tags;
-            },
-            () => undefined,
-        );
+        fetchDecks()
+            .then(
+                (res) => {
+                    liveDecks = res.decks.filter((d) => d.id !== 0 && d.level >= 1);
+                },
+                () => undefined,
+            )
+            .finally(() => {
+                decksReady = true;
+            });
+        fetchTags()
+            .then(
+                (res) => {
+                    liveTags = res.tags;
+                },
+                () => undefined,
+            )
+            .finally(() => {
+                tagsReady = true;
+            });
         fetchDeckConfigs().then(
             (res) => {
                 presets = res.configs;
@@ -388,8 +405,11 @@
             review: 0,
             suspended: 0,
         };
-        for (const r of rows) {
-            if (r.state in c) c[r.state]++;
+        // Count the live card page only — never the fakeCards fallback in
+        // `rows`, so the STATE filter counts don't briefly reflect the
+        // demo data before the first fetch lands.
+        for (const card of liveCards ?? []) {
+            if (card.state in c) c[card.state]++;
         }
         return c;
     });
@@ -913,20 +933,25 @@
     // the label (a pure-container parent like `TOEIC` holds no cards
     // directly, so listing it bare would just read "TOEIC 0"). Mirrors
     // the dashboard ledger, which already uses `flattenLeafDecks`.
+    //
+    // Empty until `fetchDecks` has settled — the markup shows a skeleton
+    // in that window rather than the `fakeDecks` fallback (see decksReady).
     let treeRows: TreeRow[] = $derived(
-        liveDecks
-            ? flattenLeafDecks(liveDecks).map((d) => ({
-                  id: d.id,
-                  name: d.name,
-                  emoji: "📚",
-                  totalCards: d.total_in_deck,
-              }))
-            : fakeDecks.map((d) => ({
-                  id: d.id,
-                  name: d.name,
-                  emoji: d.emoji,
-                  totalCards: d.totalCards,
-              })),
+        !decksReady
+            ? []
+            : liveDecks
+              ? flattenLeafDecks(liveDecks).map((d) => ({
+                    id: d.id,
+                    name: d.name,
+                    emoji: "📚",
+                    totalCards: d.total_in_deck,
+                }))
+              : fakeDecks.map((d) => ({
+                    id: d.id,
+                    name: d.name,
+                    emoji: d.emoji,
+                    totalCards: d.totalCards,
+                })),
     );
 
     async function startEditTreeDeck(deckId: number | string, name: string) {
@@ -1752,7 +1777,7 @@
     <!-- inner sidebar (tree) — Phase A4-ε₁ sketch-skin port -->
     <aside class="bx-sidebar" data-testid="browse-sidebar">
         <a class="bx-brand" data-testid="browse-brand" href="/" aria-label="Home — dashboard">
-            <FerdinandMark size={24} />
+            <FerdinandMark size={28} />
             <span class="bx-brand-name mono">Ferdinand</span>
         </a>
 
@@ -1766,6 +1791,17 @@
                 <Caption>decks</Caption>
             </button>
             {#if openSection.decks}
+                {#if !decksReady}
+                    <div
+                        class="bx-section-body bx-skel-list"
+                        data-testid="browse-deck-skeleton"
+                        aria-hidden="true"
+                    >
+                        <div class="bx-deck-row bx-deck-skel"><span class="bx-skel-bar"></span></div>
+                        <div class="bx-deck-row bx-deck-skel"><span class="bx-skel-bar bx-skel-bar-2"></span></div>
+                        <div class="bx-deck-row bx-deck-skel"><span class="bx-skel-bar bx-skel-bar-3"></span></div>
+                    </div>
+                {:else}
                 <div class="bx-section-body" data-testid="browse-deck-list">
                     {#each treeRows as d (d.id)}
                         {#if treeEditingDeckId === d.id}
@@ -1810,6 +1846,7 @@
                         {/if}
                     {/each}
                 </div>
+                {/if}
             {/if}
         </div>
 
@@ -1848,14 +1885,21 @@
             </button>
             {#if openSection.tags}
                 <div class="bx-section-body bx-tag-cloud">
-                    {#each sidebarTags.slice(0, 10) as t (t)}
-                        <button
-                            type="button"
-                            class="bx-tag-pill mono"
-                            data-testid="sidebar-tag"
-                            onclick={() => (query = `tag:${t}`)}
-                        >{t}</button>
-                    {/each}
+                    {#if !tagsReady}
+                        <span class="bx-tag-pill bx-tag-skel" aria-hidden="true"></span>
+                        <span class="bx-tag-pill bx-tag-skel bx-tag-skel-2" aria-hidden="true"></span>
+                        <span class="bx-tag-pill bx-tag-skel" aria-hidden="true"></span>
+                        <span class="bx-tag-pill bx-tag-skel bx-tag-skel-3" aria-hidden="true"></span>
+                    {:else}
+                        {#each sidebarTags.slice(0, 10) as t (t)}
+                            <button
+                                type="button"
+                                class="bx-tag-pill mono"
+                                data-testid="sidebar-tag"
+                                onclick={() => (query = `tag:${t}`)}
+                            >{t}</button>
+                        {/each}
+                    {/if}
                 </div>
             {/if}
         </div>
@@ -1985,7 +2029,7 @@
                     <span class="hand bx-tag-everything" aria-hidden="true">everything</span>
                 </h1>
                 <p class="bx-subtitle mono">
-                    {liveTotal ?? rows.length} cards across {treeRows.length} deck{treeRows.length === 1 ? "" : "s"}
+                    {liveTotal ?? "—"} cards across {decksReady ? treeRows.length : "—"} deck{decksReady && treeRows.length === 1 ? "" : "s"}
                 </p>
             </div>
             <div class="bx-hero-right">
@@ -3654,7 +3698,7 @@
 
     .bx-page {
         display: grid;
-        grid-template-columns: 240px minmax(0, 1fr) 360px;
+        grid-template-columns: 220px minmax(0, 1fr) 360px;
         height: 100dvh;
         overflow: hidden;
         background: var(--bg);
@@ -3666,7 +3710,10 @@
         display: flex;
         flex-direction: column;
         gap: 22px;
-        padding: 24px 18px 24px 22px;
+        /* Same frame as the shared nav rail ($lib/components/Sidebar.svelte:
+           220px wide, 28px/22px padding, 28px brand mark) so navigating in
+           and out of /browse never resizes the left edge or the wordmark. */
+        padding: 28px 22px;
         background: var(--bg-soft);
         border-right: 1.5px solid var(--ink);
         overflow-y: auto;
@@ -3687,7 +3734,7 @@
         outline-offset: 2px;
     }
     .bx-brand-name {
-        font-size: 13px;
+        font-size: 14px;
         font-weight: 600;
         color: var(--ink);
         transition: color 120ms ease;
@@ -3739,6 +3786,46 @@
         margin-top: auto;
         border-top: 1px dashed var(--rule);
         padding-top: 12px;
+    }
+
+    /* Loading skeletons for the DECKS / TAGS sections — shown until the
+       supplementary fetchDecks / fetchTags calls settle so the bundled
+       demo data never paints on navigation into /browse. Static muted
+       bars (the window is ~100ms; an animation would be more distracting
+       than the placeholder it replaces). */
+    .bx-skel-list {
+        pointer-events: none;
+    }
+    .bx-deck-skel {
+        padding: 5px 8px;
+    }
+    .bx-skel-bar {
+        display: block;
+        height: 12px;
+        width: 70%;
+        border-radius: 4px;
+        background: var(--rule-soft);
+    }
+    .bx-skel-bar-2 {
+        width: 55%;
+    }
+    .bx-skel-bar-3 {
+        width: 64%;
+    }
+    .bx-tag-skel {
+        pointer-events: none;
+        padding: 0;
+        width: 46px;
+        height: 18px;
+        border-radius: 999px;
+        background: var(--rule-soft);
+        border-color: transparent;
+    }
+    .bx-tag-skel-2 {
+        width: 62px;
+    }
+    .bx-tag-skel-3 {
+        width: 38px;
     }
 
     .bx-deck-row {
