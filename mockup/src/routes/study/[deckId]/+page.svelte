@@ -24,21 +24,24 @@
   the backend doesn't ship.
 -->
 <script lang="ts">
-    import { onMount, tick } from "svelte";
+    import { onMount, onDestroy, tick } from "svelte";
     import { page } from "$app/stores";
     import { decks, cards as fakeCards } from "$lib/data";
     import {
         fetchDecks,
         fetchQueue,
+        getCardHistory,
         patchNote,
         postAnswer,
         type ApiCardSummary,
         type AnswerRating,
     } from "$lib/api";
+    import { STUDY_INTERVALS, formatMMSS } from "$lib/study";
     import CardFace from "$lib/components/CardFace.svelte";
     import { Btn, Caption } from "$lib/components/ui";
     import {
         SketchArrow,
+        SketchClock,
         SketchOwl,
         SketchPlus,
     } from "$lib/components/sketch";
@@ -58,6 +61,18 @@
     let cardStartedAt = $state(0);
     let sending = $state(false);
     let lastError = $state<string | null>(null);
+
+    // Session clock (design StudyHeader: SketchClock + mm:ss). Starts when
+    // the route mounts and ticks once a second; frozen once the deck is
+    // done. cardStartedAt above stays separate — it feeds ms_taken.
+    let sessionStartedAt = $state(0);
+    let nowTick = $state(Date.now());
+    let timerId: ReturnType<typeof setInterval> | undefined;
+
+    // Review count for the footer card-meta strip — sourced from the
+    // card's revlog (ApiCardSummary has no reps field). Null while
+    // unknown / on fetch failure / offline.
+    let reviewCount = $state<number | null>(null);
 
     // Offline fallback when backend is unreachable.
     let offlineIdx = $state(0);
@@ -98,6 +113,50 @@
             deckName = fd.name;
             mode = "offline";
         }
+    });
+
+    onMount(() => {
+        sessionStartedAt = Date.now();
+        nowTick = Date.now();
+        timerId = setInterval(() => {
+            nowTick = Date.now();
+        }, 1000);
+    });
+    onDestroy(() => {
+        if (timerId !== undefined) clearInterval(timerId);
+    });
+
+    // Freeze the clock once the queue is exhausted.
+    $effect(() => {
+        if (done && timerId !== undefined) {
+            clearInterval(timerId);
+            timerId = undefined;
+        }
+    });
+
+    // Fetch the current card's review count for the footer meta strip.
+    // Re-runs whenever the card changes; silently leaves reviewCount null
+    // on any failure (never-reviewed cards return a valid 200 with total 0).
+    $effect(() => {
+        const card = currentCard;
+        reviewCount = null;
+        if (mode !== "live" || !card) return;
+        const cardId = card.id;
+        let cancelled = false;
+        try {
+            getCardHistory(cardId)
+                .then((res) => {
+                    if (!cancelled) reviewCount = res.total;
+                })
+                .catch(() => {
+                    if (!cancelled) reviewCount = null;
+                });
+        } catch {
+            reviewCount = null;
+        }
+        return () => {
+            cancelled = true;
+        };
     });
 
     function flattenTree(
@@ -169,6 +228,17 @@
     );
 
     let done = $derived(mode === "live" && currentCard === null && sessionStartedWith > 0);
+
+    let elapsed = $derived(
+        sessionStartedAt === 0 ? "00:00" : formatMMSS(nowTick - sessionStartedAt),
+    );
+    // Anki note ids are the creation-time ms epoch — so the note id IS the
+    // "added" date, no backend round-trip needed.
+    let addedDate = $derived<string>(
+        mode === "live" && currentCard
+            ? new Date(currentCard.note_id).toISOString().slice(0, 10)
+            : "—",
+    );
 
     const GRADE_TO_RATING: Record<1 | 2 | 3 | 4, AnswerRating> = {
         1: "again",
@@ -340,6 +410,10 @@
         </div>
 
         <div class="head-actions">
+            <span class="elapsed mono" data-testid="study-elapsed" title="Session time">
+                <SketchClock size={14} />
+                {elapsed}
+            </span>
             <button class="icon-btn" type="button" aria-label="Edit current card" title="Edit · E">
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>
             </button>
@@ -461,29 +535,56 @@
                         <span class="ans-label">again</span>
                         <span class="ans-key mono">1</span>
                     </span>
-                    <span class="ans-hint mono">&lt; 1 min</span>
+                    <span class="ans-hint mono">{STUDY_INTERVALS.again}</span>
                 </button>
                 <button class="ans ans-hard" type="button" onclick={() => answer(2)} disabled={sending} data-testid="ans-hard">
                     <span class="ans-row">
                         <span class="ans-label">hard</span>
                         <span class="ans-key mono">2</span>
                     </span>
-                    <span class="ans-hint mono">6 min</span>
+                    <span class="ans-hint mono">{STUDY_INTERVALS.hard}</span>
                 </button>
                 <button class="ans ans-good" type="button" onclick={() => answer(3)} disabled={sending} data-testid="ans-good">
                     <span class="ans-row">
                         <span class="ans-label">good</span>
                         <span class="ans-key mono">3</span>
                     </span>
-                    <span class="ans-hint mono">10 min</span>
+                    <span class="ans-hint mono">{STUDY_INTERVALS.good}</span>
                 </button>
                 <button class="ans ans-easy" type="button" onclick={() => answer(4)} disabled={sending} data-testid="ans-easy">
                     <span class="ans-row">
                         <span class="ans-label">easy</span>
                         <span class="ans-key mono">4</span>
                     </span>
-                    <span class="ans-hint mono">4 d</span>
+                    <span class="ans-hint mono">{STUDY_INTERVALS.easy}</span>
                 </button>
+            </div>
+        {/if}
+
+        {#if !done}
+            <!--
+              Footer card-meta strip (design StudyV1:246-258): review count
+              + added date on the left, hotkey legend on the right. The
+              legend is static — undo/bury aren't wired in the impl yet
+              (TODO: wire ↻ undo + ⇧b bury once a backend undo/bury route
+              exists); ⇧e edit / ⇧s suspend mirror the header icon buttons.
+              Hidden on mobile, matching the design's StudyMobile bottom bar
+              which has no meta line.
+            -->
+            <div class="study-meta" data-testid="study-card-meta">
+                <Caption>
+                    {#if mode === "live" && currentCard}
+                        {reviewCount ?? "—"} review{reviewCount === 1 ? "" : "s"} · added {addedDate}
+                    {:else}
+                        cached preview
+                    {/if}
+                </Caption>
+                <div class="hotkey-legend mono" aria-hidden="true">
+                    <span>↻ undo</span>
+                    <span>⇧e edit</span>
+                    <span>⇧b bury</span>
+                    <span>⇧s suspend</span>
+                </div>
             </div>
         {/if}
     </footer>
@@ -612,7 +713,16 @@
 
     .head-actions {
         display: inline-flex;
-        gap: var(--space-1);
+        align-items: center;
+        gap: var(--space-3);
+    }
+    .elapsed {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 13px;
+        color: var(--ink-soft);
+        white-space: nowrap;
     }
     .icon-btn {
         width: 32px;
@@ -916,6 +1026,25 @@
     .ans-good  .ans-label { color: var(--accent); }
     .ans-easy  .ans-label { color: var(--ink-soft); }
 
+    /* ============ FOOTER CARD-META STRIP ============ */
+    .study-meta {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: var(--space-4);
+        max-width: 720px;
+        margin: var(--space-6) auto 0;
+        padding-top: var(--space-6);
+        border-top: 1px dashed var(--rule);
+    }
+    .hotkey-legend {
+        display: flex;
+        gap: var(--space-7);
+        font-size: 11px;
+        color: var(--ink-mute);
+        white-space: nowrap;
+    }
+
     /* ============ MOBILE (≤640px) ============ */
     @media (max-width: 640px) {
         .study-head {
@@ -968,6 +1097,10 @@
 
         .study-foot {
             padding: var(--space-5) var(--space-5) max(var(--space-7), var(--safe-bottom, 0px));
+        }
+        /* Design StudyMobile bottom bar = answer grid only; no meta line. */
+        .study-meta {
+            display: none;
         }
         .answers {
             grid-template-columns: repeat(2, 1fr);
