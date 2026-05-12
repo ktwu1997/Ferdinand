@@ -13,8 +13,12 @@ notetype), it derives the image filename the way
 `gen_card_images_codex.build_filename` does (`{prefix}_{slug}.jpg`), and
 if a matching file exists under `--media-dir` AND the remote note's image
 field is still empty, it uploads the JPEG (`POST /media`) and PATCHes the
-note (`PATCH /api/notes/{nid}` fields[image_field_idx]). Idempotent: a
-note that already has an image is left alone, so re-runs are safe.
+note (`PATCH /api/notes/{nid}`), writing the Image field as
+`<img src="<FILENAME>">` — a RELATIVE src (bare filename, no `/media/`
+prefix), which is what the card template needs to actually render an
+image (a bare filename would show as literal text). Idempotent: a note
+that already has a non-empty Image field (bare filename or `<img>` tag)
+is left alone, so re-runs are safe.
 
 These images were presumably already visually-audited when generated, so
 no re-audit is implied — but if a JPEG predates the audit cycle, audit it
@@ -206,6 +210,8 @@ def main() -> int:
             print(f"  bad   nid={nid:<14} {front:18} note has only {len(fields)} fields, no index {idx}")
             bad += 1
             continue
+        # Any non-empty Image field — whether a bare filename (legacy) or
+        # an `<img src="...">` tag (current) — counts as already-imaged.
         if (fields[idx] or "").strip():
             already += 1
             continue
@@ -222,7 +228,9 @@ def main() -> int:
             jpeg = local.read_bytes()
             stored = upload_media(args.base, filename, jpeg)["filename"]
             new_fields = list(fields)
-            new_fields[idx] = stored
+            # <img> tag with a RELATIVE src — a bare filename in the
+            # Image field would render as literal text in the card.
+            new_fields[idx] = f'<img src="{stored}">'
             http_patch_json(f"{args.base}/api/notes/{nid}",
                             {"fields": new_fields, "tags": note.get("tags", [])})
             uploaded += 1

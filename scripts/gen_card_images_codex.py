@@ -11,7 +11,11 @@ Pipeline per pending note:
      SAVED stdout line is unreliable — the LLM sometimes hallucinates it).
   4. Verify file exists + size > 1 KB. PIL PNG → 800px-wide JPEG q=85.
   5. POST /media multipart upload → {filename, size_bytes}.
-  6. PATCH /api/notes/{nid} with fields[8] swapped to that filename.
+  6. PATCH /api/notes/{nid} with the Image field set to `<img src="<FILENAME>">`
+     (a RELATIVE src — the bare filename, no `/media/` prefix). The web
+     frontend's CardFace.svelte resolves a relative `<img src>` to
+     `mediaBase()+src` (= `/media/<filename>`); writing a bare filename
+     instead emits literal TEXT in the card and never renders.
 
 Notes:
   • Costs ChatGPT subscription quota (Plus/Pro), NOT API dollars.
@@ -410,7 +414,11 @@ def patch_image_field(
     image_field_idx: int,
 ) -> dict:
     new_fields = list(fields)
-    new_fields[image_field_idx] = filename
+    # Store an <img> tag with a RELATIVE src (bare filename, no /media/
+    # prefix) — the card template renders {{Image}} verbatim, so a bare
+    # filename would show as literal text; the frontend resolves a
+    # relative src to /media/<filename>.
+    new_fields[image_field_idx] = f'<img src="{filename}">'
     return http_patch_json(
         f"{base}/api/notes/{nid}",
         {"fields": new_fields, "tags": list(tags)},
