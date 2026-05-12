@@ -27,7 +27,7 @@
     import { onMount } from "svelte";
     import { goto } from "$app/navigation";
     import { page } from "$app/stores";
-    import { Btn, Field } from "$lib/components/ui";
+    import { Btn, Field, Caption } from "$lib/components/ui";
     import {
         FerdinandMark,
         SketchOwl,
@@ -126,6 +126,15 @@
             <form class="login-body" onsubmit={onSubmit} novalidate>
                 <div class="owl-wrap">
                     <SketchOwl size={200} {gazeX} {gazeY} closed={owlClosed} />
+                </div>
+
+                <!-- Heading block above the form — matches the design's
+                     "// session 01 / sign in / connect to your sync server."
+                     copy that sits between the owl and the first field. -->
+                <div class="login-heading">
+                    <Caption>session 01</Caption>
+                    <h1 class="login-h1 mono">sign in</h1>
+                    <p class="login-tagline mono">connect to your sync server.</p>
                 </div>
 
                 <Field
@@ -287,7 +296,28 @@
     .owl-wrap {
         display: flex;
         justify-content: center;
-        margin-bottom: 28px;
+        margin-bottom: 20px;
+    }
+    .login-heading {
+        margin-bottom: 26px;
+    }
+    .login-h1 {
+        font-size: 30px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        margin: 6px 0 8px;
+        color: var(--ink);
+        line-height: 1.05;
+    }
+    .login-tagline {
+        font-size: 13px;
+        color: var(--ink-mute);
+        margin: 0;
+    }
+    @media (max-width: 640px) {
+        .login-h1 {
+            font-size: 26px;
+        }
     }
     /* Match the design's smaller mobile owl without re-passing a prop. */
     @media (max-width: 640px) {
