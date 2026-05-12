@@ -1,15 +1,40 @@
-<script lang="ts">
-    import { page } from "$app/stores";
+<!--
+  Mobile bottom nav (≤640px) — the kraft-paper tab bar from
+  design_handoff_ferdinand/source/dashboard.jsx (DashboardMobile bottom nav):
+  hand-drawn sketch icons, mono uppercase labels, a 1.5px ink top border on a
+  --bg-soft ground, active tab in --accent and the rest in --ink-mute.
 
-    // Mirrors the desktop nav rail (Sidebar.svelte): Decks · Browse ·
-    // New · Stats · Settings. "New" is the short label for the New-note
-    // route so the 5-tab row stays legible at ≤640px.
-    const items = [
-        { href: "/", label: "Decks", icon: "home" },
-        { href: "/browse", label: "Browse", icon: "search" },
-        { href: "/notes/new", label: "New", icon: "new-note" },
-        { href: "/stats", label: "Stats", icon: "chart" },
-        { href: "/settings", label: "Settings", icon: "settings" },
+  The design draws four tabs (decks · browse · add · stats); we keep the impl's
+  fifth "Settings" tab so settings stays reachable on small screens. Carries
+  `class="sketch-skin"` so the kraft tokens resolve.
+-->
+<script lang="ts">
+    import type { Component } from "svelte";
+    import { page } from "$app/stores";
+    import {
+        SketchBook,
+        SketchCardStack,
+        SketchPlus,
+        SketchCalendar,
+        SketchGear,
+    } from "$lib/components/sketch";
+
+    type IconCmp = Component<{ size?: number }>;
+
+    interface TabItem {
+        href: string;
+        label: string;
+        icon: IconCmp;
+    }
+
+    // Mirrors the desktop rail (Sidebar.svelte) plus a Settings tab. "New" is
+    // the short label for the New-note route so the 5-tab row stays legible.
+    const items: TabItem[] = [
+        { href: "/", label: "Decks", icon: SketchBook },
+        { href: "/browse", label: "Browse", icon: SketchCardStack },
+        { href: "/notes/new", label: "New", icon: SketchPlus },
+        { href: "/stats", label: "Stats", icon: SketchCalendar },
+        { href: "/settings", label: "Settings", icon: SketchGear },
     ];
 
     function isActive(href: string, current: string): boolean {
@@ -20,28 +45,18 @@
     let currentPath = $derived($page.url.pathname);
 </script>
 
-<nav class="bottom-nav" aria-label="Primary">
+<nav class="bottom-nav sketch-skin" aria-label="Primary">
     {#each items as item (item.href)}
+        {@const Icon = item.icon}
+        {@const active = isActive(item.href, currentPath)}
         <a
             href={item.href}
             class="tab"
-            class:active={isActive(item.href, currentPath)}
-            aria-current={isActive(item.href, currentPath) ? "page" : undefined}
+            class:active
+            aria-current={active ? "page" : undefined}
         >
-            <span class="icon" aria-hidden="true">
-                {#if item.icon === "home"}
-                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m3 10 9-7 9 7v10a2 2 0 0 1-2 2h-4v-6h-6v6H5a2 2 0 0 1-2-2z"/></svg>
-                {:else if item.icon === "search"}
-                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-                {:else if item.icon === "new-note"}
-                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"/></svg>
-                {:else if item.icon === "chart"}
-                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 16l4-4 4 3 5-7"/></svg>
-                {:else}
-                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09c0 .67.39 1.26 1 1.51a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82c.25.61.84 1 1.51 1H21a2 2 0 1 1 0 4h-.09c-.67 0-1.26.39-1.51 1z"/></svg>
-                {/if}
-            </span>
-            <span class="label">{item.label}</span>
+            <span class="icon"><Icon size={22} /></span>
+            <span class="label mono">{item.label}</span>
         </a>
     {/each}
 </nav>
@@ -54,23 +69,22 @@
         right: 0;
         z-index: 50;
         display: none;
-        background: var(--bg-elevated);
-        border-top: 1px solid var(--border);
-        padding-bottom: var(--safe-bottom);
+        grid-template-columns: repeat(5, 1fr);
+        background: var(--bg-soft);
+        border-top: 1.5px solid var(--ink);
+        padding: 8px 0 calc(var(--safe-bottom) + 14px);
     }
     .bottom-nav > .tab {
-        flex: 1;
         display: flex;
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 2px;
+        gap: 4px;
         min-height: var(--touch-min);
-        padding: 6px 4px 8px;
-        color: var(--text-subtle);
-        font-size: 0.7rem;
-        line-height: 1;
-        transition: color var(--duration-fast) var(--ease);
+        padding: 6px 4px;
+        text-decoration: none;
+        color: var(--ink-mute);
+        transition: color 120ms ease;
     }
     .bottom-nav > .tab .icon {
         display: inline-flex;
@@ -78,20 +92,26 @@
         justify-content: center;
         height: 24px;
     }
+    .bottom-nav > .tab .label {
+        font-size: 9px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        line-height: 1;
+    }
     .bottom-nav > .tab.active {
         color: var(--accent);
     }
     .bottom-nav > .tab:not(.active):active {
-        color: var(--text);
+        color: var(--ink);
     }
-    .bottom-nav > .tab .label {
-        font-weight: 500;
-        letter-spacing: 0.01em;
+    .bottom-nav > .tab:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: -2px;
     }
 
     @media (max-width: 640px) {
         .bottom-nav {
-            display: flex;
+            display: grid;
         }
     }
 </style>

@@ -1,17 +1,33 @@
+<!--
+  Mobile top bar (≤640px) — the kraft-paper header from
+  design_handoff_ferdinand/source/dashboard.jsx (DashboardMobile header):
+  FerdinandMark + "Ferdinand" on the left, search + user icons on the right,
+  a dashed bottom rule. We keep a compact ThemeToggle alongside the icons
+  (the only theme control reachable on small screens). The search glyph links
+  to /browse and the user glyph to /settings so the decoration in the mockup
+  becomes a real affordance.
+
+  Carries `class="sketch-skin"` so the kraft tokens resolve (the chrome isn't
+  inside a sketch-skin'd page wrapper the way the route content is).
+-->
 <script lang="ts">
     import ThemeToggle from "./ThemeToggle.svelte";
+    import { FerdinandMark, SketchSearch, SketchUser } from "$lib/components/sketch";
 </script>
 
-<header class="topbar" aria-label="Top bar">
-    <a class="brand" href="/" aria-label="Home">
-        <span class="dot" aria-hidden="true"></span>
-        <span class="name">Ferdinand</span>
+<header class="topbar sketch-skin" aria-label="Top bar">
+    <a class="brand" href="/" aria-label="Home — dashboard">
+        <FerdinandMark size={24} />
+        <span class="name mono">Ferdinand</span>
     </a>
     <div class="spacer"></div>
-    <button class="icon-btn" type="button" aria-label="Search" title="Search">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-    </button>
+    <a class="icon-link" href="/browse" aria-label="Browse" title="Browse">
+        <SketchSearch size={18} />
+    </a>
     <ThemeToggle />
+    <a class="icon-link" href="/settings" aria-label="Settings" title="Settings">
+        <SketchUser size={18} />
+    </a>
 </header>
 
 <style>
@@ -21,47 +37,55 @@
         z-index: 40;
         display: none;
         align-items: center;
-        gap: var(--space-2);
-        height: calc(var(--topbar-h) + var(--safe-top));
-        padding: var(--safe-top) var(--space-4) 0;
-        background: color-mix(in oklch, var(--bg) 88%, transparent);
-        backdrop-filter: saturate(140%) blur(10px);
-        -webkit-backdrop-filter: saturate(140%) blur(10px);
-        border-bottom: 1px solid var(--border);
+        gap: 12px;
+        padding: calc(var(--safe-top) + 14px) 22px 14px;
+        background: var(--bg);
+        border-bottom: 1px dashed var(--rule);
     }
     .brand {
         display: inline-flex;
         align-items: center;
-        gap: var(--space-2);
-        color: var(--text);
-    }
-    .brand .dot {
-        width: 10px;
-        height: 10px;
-        background: var(--accent);
-        border-radius: 50%;
+        gap: 8px;
+        text-decoration: none;
+        color: var(--ink);
     }
     .brand .name {
         font-weight: 600;
-        font-size: var(--text-base);
-        letter-spacing: -0.01em;
+        font-size: 13px;
+        letter-spacing: 0.01em;
+        transition: color 120ms ease;
+    }
+    .brand:hover .name {
+        color: var(--accent);
+    }
+    .brand:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
     }
     .spacer {
         flex: 1;
     }
-    .icon-btn {
+    .icon-link {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        width: var(--touch-min);
-        height: var(--touch-min);
-        margin: 0 -8px;
-        border-radius: var(--radius-sm);
-        color: var(--text-muted);
+        width: 32px;
+        height: 32px;
+        border-radius: var(--radius);
+        color: var(--ink-soft);
+        text-decoration: none;
+        transition:
+            background-color 120ms ease,
+            color 120ms ease;
     }
-    .icon-btn:active {
-        background: var(--bg-hover);
-        color: var(--text);
+    .icon-link:hover,
+    .icon-link:active {
+        background: var(--bg-deep);
+        color: var(--ink);
+    }
+    .icon-link:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
     }
 
     @media (max-width: 640px) {
