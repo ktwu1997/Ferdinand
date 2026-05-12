@@ -246,12 +246,22 @@
     let lastSelectedCardId: string | null = null;
 
     onMount(() => {
+        // Seed the search box from `?q=` — the global nav rail's pinned
+        // saved-searches link here as `/browse?q=tag:leech` etc. `query`
+        // and `lastFetchedQ` are primed together so the debounced
+        // search-wire $effect below sees `query === lastFetchedQ` and
+        // doesn't immediately re-issue the same fetch.
+        const initialQ = new URLSearchParams(window.location.search).get("q") ?? "";
+        if (initialQ) {
+            query = initialQ;
+            lastFetchedQ = initialQ;
+        }
         // Cards drive the main `loading` flag (skeleton rows). Decks are
         // supplementary navigation — fire-and-forget so the row list never
         // waits on tree data. Both fall back silently to fake data on
         // failure; editor mutations are gated by liveDecks/liveCards being
         // non-null at call time.
-        fetchCards("", PAGE_SIZE, 0)
+        fetchCards(initialQ, PAGE_SIZE, 0)
             .then(
                 (res) => {
                     liveCards = res.cards;
@@ -262,8 +272,8 @@
             .finally(() => {
                 loading = false;
                 // Gate the search-wire $effect: it must not re-fire the
-                // initial empty-query fetch, and it must not run before
-                // the first paint of skeleton/empty rows is committed.
+                // initial query fetch, and it must not run before the
+                // first paint of skeleton/empty rows is committed.
                 initialLoadDone = true;
             });
         fetchDecks().then(
