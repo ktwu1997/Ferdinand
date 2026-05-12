@@ -6,9 +6,13 @@
     import { FerdinandMark } from "$lib/components/sketch";
     import { fetchDecks, type ApiDeckSummary } from "$lib/api";
 
+    // Design 02/05/06/07: app-nav rail is Decks · Browse · New note · Stats.
+    // We keep Settings (a real page now). "Decks" is the home/dashboard link
+    // (the dashboard page is titled "decks").
     const nav = [
-        { href: "/", label: "Today", hint: "H", icon: "home" },
+        { href: "/", label: "Decks", hint: "H", icon: "home" },
         { href: "/browse", label: "Browse", hint: "B", icon: "search" },
+        { href: "/notes/new", label: "New note", hint: "N", icon: "new-note" },
         { href: "/stats", label: "Stats", hint: "S", icon: "chart" },
         { href: "/settings", label: "Settings", hint: ",", icon: "settings" },
     ];
@@ -67,6 +71,8 @@
                         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m3 10 9-7 9 7v10a2 2 0 0 1-2 2h-4v-6h-6v6H5a2 2 0 0 1-2-2z" /></svg>
                     {:else if item.icon === "search"}
                         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
+                    {:else if item.icon === "new-note"}
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5" /><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z" /></svg>
                     {:else if item.icon === "chart"}
                         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18" /><path d="M7 16l4-4 4 3 5-7" /></svg>
                     {:else}

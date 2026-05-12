@@ -1,9 +1,13 @@
 <script lang="ts">
     import { page } from "$app/stores";
 
+    // Mirrors the desktop nav rail (Sidebar.svelte): Decks · Browse ·
+    // New · Stats · Settings. "New" is the short label for the New-note
+    // route so the 5-tab row stays legible at ≤640px.
     const items = [
-        { href: "/", label: "Today", icon: "home" },
+        { href: "/", label: "Decks", icon: "home" },
         { href: "/browse", label: "Browse", icon: "search" },
+        { href: "/notes/new", label: "New", icon: "new-note" },
         { href: "/stats", label: "Stats", icon: "chart" },
         { href: "/settings", label: "Settings", icon: "settings" },
     ];
@@ -29,6 +33,8 @@
                     <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m3 10 9-7 9 7v10a2 2 0 0 1-2 2h-4v-6h-6v6H5a2 2 0 0 1-2-2z"/></svg>
                 {:else if item.icon === "search"}
                     <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                {:else if item.icon === "new-note"}
+                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"/></svg>
                 {:else if item.icon === "chart"}
                     <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 16l4-4 4 3 5-7"/></svg>
                 {:else}
