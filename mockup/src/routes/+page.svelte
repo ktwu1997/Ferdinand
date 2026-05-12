@@ -845,6 +845,7 @@
     @media (max-width: 640px) {
         .page {
             padding: 16px 18px 24px;
+            overflow-x: clip;
         }
         .dash-desktop {
             display: none;
@@ -1359,6 +1360,7 @@
         display: flex;
         flex-direction: column;
         gap: 4px;
+        min-width: 0;
     }
     .m-today-value {
         font-size: 22px;
@@ -1366,6 +1368,9 @@
         letter-spacing: -0.02em;
         color: var(--stat-color, var(--ink));
         font-variant-numeric: tabular-nums;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
 
     .m-deck-list {

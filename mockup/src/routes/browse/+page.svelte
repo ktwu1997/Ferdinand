@@ -3638,7 +3638,7 @@
     .bx-page {
         display: grid;
         grid-template-columns: 240px minmax(0, 1fr) 360px;
-        height: 100vh;
+        height: 100dvh;
         overflow: hidden;
         background: var(--bg);
         color: var(--ink);
@@ -4167,7 +4167,7 @@
         .bx-page {
             display: block;
             height: auto;
-            min-height: 100vh;
+            min-height: 100dvh;
             overflow: visible;
         }
         .bx-sidebar {

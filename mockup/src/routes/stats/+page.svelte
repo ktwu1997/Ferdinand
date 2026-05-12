@@ -364,6 +364,7 @@
         display: flex;
         flex-direction: column;
         gap: var(--space-6);
+        overflow-x: clip;
     }
 
     /* ============== HEADER ============== */
@@ -455,6 +456,8 @@
         border-radius: var(--radius-md);
         box-shadow: var(--shadow-stamp-md);
         padding: 18px 20px;
+        min-width: 0;
+        overflow: hidden;
     }
     .sx-tile-value {
         font-weight: 600;
@@ -464,6 +467,7 @@
         margin-top: 8px;
         color: var(--ink);
         font-variant-numeric: tabular-nums;
+        overflow-wrap: anywhere;
     }
     .sx-tile-accent .sx-tile-value {
         color: var(--accent);
@@ -640,12 +644,16 @@
             padding: 12px 14px;
         }
         .sx-tile-value {
-            font-size: 26px;
+            font-size: 24px;
             margin-top: 4px;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: baseline;
+            column-gap: 4px;
         }
         .sx-tile-unit {
             font-size: 10px;
-            margin-left: 4px;
+            margin-left: 0;
         }
         .sx-charts {
             grid-template-columns: 1fr;

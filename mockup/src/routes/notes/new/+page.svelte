@@ -464,6 +464,7 @@
         display: flex;
         flex-direction: column;
         gap: var(--space-6);
+        overflow-x: clip;
     }
 
     /* ============== HEADER ============== */
@@ -694,11 +695,14 @@
         display: flex;
         justify-content: space-between;
         align-items: baseline;
+        flex-wrap: wrap;
+        gap: 2px 12px;
     }
     .nx-field-hint {
         font-size: 10px;
         color: var(--ink-mute);
         letter-spacing: 0.04em;
+        min-width: 0;
     }
     .nx-textarea,
     .nx-input {
@@ -770,6 +774,8 @@
         display: flex;
         justify-content: space-between;
         align-items: baseline;
+        flex-wrap: wrap;
+        gap: 2px 12px;
     }
     .nx-preview-deck {
         font-size: 11px;
@@ -864,6 +870,8 @@
         padding-top: 14px;
         display: flex;
         justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 2px 12px;
         font-size: 10px;
         color: var(--ink-mute);
         letter-spacing: 0.08em;
@@ -907,6 +915,9 @@
         }
         .nx-preview-col {
             position: static;
+        }
+        .nx-preview-back {
+            transform: translate(3px, 3px) rotate(-0.4deg);
         }
         .nx-preview-card {
             padding: 20px 22px;
