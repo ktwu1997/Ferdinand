@@ -1,0 +1,8 @@
+{
+  "name": "sesame_cloze",
+  "notetype": "Cloze-Deep",
+  "deck": "Sesame Street English::Cloze",
+  "data_dir": "data/sesame_cloze",
+  "prompt": "prompts/sesame_cloze.md",
+  "source_regex": "^Sesame Street English — \\w[\\w-]*$"
+}
