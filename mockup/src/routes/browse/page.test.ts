@@ -794,6 +794,75 @@ describe("BrowsePage contract", () => {
                 unmount(instance);
             }
         });
+
+        test(
+            "nested deck tree: the sidebar lists the LEAF decks with full " +
+                "Parent::Child::Leaf paths + their own counts (not the bare container)",
+            async () => {
+                vi.mocked(fetchCards).mockResolvedValueOnce({ total: 0, cards: [] });
+                vi.mocked(fetchDecks).mockResolvedValueOnce({
+                    decks: [
+                        deck(1, "TOEIC", {
+                            collapsed: true,
+                            total_in_deck: 0,
+                            children: [
+                                deck(2, "Vocabulary", {
+                                    level: 2,
+                                    total_in_deck: 0,
+                                    children: [
+                                        deck(3, "L600", { level: 3, total_in_deck: 200 }),
+                                        deck(4, "L700", { level: 3, total_in_deck: 224 }),
+                                    ],
+                                }),
+                            ],
+                        }),
+                    ],
+                });
+
+                const instance = mount(Page, { target: container, props: {} });
+                try {
+                    await settle();
+
+                    const items = treeDeckButtons(container);
+                    // two leaf decks — NOT the single bare "TOEIC 0" container row
+                    expect(items.length).toBe(2);
+                    expect(items[0]?.textContent).toContain("TOEIC::Vocabulary::L600");
+                    expect(items[0]?.textContent).toContain("200");
+                    expect(items[1]?.textContent).toContain("TOEIC::Vocabulary::L700");
+                    expect(items[1]?.textContent).toContain("224");
+                    // the bare leaf segment isn't shown on its own
+                    expect(items[0]?.textContent).not.toMatch(/^L600\b/);
+                } finally {
+                    unmount(instance);
+                }
+            },
+        );
+
+        test("the sidebar has a 'back to decks' link pointing to /", async () => {
+            vi.mocked(fetchCards).mockResolvedValueOnce({ total: 0, cards: [] });
+            // back-to-decks is static chrome — independent of the decks fetch.
+            vi.mocked(fetchDecks).mockResolvedValueOnce({
+                decks: [deck(101, "日本語", { total_in_deck: 137 })],
+            });
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                const sidebar = container.querySelector(".bx-sidebar");
+                expect(sidebar).toBeTruthy();
+                const back = Array.from(
+                    sidebar!.querySelectorAll<HTMLAnchorElement>("a"),
+                ).find((a) => /back to decks/i.test(a.textContent ?? ""));
+                expect(
+                    back,
+                    "expected a 'back to decks' link in the browse sidebar",
+                ).toBeTruthy();
+                expect(back?.getAttribute("href")).toBe("/");
+            } finally {
+                unmount(instance);
+            }
+        });
     });
 
     describe("Phase 10-A tags sidebar", () => {

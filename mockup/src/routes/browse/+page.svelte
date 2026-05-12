@@ -35,9 +35,11 @@
     } from "$lib/api";
     import BrowseRowSkeleton from "$lib/browse/BrowseRowSkeleton.svelte";
     import { stripHtmlToSnippet } from "$lib/browse/media";
+    import { flattenLeafDecks } from "$lib/decks";
     import { Btn, Caption } from "$lib/components/ui";
     import {
         FerdinandMark,
+        SketchBook,
         SketchPlus,
         SketchSearch,
     } from "$lib/components/sketch";
@@ -906,9 +908,14 @@
         emoji: string;
         totalCards: number;
     };
+    // The sidebar DECKS list shows the *leaf* decks — the ones that
+    // actually hold cards — with the full `Parent::Child::Leaf` path as
+    // the label (a pure-container parent like `TOEIC` holds no cards
+    // directly, so listing it bare would just read "TOEIC 0"). Mirrors
+    // the dashboard ledger, which already uses `flattenLeafDecks`.
     let treeRows: TreeRow[] = $derived(
         liveDecks
-            ? liveDecks.map((d) => ({
+            ? flattenLeafDecks(liveDecks).map((d) => ({
                   id: d.id,
                   name: d.name,
                   emoji: "📚",
@@ -1786,7 +1793,7 @@
                                     onclick={() => (query = `deck:"${d.name}"`)}
                                     ondblclick={() => startEditTreeDeck(d.id, d.name)}
                                 >
-                                    <span class="bx-deck-name">{d.name}</span>
+                                    <span class="bx-deck-name" title={d.name}>{d.name}</span>
                                     <span class="bx-deck-count">{d.totalCards}</span>
                                 </button>
                                 {#if liveDecks && typeof d.id === "number" && d.id !== 1}
@@ -1955,6 +1962,16 @@
                     {/if}
                 </div>
             {/if}
+        </div>
+
+        <!-- Pinned to the bottom — mirrors browse.jsx's BrowseSidebar
+             "back to decks" affordance so the filter pane reads as a
+             sibling of the global nav rail (which carries its own footer). -->
+        <div class="bx-sidebar-foot">
+            <Btn kind="ghost" size="sm" href="/" data-testid="browse-back-to-decks">
+                {#snippet leading()}<SketchBook size={14} />{/snippet}
+                back to decks
+            </Btn>
         </div>
     </aside>
 
@@ -3717,6 +3734,11 @@
         display: flex;
         flex-direction: column;
         gap: 2px;
+    }
+    .bx-sidebar-foot {
+        margin-top: auto;
+        border-top: 1px dashed var(--rule);
+        padding-top: 12px;
     }
 
     .bx-deck-row {
