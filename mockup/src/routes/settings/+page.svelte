@@ -1168,6 +1168,13 @@
                 {/if}
             </div>
 
+            <div class="tx-sidebar-block tx-sidebar-build">
+                <Caption>build</Caption>
+                <div class="tx-build-name mono">ferdinand v0.1.0</div>
+                <div class="tx-build-line mono">core · self-hosted</div>
+                <div class="tx-build-line mono">no telemetry</div>
+            </div>
+
         </aside>
 
         <div class="tx-panel" data-testid="settings-panel">
@@ -2423,6 +2430,22 @@
     .tx-sidebar-account {
         padding-top: 14px;
         border-top: 1px dashed var(--rule);
+    }
+    .tx-sidebar-build {
+        padding-top: 14px;
+        border-top: 1px dashed var(--rule);
+        gap: 3px;
+    }
+    .tx-build-name {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--ink);
+        margin-top: 4px;
+    }
+    .tx-build-line {
+        font-size: 10px;
+        letter-spacing: 0.02em;
+        color: var(--ink-mute);
     }
     .tx-account-row {
         display: flex;
