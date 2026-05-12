@@ -118,8 +118,8 @@ def load_cards(path: Path) -> list[dict]:
         return [json.loads(line) for line in fh if line.strip()]
 
 
-def load_ingested(path: Path) -> set[str]:
-    if not path.exists():
+def load_ingested(path: Path, force: bool = False) -> set[str]:
+    if force or not path.exists():
         return set()
     return {ln.strip() for ln in path.read_text().splitlines() if ln.strip()}
 
@@ -151,6 +151,9 @@ def main() -> int:
                     help="override deck-template (otherwise from profile). Implies --auto-create.")
     ap.add_argument("--auto-create", action="store_true",
                     help="POST /api/decks for any deck not already present")
+    ap.add_argument("--force", action="store_true",
+                    help="ignore ingested.txt contents (re-ingest everything, e.g. into a "
+                         "different user's collection). Successful words are still appended.")
     ap.add_argument("--only", default=None, help="ingest one specific word")
     args = ap.parse_args()
 
@@ -185,7 +188,7 @@ def main() -> int:
     deck_id_cache: dict[str, int] = {}
 
     cards = load_cards(profile.cards)
-    ingested = load_ingested(profile.ingested)
+    ingested = load_ingested(profile.ingested, force=args.force)
 
     if args.only:
         cards = [c for c in cards if c.get("Front", "").lower() == args.only.lower()]

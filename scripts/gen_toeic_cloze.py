@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
-"""Generate TOEIC Cloze cards by calling `gemini -p` per phrase.
+"""Generate Cloze cards by calling `gemini -p` per phrase.
 
 Sister script to gen_toeic_cards.py — same architecture (parallel
 subprocess driver, idempotent done.txt, schema validation, retries) but
 targets the Cloze-Deep notetype (Text/Why/Example/Source) instead of
 Concept-Deep.
 
+Profile-driven: pass `--profile decks/<name>.json` to target a different
+deck (e.g. `--profile sesame_cloze`). Without the flag, defaults to the
+historical TOEIC cloze paths (`data/toeic/cloze_*`) + the exact-string
+Source check, so legacy invocations keep working.
+
 Pipeline:
-    A. data/toeic/cloze_wordlist.jsonl    (Claude curates phrases + cloze targets)
-    B. prompts/toeic_cloze.md             (Claude writes prompt)
- -> C. data/toeic/cloze_cards.jsonl       (this script appends)
-    D. scripts/validate_cards.py          (TBD: cloze validator)
-    E. ingest with --notetype "Cloze-Deep"
+    A. <wordlist>.jsonl           (Claude curates phrases + cloze targets)
+    B. <prompt>.md                (Claude writes prompt)
+ -> C. <cards>.jsonl              (this script appends)
+    D. validate inline / validate_cards.py
+    E. ingest with the Cloze-Deep notetype
 
 Usage:
-    ./scripts/gen_toeic_cloze.py                # serial
-    ./scripts/gen_toeic_cloze.py --workers 4    # parallel
-    ./scripts/gen_toeic_cloze.py --limit 1      # smoke test
+    ./scripts/gen_toeic_cloze.py                            # TOEIC cloze default
+    ./scripts/gen_toeic_cloze.py --profile sesame_cloze     # Sesame cloze
+    ./scripts/gen_toeic_cloze.py --profile sesame_cloze --limit 1
+    ./scripts/gen_toeic_cloze.py --workers 4
 """
 from __future__ import annotations
 
@@ -28,14 +34,20 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _profile import DeckProfile, load_profile  # noqa: E402
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PROMPT_PATH = REPO_ROOT / "prompts" / "toeic_cloze.md"
-WORDLIST = REPO_ROOT / "data" / "toeic" / "cloze_wordlist.jsonl"
-CARDS_OUT = REPO_ROOT / "data" / "toeic" / "cloze_cards.jsonl"
-DONE_TXT = REPO_ROOT / "data" / "toeic" / "cloze_done.txt"
-FAILED_OUT = REPO_ROOT / "data" / "toeic" / "cloze_failed.jsonl"
+
+# Legacy (no --profile) module-level paths — preserved verbatim.
+LEGACY_PROMPT_PATH = REPO_ROOT / "prompts" / "toeic_cloze.md"
+LEGACY_WORDLIST = REPO_ROOT / "data" / "toeic" / "cloze_wordlist.jsonl"
+LEGACY_CARDS_OUT = REPO_ROOT / "data" / "toeic" / "cloze_cards.jsonl"
+LEGACY_DONE_TXT = REPO_ROOT / "data" / "toeic" / "cloze_done.txt"
+LEGACY_FAILED_OUT = REPO_ROOT / "data" / "toeic" / "cloze_failed.jsonl"
 
 REQUIRED_FIELDS = ("Text", "Why", "Example", "Source")
 GEMINI_TIMEOUT_S = 180
@@ -48,15 +60,53 @@ CLOZE_RE = re.compile(r"\{\{c1::([^}]+?)\}\}")
 write_lock = threading.Lock()
 
 
-def load_wordlist() -> list[dict]:
-    with WORDLIST.open(encoding="utf-8") as fh:
+@dataclass(frozen=True)
+class RunPaths:
+    """Resolved per-run paths + Source-validation strategy.
+
+    Built either from a DeckProfile (`--profile`) or from the legacy
+    module-level constants. Keeps main() single-path.
+    """
+
+    prompt_path: Path
+    wordlist: Path
+    cards_out: Path
+    done_txt: Path
+    failed_out: Path
+    profile: DeckProfile | None  # None => legacy exact-string Source check
+
+    @classmethod
+    def from_profile(cls, profile: DeckProfile) -> "RunPaths":
+        return cls(
+            prompt_path=profile.prompt_path,
+            wordlist=profile.wordlist,
+            cards_out=profile.cards,
+            done_txt=profile.done,
+            failed_out=profile.failed,
+            profile=profile,
+        )
+
+    @classmethod
+    def legacy(cls) -> "RunPaths":
+        return cls(
+            prompt_path=LEGACY_PROMPT_PATH,
+            wordlist=LEGACY_WORDLIST,
+            cards_out=LEGACY_CARDS_OUT,
+            done_txt=LEGACY_DONE_TXT,
+            failed_out=LEGACY_FAILED_OUT,
+            profile=None,
+        )
+
+
+def load_wordlist(path: Path) -> list[dict]:
+    with path.open(encoding="utf-8") as fh:
         return [json.loads(l) for l in fh if l.strip()]
 
 
-def load_done() -> set[str]:
-    if not DONE_TXT.exists():
+def load_done(path: Path) -> set[str]:
+    if not path.exists():
         return set()
-    return {ln.strip() for ln in DONE_TXT.read_text().splitlines() if ln.strip()}
+    return {ln.strip() for ln in path.read_text().splitlines() if ln.strip()}
 
 
 def render_prompt(template: str, entry: dict) -> str:
@@ -97,7 +147,7 @@ def extract_json(text: str) -> dict:
     raise ValueError(f"no JSON object found in response (first 200 chars): {text[:200]!r}")
 
 
-def validate_card(card: dict, entry: dict) -> list[str]:
+def validate_card(card: dict, entry: dict, profile: DeckProfile | None) -> list[str]:
     errors: list[str] = []
     for field in REQUIRED_FIELDS:
         if field not in card:
@@ -116,13 +166,21 @@ def validate_card(card: dict, entry: dict) -> list[str]:
         )
     if entry["phrase"].lower() not in card["Example"].lower():
         errors.append(f"Example missing target phrase {entry['phrase']!r}")
-    expected_source = f"TOEIC cloze level {entry['level']} — {entry['category']}"
-    if card["Source"] != expected_source:
-        errors.append(f"Source mismatch: {card['Source']!r} != {expected_source!r}")
+    if profile is not None:
+        if not profile.source_regex.match(card["Source"]):
+            errors.append(
+                f"Source {card['Source']!r} fails profile regex {profile.source_regex.pattern}"
+            )
+    else:
+        expected_source = f"TOEIC cloze level {entry['level']} — {entry['category']}"
+        if card["Source"] != expected_source:
+            errors.append(f"Source mismatch: {card['Source']!r} != {expected_source!r}")
     return errors
 
 
-def gen_one(template: str, entry: dict, model: str | None) -> tuple[str, dict, str | None]:
+def gen_one(
+    template: str, entry: dict, model: str | None, profile: DeckProfile | None
+) -> tuple[str, dict, str | None]:
     eid = entry["id"]
     last_err: str | None = None
     for attempt in range(MAX_RETRIES + 1):
@@ -132,7 +190,7 @@ def gen_one(template: str, entry: dict, model: str | None) -> tuple[str, dict, s
             prompt = render_prompt(template, entry)
             output = call_gemini(prompt, model)
             card = extract_json(output)
-            errors = validate_card(card, entry)
+            errors = validate_card(card, entry, profile)
             if errors:
                 last_err = "schema: " + "; ".join(errors)
                 continue
@@ -146,22 +204,25 @@ def gen_one(template: str, entry: dict, model: str | None) -> tuple[str, dict, s
     return "fail", entry, last_err
 
 
-def write_success(card: dict, eid: str) -> None:
+def write_success(paths: RunPaths, card: dict, eid: str) -> None:
     with write_lock:
-        with CARDS_OUT.open("a", encoding="utf-8") as fh:
+        with paths.cards_out.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(card, ensure_ascii=False) + "\n")
-        with DONE_TXT.open("a", encoding="utf-8") as fh:
+        with paths.done_txt.open("a", encoding="utf-8") as fh:
             fh.write(eid + "\n")
 
 
-def write_failure(entry: dict, err: str) -> None:
+def write_failure(paths: RunPaths, entry: dict, err: str) -> None:
     with write_lock:
-        with FAILED_OUT.open("a", encoding="utf-8") as fh:
+        with paths.failed_out.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps({"entry": entry, "error": err}, ensure_ascii=False) + "\n")
 
 
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--profile", default=None,
+                    help="path or shorthand for deck profile (e.g. 'sesame_cloze' → "
+                         "decks/sesame_cloze.json). Default = legacy TOEIC cloze paths.")
     ap.add_argument("--workers", type=int, default=1)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--rate-sleep", type=float, default=0.5)
@@ -171,14 +232,23 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    if not PROMPT_PATH.exists():
-        sys.exit(f"prompt template missing: {PROMPT_PATH}")
-    if not WORDLIST.exists():
-        sys.exit(f"wordlist missing: {WORDLIST}")
+    if args.profile:
+        profile = load_profile(args.profile)
+        paths = RunPaths.from_profile(profile)
+        print(f"[gen-cloze] profile={profile.name} prompt={paths.prompt_path.name} "
+              f"data_dir={paths.cards_out.parent.name}")
+    else:
+        paths = RunPaths.legacy()
+        print("[gen-cloze] legacy TOEIC cloze paths (no --profile)")
 
-    template = PROMPT_PATH.read_text(encoding="utf-8")
-    wordlist = load_wordlist()
-    done = load_done()
+    if not paths.prompt_path.exists():
+        sys.exit(f"prompt template missing: {paths.prompt_path}")
+    if not paths.wordlist.exists():
+        sys.exit(f"wordlist missing: {paths.wordlist}")
+
+    template = paths.prompt_path.read_text(encoding="utf-8")
+    wordlist = load_wordlist(paths.wordlist)
+    done = load_done(paths.done_txt)
     pending = [e for e in wordlist if e["id"] not in done]
     if args.limit:
         pending = pending[: args.limit]
@@ -187,34 +257,37 @@ def main() -> int:
     if not pending:
         return 0
 
-    CARDS_OUT.parent.mkdir(parents=True, exist_ok=True)
+    paths.cards_out.parent.mkdir(parents=True, exist_ok=True)
     ok = fail = 0
 
     def handle(entry: dict, status: str, payload: dict, err: str | None) -> None:
         nonlocal ok, fail
         if status == "ok":
-            write_success(payload, entry["id"])
+            write_success(paths, payload, entry["id"])
             ok += 1
             print(f"  ok    {entry['id']}")
         else:
-            write_failure(entry, err or "unknown")
+            write_failure(paths, entry, err or "unknown")
             fail += 1
             print(f"  FAIL  {entry['id']}: {(err or '')[:160]}")
 
     if args.workers <= 1:
         for entry in pending:
             time.sleep(args.rate_sleep)
-            status, payload, err = gen_one(template, entry, args.model)
+            status, payload, err = gen_one(template, entry, args.model, paths.profile)
             handle(entry, status, payload, err)
     else:
         with ThreadPoolExecutor(max_workers=args.workers) as ex:
-            futures = {ex.submit(gen_one, template, e, args.model): e for e in pending}
+            futures = {
+                ex.submit(gen_one, template, e, args.model, paths.profile): e
+                for e in pending
+            }
             for fut in as_completed(futures):
                 entry = futures[fut]
                 status, payload, err = fut.result()
                 handle(entry, status, payload, err)
 
-    print(f"\n[gen-cloze] done: ok={ok} fail={fail} -> {CARDS_OUT}")
+    print(f"\n[gen-cloze] done: ok={ok} fail={fail} -> {paths.cards_out}")
     return 0 if fail == 0 else 1
 
 
