@@ -4,7 +4,8 @@
     import ThemeToggle from "./ThemeToggle.svelte";
     import Kbd from "./Kbd.svelte";
     import { FerdinandMark } from "$lib/components/sketch";
-    import { fetchDecks, type ApiDeckSummary } from "$lib/api";
+    import { fetchDecks } from "$lib/api";
+    import { flattenLeafDecks } from "$lib/decks";
 
     // Design 02/05/06/07: app-nav rail is Decks · Browse · New note · Stats.
     // We keep Settings (a real page now). "Decks" is the home/dashboard link
@@ -33,14 +34,19 @@
     // Live decks from /api/decks. `null` while loading or after a fetch
     // error — the sidebar simply hides the deck section in that case
     // rather than leaking fake fixtures (which would mask outages).
+    // Like the dashboard ledger, this lists the studiable *leaf* decks
+    // (flattenLeafDecks rewrites each name to the full `Foo::Bar::Baz`
+    // path) so a container parent like `TOEIC` isn't shown as the only
+    // entry and the two surfaces stay consistent. The narrow rail
+    // ellipsises long names — the full path is on the row's `title`.
     let liveDecks: SidebarDeck[] | null = $state(null);
 
     onMount(async () => {
         try {
             const res = await fetchDecks();
-            liveDecks = res.decks
-                .filter((d: ApiDeckSummary) => d.id !== 0 && d.level >= 1)
-                .map((d: ApiDeckSummary) => ({
+            liveDecks = flattenLeafDecks(res.decks)
+                .filter((d) => d.id !== 0 && d.level >= 1)
+                .map((d) => ({
                     id: d.id,
                     name: d.name,
                     due: d.new_count + d.learn_count + d.review_count,
@@ -89,7 +95,7 @@
         <div class="section-label">Decks</div>
         <nav class="deck-list">
             {#each liveDecks as deck (deck.id)}
-                <a href="/study/{deck.id}" class="deck-item">
+                <a href="/study/{deck.id}" class="deck-item" title={deck.name}>
                     <span class="emoji">📚</span>
                     <span class="deck-name">{deck.name}</span>
                     {#if deck.due > 0}

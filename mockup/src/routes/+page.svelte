@@ -67,29 +67,17 @@
         type ApiDeckSummary,
         type ApiForecastDay,
     } from "$lib/api";
+    import { flattenLeafDecks, leafSegment } from "$lib/decks";
 
-    // GET /api/decks returns a *nested* tree: the top-level `decks` array
-    // holds level-1 decks, with sub-decks under each `.children`. The
-    // earlier dashboard only mapped the top-level array, so a collection
-    // like TOEIC → TOEIC::Vocabulary::L600/L700/L800 showed a single
-    // "TOEIC" row with 0 due (a parent that holds no cards directly) and
-    // hid every studiable sub-deck. Flatten to the leaf decks (the actual
-    // studiable units — their counts are their own, never aggregates) so
-    // every ledger row maps to a /study/<id> target and the DUE NOW total
-    // is the non-double-counted sum across those rows. The full
-    // "Foo::Bar::Baz" name still carries the hierarchy visually.
-    function flattenLeafDecks(decks: ApiDeckSummary[]): ApiDeckSummary[] {
-        const out: ApiDeckSummary[] = [];
-        for (const d of decks) {
-            if (d.children.length === 0) {
-                out.push(d);
-            } else {
-                out.push(...flattenLeafDecks(d.children));
-            }
-        }
-        return out;
-    }
-
+    // The ledger lists the *studiable leaf decks*, not the nested tree
+    // `GET /api/decks` returns. `flattenLeafDecks` ($lib/decks) walks the
+    // tree, keeps the leaves (a pure-container parent like `TOEIC` holds
+    // no cards directly — only its children do), and rewrites each
+    // `.name` to the full `Foo::Bar::Baz` path so the rows are
+    // unambiguous (`TOEIC::Cloze::L600` vs `TOEIC::Vocabulary::L600`).
+    // Counts stay as-is — leaf counts are the deck's own, never roll-ups
+    // — so DUE NOW is the non-double-counted sum across rows and every
+    // row maps to a `/study/<id>` target.
     function mapApiDecks(decks: ApiDeckSummary[]): Deck[] {
         return flattenLeafDecks(decks)
             .filter((d) => d.id !== 0 && d.level >= 1)
@@ -317,7 +305,7 @@
     })();
 
     let greetingName = $derived(auth.user?.username ?? "friend");
-    let resumeGlyph = $derived(deriveGlyph(resume.name));
+    let resumeGlyph = $derived(deriveGlyph(leafSegment(resume.name)));
     let resumeDue = $derived(totalDue(resume));
 </script>
 
@@ -524,7 +512,7 @@
 
                 {#each decks as deck, i (deck.id)}
                     {@const due = totalDue(deck)}
-                    {@const glyph = deriveGlyph(deck.name)}
+                    {@const glyph = deriveGlyph(leafSegment(deck.name))}
                     {@const seg = queueSegments(deck)}
                     <a
                         class="deck-row"
@@ -744,7 +732,7 @@
         <div class="m-deck-list">
             {#each decks as deck, i (deck.id)}
                 {@const due = totalDue(deck)}
-                {@const glyph = deriveGlyph(deck.name)}
+                {@const glyph = deriveGlyph(leafSegment(deck.name))}
                 <a class="m-deck-row" href="/study/{deck.id}">
                     <div class="m-deck-head">
                         <div class="m-deck-id">

@@ -137,10 +137,13 @@ describe("HomePage contract", () => {
     });
 
     test("nested deck tree: ledger flattens to the studiable leaf decks (not just the top-level container)", async () => {
-        // GET /api/decks returns a nested tree. A pure-container parent
-        // (TOEIC) holds no cards directly — only its sub-decks do. The
-        // dashboard must flatten to the leaves so every studiable deck
-        // gets a row and DUE NOW sums those rows (not the 0-due parent).
+        // GET /api/decks returns a nested tree where each node's `name`
+        // is only the leaf segment ("L600"), not the full path. A
+        // pure-container parent (TOEIC) holds no cards directly — only
+        // its sub-decks do. The dashboard must flatten to the leaves so
+        // every studiable deck gets a row, DUE NOW sums those rows (not
+        // the 0-due parent), and each row's label is the full
+        // `Foo::Bar::Baz` path so it's unambiguous.
         const nested: ApiDeckListResponse = {
             decks: [
                 {
@@ -157,7 +160,7 @@ describe("HomePage contract", () => {
                     children: [
                         {
                             id: 110,
-                            name: "TOEIC::Vocabulary",
+                            name: "Vocabulary",
                             level: 2,
                             new_count: 0,
                             learn_count: 0,
@@ -169,7 +172,7 @@ describe("HomePage contract", () => {
                             children: [
                                 {
                                     id: 111,
-                                    name: "TOEIC::Vocabulary::L600",
+                                    name: "L600",
                                     level: 3,
                                     new_count: 12,
                                     learn_count: 3,
@@ -182,7 +185,7 @@ describe("HomePage contract", () => {
                                 },
                                 {
                                     id: 112,
-                                    name: "TOEIC::Vocabulary::L700",
+                                    name: "L700",
                                     level: 3,
                                     new_count: 0,
                                     learn_count: 0,
@@ -209,7 +212,8 @@ describe("HomePage contract", () => {
                 container.querySelectorAll('[data-testid="deck-card"]'),
             );
             // Only the two leaf decks become rows — the TOEIC and
-            // TOEIC::Vocabulary container nodes are not rendered.
+            // Vocabulary container nodes are not rendered — and each
+            // row's name is the reconstructed full path.
             const names = cards.map((c) => c.getAttribute("data-deck-name"));
             expect(names).toEqual([
                 "TOEIC::Vocabulary::L600",
