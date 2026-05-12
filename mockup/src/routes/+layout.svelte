@@ -25,6 +25,18 @@
         fullscreenRoutes.some((r) => $page.url.pathname.startsWith(r)),
     );
 
+    // Routes that render their OWN left-rail chrome and therefore must not
+    // get the global nav sidebar on top of it. /browse has the browse-tree
+    // (.bx-sidebar — DECKS / STATE / TAGS / SAVED, with the "Ferdinand"
+    // brand at the top doubling as the home link) which IS the desktop
+    // chrome there. We still keep MobileTopBar + BottomNav: at ≤640px the
+    // .bx-sidebar collapses, so mobile needs the bottom nav.
+    const noGlobalSidebarRoutes = ["/browse"];
+
+    let hideGlobalSidebar = $derived(
+        noGlobalSidebarRoutes.some((r) => $page.url.pathname.startsWith(r)),
+    );
+
     // Phase A4-β: wire the 401-redirect hook on app mount, then bootstrap
     // the auth store so we know `authed`/`anon` before the route guard
     // runs. Both happen inside `onMount` so SvelteKit's SSR pass doesn't
@@ -58,6 +70,8 @@
 <div class="shell" class:fullscreen={isFullscreen}>
     {#if !isFullscreen}
         <MobileTopBar />
+    {/if}
+    {#if !isFullscreen && !hideGlobalSidebar}
         <Sidebar />
     {/if}
     <main class:fullscreen={isFullscreen}>

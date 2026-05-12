@@ -1734,10 +1734,10 @@
 <div class="sketch-skin grain page bx-page" data-testid="browse-root">
     <!-- inner sidebar (tree) — Phase A4-ε₁ sketch-skin port -->
     <aside class="bx-sidebar" data-testid="browse-sidebar">
-        <div class="bx-brand" data-testid="browse-brand">
+        <a class="bx-brand" data-testid="browse-brand" href="/" aria-label="Home — dashboard">
             <FerdinandMark size={24} />
             <span class="bx-brand-name mono">Ferdinand</span>
-        </div>
+        </a>
 
         <div class="bx-section">
             <button
@@ -3655,11 +3655,22 @@
         display: flex;
         align-items: center;
         gap: 10px;
+        text-decoration: none;
+        color: inherit;
+        border-radius: var(--radius);
+    }
+    .bx-brand:hover .bx-brand-name {
+        color: var(--accent);
+    }
+    .bx-brand:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
     }
     .bx-brand-name {
         font-size: 13px;
         font-weight: 600;
         color: var(--ink);
+        transition: color 120ms ease;
     }
     .bx-section {
         display: flex;
