@@ -102,6 +102,59 @@
             return { x, h, w: Math.max(1, barUnit - 5), v };
         }),
     );
+
+    // Activity heatmap — calendar-style grid (columns = weeks, rows =
+    // Mon..Sun) built straight from the per-day history. Intensity is
+    // bucketed against the busiest day in the window. Matches the design's
+    // Heatmap (stats.jsx l. 74-119) but driven by real data instead of a
+    // PRNG, and the column count follows the selected range.
+    const HEAT_CELL = 15;
+    const HEAT_GAP = 3;
+    const HEAT_ROWS = 7;
+    type HeatCell = {
+        col: number;
+        row: number;
+        level: number;
+        reviews: number;
+        date: string;
+    };
+    function heatLevel(n: number, max: number): number {
+        if (n <= 0) return 0;
+        const r = n / max;
+        if (r > 0.75) return 4;
+        if (r > 0.5) return 3;
+        if (r > 0.25) return 2;
+        return 1;
+    }
+    // 0 = Monday … 6 = Sunday (ISO weekday order reads better as a grid).
+    function isoDow(iso: string): number {
+        return (new Date(`${iso}T00:00:00`).getDay() + 6) % 7;
+    }
+    let heatmap = $derived.by(() => {
+        const days = history ?? [];
+        if (days.length === 0) return { cols: 0, cells: [] as HeatCell[] };
+        const max = Math.max(1, ...days.map((d) => d.reviews));
+        const firstDow = isoDow(days[0].date);
+        const cells: HeatCell[] = days.map((d, i) => {
+            const idx = i + firstDow;
+            return {
+                col: Math.floor(idx / HEAT_ROWS),
+                row: idx % HEAT_ROWS,
+                level: heatLevel(d.reviews, max),
+                reviews: d.reviews,
+                date: d.date,
+            };
+        });
+        const cols = Math.max(...cells.map((c) => c.col)) + 1;
+        return { cols, cells };
+    });
+    let heatColors = [
+        "var(--paper)",
+        "color-mix(in oklch, var(--accent) 18%, var(--paper))",
+        "color-mix(in oklch, var(--accent) 38%, var(--paper))",
+        "color-mix(in oklch, var(--accent) 65%, var(--paper))",
+        "var(--accent)",
+    ];
 </script>
 
 <svelte:head><title>Stats — Ferdinand</title></svelte:head>
@@ -251,6 +304,56 @@
             {/if}
         </article>
     </section>
+
+    <section class="sx-heatmap-section" data-testid="stats-heatmap">
+        <article class="sx-panel sx-heatmap-panel">
+            <header class="sx-panel-head">
+                <Caption>activity heatmap</Caption>
+                <span class="sx-panel-meta mono">last {RANGE_DAYS[range]} days</span>
+            </header>
+            {#if loaded && heatmap.cells.length === 0}
+                <div class="sx-empty mono" data-testid="stats-heatmap-empty">
+                    no activity in this window.
+                </div>
+            {:else}
+                <div class="sx-heatmap-grid-wrap">
+                    <svg
+                        class="sx-heatmap-grid"
+                        data-testid="stats-heatmap-svg"
+                        viewBox="0 0 {heatmap.cols * (HEAT_CELL + HEAT_GAP)} {HEAT_ROWS * (HEAT_CELL + HEAT_GAP)}"
+                        width={heatmap.cols * (HEAT_CELL + HEAT_GAP)}
+                        height={HEAT_ROWS * (HEAT_CELL + HEAT_GAP)}
+                        role="img"
+                        aria-label="daily review activity"
+                    >
+                        {#each heatmap.cells as c (c.date)}
+                            <rect
+                                x={c.col * (HEAT_CELL + HEAT_GAP)}
+                                y={c.row * (HEAT_CELL + HEAT_GAP)}
+                                width={HEAT_CELL}
+                                height={HEAT_CELL}
+                                rx="2"
+                                fill={heatColors[c.level]}
+                                stroke="var(--ink)"
+                                stroke-width="0.9"
+                                data-testid="stats-heat-{c.date}"
+                            ><title>{c.date} · {c.reviews} review{c.reviews === 1 ? "" : "s"}</title></rect>
+                        {/each}
+                    </svg>
+                </div>
+                <div class="sx-heatmap-legend mono">
+                    <span>{RANGE_DAYS[range]} days ago</span>
+                    <span class="sx-heatmap-scale">
+                        less
+                        {#each heatColors as col, i (i)}
+                            <span class="sx-heatmap-swatch" style:background={col}></span>
+                        {/each}
+                        more
+                    </span>
+                </div>
+            {/if}
+        </article>
+    </section>
 </div>
 
 <style>
@@ -379,6 +482,9 @@
         grid-template-columns: 1fr 1fr;
         gap: 18px;
     }
+    .sx-heatmap-section {
+        display: block;
+    }
     .sx-panel {
         background: var(--paper);
         border: 1.5px solid var(--ink);
@@ -388,6 +494,36 @@
         display: flex;
         flex-direction: column;
         gap: 12px;
+    }
+    .sx-heatmap-grid-wrap {
+        display: flex;
+        justify-content: center;
+        padding: 4px 0;
+    }
+    .sx-heatmap-grid {
+        display: block;
+        max-width: 100%;
+        height: auto;
+    }
+    .sx-heatmap-legend {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 10px;
+        color: var(--ink-mute);
+        letter-spacing: 0.04em;
+    }
+    .sx-heatmap-scale {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+    }
+    .sx-heatmap-swatch {
+        width: 11px;
+        height: 11px;
+        border-radius: 2px;
+        border: 0.9px solid var(--ink);
+        display: inline-block;
     }
     .sx-panel-head {
         display: flex;
