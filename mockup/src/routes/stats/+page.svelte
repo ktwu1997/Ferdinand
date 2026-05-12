@@ -4,9 +4,12 @@
     import {
         fetchStatsRecent,
         fetchAnswerButtons,
+        fetchDecks,
         type ApiDayCount,
         type ApiAnswerButtons,
+        type ApiDeckSummary,
     } from "$lib/api";
+    import { deckBreakdownRows, aggregateRetentionPct } from "$lib/stats";
 
     type Range = "1M" | "3M" | "1Y" | "ALL";
     const RANGE_DAYS: Record<Range, number> = {
@@ -26,21 +29,25 @@
 
     let history = $state<ApiDayCount[] | null>(null);
     let answerButtons = $state<ApiAnswerButtons | null>(null);
+    let decks = $state<ApiDeckSummary[] | null>(null);
     let loadError = $state<string | null>(null);
     let loaded = $state(false);
 
     async function load(days: number) {
         loadError = null;
         try {
-            const [h, ab] = await Promise.all([
+            const [h, ab, d] = await Promise.all([
                 fetchStatsRecent(days),
                 fetchAnswerButtons(days),
+                fetchDecks(),
             ]);
             history = h.history;
             answerButtons = ab;
+            decks = d.decks;
         } catch (e) {
             history = [];
             answerButtons = { days, again: 0, hard: 0, good: 0, easy: 0 };
+            decks = [];
             loadError = e instanceof Error ? e.message : "Couldn't load stats";
         } finally {
             loaded = true;
@@ -69,10 +76,6 @@
         return n;
     });
 
-    let activeDays = $derived(values.filter((v) => v > 0).length);
-    let avgPerActiveDay = $derived(
-        activeDays === 0 ? 0 : Math.round(totalReviews / activeDays),
-    );
     let bestDay = $derived(values.length === 0 ? 0 : Math.max(...values));
 
     let answerEntries = $derived(
@@ -86,6 +89,16 @@
             : [],
     );
     let totalAns = $derived(answerEntries.reduce((a, [, v]) => a + v, 0));
+
+    // Aggregate review retention over the window, % — the stand-in for the
+    // design's per-day retention curve (the backend has no per-day
+    // pass-rate series). `null` ⇒ render "—" rather than a misleading 0%.
+    let retentionPct = $derived(aggregateRetentionPct(answerButtons));
+
+    // Deck breakdown table rows — leaves only, full path + a 2-char glyph
+    // + the deck's own card count. mature / retention / activity / last are
+    // not in the /api/decks payload; the table renders them as "—".
+    let deckRows = $derived(deckBreakdownRows(decks ?? []));
 
     // Bar chart geometry — recomputed from the live history so the SVG
     // stays viewBox-correct across range changes. We render the chart at
@@ -203,10 +216,12 @@
                 {streak}<span class="sx-tile-unit">days</span>
             </div>
         </article>
-        <article class="sx-tile" data-testid="stats-tile-avg">
-            <Caption>avg / active day</Caption>
+        <article class="sx-tile" data-testid="stats-tile-retention">
+            <Caption>retention</Caption>
             <div class="sx-tile-value mono">
-                {avgPerActiveDay.toLocaleString()}<span class="sx-tile-unit">cards</span>
+                {#if retentionPct === null}—{:else}{retentionPct}{/if}<span class="sx-tile-unit"
+                    >% · {RANGE_DAYS[range]}d</span
+                >
             </div>
         </article>
         <article class="sx-tile" data-testid="stats-tile-best">
@@ -351,6 +366,60 @@
                         more
                     </span>
                 </div>
+            {/if}
+        </article>
+    </section>
+
+    <!-- Deck breakdown — mirrors design_handoff_ferdinand/source/stats.jsx
+         l. 241-288 (deck / cards / mature / retention / activity / last).
+         Only deck + cards come from /api/decks; the other four columns need
+         a per-deck stats endpoint that doesn't exist yet, so they render
+         "—". See $lib/stats.ts for the backend TODO. -->
+    <section class="sx-deck-section" data-testid="stats-deck-breakdown">
+        <article class="sx-panel">
+            <header class="sx-panel-head">
+                <Caption>deck breakdown</Caption>
+                <span class="sx-panel-meta mono"
+                    >{deckRows.length} {deckRows.length === 1 ? "deck" : "decks"}</span
+                >
+            </header>
+            {#if loaded && deckRows.length === 0}
+                <div class="sx-empty mono" data-testid="stats-deck-empty">
+                    no decks yet.
+                </div>
+            {:else}
+                <div class="sx-deck-scroll">
+                    <div class="sx-deck-table">
+                        <div class="sx-deck-row sx-deck-head mono" aria-hidden="true">
+                            <span>deck</span>
+                            <span class="sx-num">cards</span>
+                            <span class="sx-num">mature</span>
+                            <span class="sx-num">retention</span>
+                            <span>activity</span>
+                            <span class="sx-num">last</span>
+                        </div>
+                        {#each deckRows as d (d.fullName)}
+                            <div
+                                class="sx-deck-row sx-deck-data mono"
+                                data-testid="stats-deck-row"
+                                data-deck-name={d.fullName}
+                            >
+                                <div class="sx-deck-name">
+                                    <span class="sx-deck-glyph" aria-hidden="true">{d.glyph}</span>
+                                    <span class="sx-deck-label" title={d.fullName}>{d.fullName}</span>
+                                </div>
+                                <span class="sx-num">{d.cards.toLocaleString()}</span>
+                                <span class="sx-num sx-na">—</span>
+                                <span class="sx-num sx-na">—</span>
+                                <span class="sx-na">—</span>
+                                <span class="sx-num sx-na">—</span>
+                            </div>
+                        {/each}
+                    </div>
+                </div>
+                <p class="sx-deck-note mono">
+                    // mature, retention &amp; per-deck activity aren't tracked yet
+                </p>
             {/if}
         </article>
     </section>
@@ -618,6 +687,81 @@
     }
     .sx-answer-fill-easy {
         background: var(--easy, #4a6c8e);
+    }
+
+    /* ============== DECK BREAKDOWN ============== */
+    .sx-deck-section {
+        display: block;
+    }
+    /* The panel keeps its 1.5px ink border + stamp shadow; the table itself
+       scrolls horizontally on narrow viewports so the page never overflows
+       (the column widths are fixed-ish and would crush below ~560px). */
+    .sx-deck-scroll {
+        overflow-x: auto;
+        margin: 0 -2px;
+    }
+    .sx-deck-table {
+        min-width: 560px;
+    }
+    .sx-deck-row {
+        display: grid;
+        grid-template-columns: 1.6fr 80px 80px 80px 1.2fr 80px;
+        gap: 14px;
+        align-items: center;
+    }
+    .sx-deck-head {
+        font-size: 10px;
+        color: var(--ink-mute);
+        text-transform: uppercase;
+        letter-spacing: 0.16em;
+        padding: 8px 0;
+        border-bottom: 1px dashed var(--rule);
+    }
+    .sx-deck-data {
+        font-size: 12px;
+        padding: 12px 0;
+        border-bottom: 1px solid var(--rule-soft);
+    }
+    .sx-deck-table .sx-deck-data:last-child {
+        border-bottom: none;
+    }
+    .sx-num {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+    }
+    .sx-na {
+        color: var(--ink-mute);
+    }
+    .sx-deck-name {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+    }
+    .sx-deck-glyph {
+        flex: none;
+        width: 26px;
+        height: 26px;
+        display: grid;
+        place-items: center;
+        border: 1.2px solid var(--ink);
+        border-radius: 3px;
+        font-size: 9px;
+        font-weight: 600;
+        background: var(--bg-soft);
+    }
+    .sx-deck-label {
+        font-weight: 500;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .sx-deck-note {
+        font-size: 11px;
+        color: var(--ink-mute);
+        letter-spacing: 0.04em;
+        margin: 4px 0 0;
     }
 
     /* ============== MOBILE (≤768px) ============== */
