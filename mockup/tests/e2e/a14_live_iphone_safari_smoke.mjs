@@ -256,17 +256,16 @@ try {
         // At iPhone-13 width (390px ≤ 640px breakpoint) the dashboard renders
         // its `.dash-mobile` branch, NOT `.dash-desktop` — `.dash-head` /
         // `.dash-title-hand` live inside `.dash-desktop` (display:none here).
-        // The mobile markup exposes `data-testid="dash-root"` plus `.m-head`,
-        // `.m-sub` and the `.m-deck-list` container.
+        // The mobile markup exposes `data-testid="dash-root"` plus `.m-sub` and
+        // the `.m-deck-list` container. (There is no in-content `.m-head` brand
+        // row anymore — the global MobileTopBar carries the brand on every route.)
         const dashRoot = page.locator('[data-testid="dash-root"]');
         await dashRoot
             .waitFor({ state: "visible", timeout: 12000 })
             .catch(() => null);
-        const mHead = page.locator(".m-head");
         const mSub = page.locator(".m-sub");
         const mDeckList = page.locator(".m-deck-list");
         const rootVisible = await dashRoot.isVisible().catch(() => false);
-        const mHeadVisible = await mHead.isVisible().catch(() => false);
         const mSubVisible = await mSub.isVisible().catch(() => false);
         const mDeckListVisible = await mDeckList.isVisible().catch(() => false);
         // Sanity: the desktop branch must NOT be visible on a phone viewport.
@@ -279,13 +278,12 @@ try {
             fullPage: true,
         });
         record(
-            "2. mobile dashboard: dash-root + .m-head + .m-sub + .m-deck-list render (desktop branch hidden)",
+            "2. mobile dashboard: dash-root + .m-sub + .m-deck-list render (desktop branch hidden)",
             rootVisible &&
-                mHeadVisible &&
                 mSubVisible &&
                 mDeckListVisible &&
                 !dashDesktopVisible,
-            `root=${rootVisible} m_head=${mHeadVisible} m_sub=${mSubVisible} ` +
+            `root=${rootVisible} m_sub=${mSubVisible} ` +
                 `m_deck_list=${mDeckListVisible} desktop_hidden=${!dashDesktopVisible}`,
         );
         await page.close();

@@ -48,7 +48,6 @@
         SketchLeaf,
         SketchUser,
         SketchUnderline,
-        FerdinandMark,
     } from "$lib/components/sketch";
     import { auth } from "$lib/auth.svelte";
     import {
@@ -684,20 +683,11 @@
     </div>
 
     <!-- ============== MOBILE (≤640px) ============== -->
+    <!-- the global MobileTopBar already carries the FerdinandMark + brand + search/user
+         icons on every non-fullscreen route; logout lives under the user icon → /settings.
+         So the mobile dashboard content starts straight at the ledger header (matches the
+         design's DashboardMobile, which has no in-content brand row). -->
     <div class="dash-mobile">
-        <header class="m-head">
-            <div class="m-head-brand">
-                <FerdinandMark size={22} />
-                <span class="mono m-brand-label">ferdinand</span>
-            </div>
-            {#if auth.user}
-                <Btn kind="ghost" size="sm" onclick={handleLogout}>
-                    {#snippet leading()}<SketchUser size={12} />{/snippet}
-                    logout
-                </Btn>
-            {/if}
-        </header>
-
         <Caption>the.deck.ledger</Caption>
         <h1 class="m-title">decks</h1>
         <p class="m-sub mono">
@@ -1335,23 +1325,6 @@
     }
 
     /* ============== MOBILE ============== */
-    .m-head {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding-bottom: 14px;
-        border-bottom: 1px dashed var(--rule);
-        margin-bottom: 14px;
-    }
-    .m-head-brand {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-    }
-    .m-brand-label {
-        font-size: 12px;
-        font-weight: 600;
-    }
     .m-title {
         font-family: var(--font-mono);
         font-size: 26px;
