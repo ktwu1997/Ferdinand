@@ -12,12 +12,12 @@
         <meta name="theme-color" content="oklch(15% 0.008 75)" media="(prefers-color-scheme: dark)" />
         <meta name="format-detection" content="telephone=no" />
         <title>Ferdinand</title>
+        <!-- Speed up the @import font requests fired by src/styles/typography.css
+             (Geist, JetBrains Mono, Klee One, LXGW WenKai TC, Noto Serif TC,
+             Caveat). The stylesheet itself is bundled in via the CSS @import —
+             no <link rel="stylesheet"> needed here. -->
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-        <link
-            href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:ital,wght@0,400;0,500;1,400&family=JetBrains+Mono:wght@400;500&display=swap"
-            rel="stylesheet"
-        />
         <script>
             // Apply theme before first paint to avoid flash
             (function () {
