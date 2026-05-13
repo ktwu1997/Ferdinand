@@ -12,14 +12,12 @@
 -->
 <script lang="ts">
     import ThemeToggle from "./ThemeToggle.svelte";
-    import { FerdinandMark, SketchSearch, SketchUser } from "$lib/components/sketch";
+    import Brand from "$lib/components/Brand.svelte";
+    import { SketchSearch, SketchUser } from "$lib/components/sketch";
 </script>
 
 <header class="topbar sketch-skin" aria-label="Top bar">
-    <a class="brand" href="/" aria-label="Home — dashboard">
-        <FerdinandMark size={24} />
-        <span class="name mono">Ferdinand</span>
-    </a>
+    <Brand size={24} />
     <div class="spacer"></div>
     <a class="icon-link" href="/browse" aria-label="Browse" title="Browse">
         <SketchSearch size={18} />
@@ -41,26 +39,6 @@
         padding: calc(var(--safe-top) + 14px) 22px 14px;
         background: var(--bg);
         border-bottom: 1px dashed var(--rule);
-    }
-    .brand {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        text-decoration: none;
-        color: var(--ink);
-    }
-    .brand .name {
-        font-weight: 600;
-        font-size: 13px;
-        letter-spacing: 0.01em;
-        transition: color 120ms ease;
-    }
-    .brand:hover .name {
-        color: var(--accent);
-    }
-    .brand:focus-visible {
-        outline: 2px solid var(--accent);
-        outline-offset: 2px;
     }
     .spacer {
         flex: 1;

@@ -955,7 +955,7 @@ describe("BrowsePage contract", () => {
             const instance = mount(Page, { target: container, props: {} });
             try {
                 await settle();
-                const svg = container.querySelector(".bx-sidebar .bx-brand svg");
+                const svg = container.querySelector(".bx-sidebar .brand svg");
                 expect(svg).toBeTruthy();
                 expect(svg?.getAttribute("width")).toBe("28");
                 expect(svg?.getAttribute("height")).toBe("28");

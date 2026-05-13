@@ -20,9 +20,9 @@
     import type { Component } from "svelte";
     import { page } from "$app/stores";
     import ThemeToggle from "./ThemeToggle.svelte";
+    import Brand from "$lib/components/Brand.svelte";
     import { Btn, Caption } from "$lib/components/ui";
     import {
-        FerdinandMark,
         SketchBook,
         SketchCardStack,
         SketchPlus,
@@ -95,10 +95,7 @@
 </script>
 
 <aside class="sketch-skin" aria-label="Navigation sidebar">
-    <a class="brand" href="/" aria-label="Home — dashboard">
-        <FerdinandMark size={28} />
-        <span class="brand-name mono">Ferdinand</span>
-    </a>
+    <Brand marginBottom={28} />
 
     <nav class="nav-group" aria-label="Primary">
         <Caption>nav</Caption>
@@ -179,30 +176,6 @@
         aside {
             display: none;
         }
-    }
-
-    .brand {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        margin-bottom: 28px;
-        text-decoration: none;
-        color: var(--ink);
-        border-radius: var(--radius);
-    }
-    .brand:hover .brand-name {
-        color: var(--accent);
-    }
-    .brand:focus-visible {
-        outline: 2px solid var(--accent);
-        outline-offset: 2px;
-    }
-    .brand-name {
-        font-size: 14px;
-        font-weight: 600;
-        color: var(--ink);
-        letter-spacing: 0.01em;
-        transition: color 120ms ease;
     }
 
     .nav-group {

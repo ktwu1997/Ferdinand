@@ -37,8 +37,8 @@
     import { stripHtmlToSnippet } from "$lib/browse/media";
     import { flattenLeafDecks } from "$lib/decks";
     import { Btn, Caption } from "$lib/components/ui";
+    import Brand from "$lib/components/Brand.svelte";
     import {
-        FerdinandMark,
         SketchBook,
         SketchPlus,
         SketchSearch,
@@ -1776,10 +1776,7 @@
 <div class="sketch-skin grain page bx-page" data-testid="browse-root">
     <!-- inner sidebar (tree) — Phase A4-ε₁ sketch-skin port -->
     <aside class="bx-sidebar" data-testid="browse-sidebar">
-        <a class="bx-brand" data-testid="browse-brand" href="/" aria-label="Home — dashboard">
-            <FerdinandMark size={28} />
-            <span class="bx-brand-name mono">Ferdinand</span>
-        </a>
+        <Brand testid="browse-brand" />
 
         <div class="bx-section">
             <button
@@ -3717,27 +3714,6 @@
         background: var(--bg-soft);
         border-right: 1.5px solid var(--ink);
         overflow-y: auto;
-    }
-    .bx-brand {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        text-decoration: none;
-        color: inherit;
-        border-radius: var(--radius);
-    }
-    .bx-brand:hover .bx-brand-name {
-        color: var(--accent);
-    }
-    .bx-brand:focus-visible {
-        outline: 2px solid var(--accent);
-        outline-offset: 2px;
-    }
-    .bx-brand-name {
-        font-size: 14px;
-        font-weight: 600;
-        color: var(--ink);
-        transition: color 120ms ease;
     }
     .bx-section {
         display: flex;
