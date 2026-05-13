@@ -2021,11 +2021,11 @@
         <header class="bx-hero" data-testid="browse-hero">
             <div class="bx-hero-left">
                 <Caption>the.card.archive</Caption>
-                <h1 class="bx-title mono" data-testid="browse-title">
+                <h1 class="page-title" data-testid="browse-title">
                     browse
-                    <span class="hand bx-tag-everything" aria-hidden="true">everything</span>
+                    <span class="page-title-hand hand" aria-hidden="true">everything</span>
                 </h1>
-                <p class="bx-subtitle mono">
+                <p class="page-subtitle">
                     {liveTotal ?? "—"} cards across {decksReady ? treeRows.length : "—"} deck{decksReady && treeRows.length === 1 ? "" : "s"}
                 </p>
             </div>
@@ -4014,23 +4014,6 @@
     .bx-hero-left {
         min-width: 0;
     }
-    .bx-title {
-        font-size: 28px;
-        font-weight: 600;
-        letter-spacing: -0.02em;
-        margin: 6px 0 0;
-        line-height: 1.1;
-    }
-    .bx-tag-everything {
-        color: var(--accent);
-        font-size: 22px;
-        margin-left: 12px;
-    }
-    .bx-subtitle {
-        font-size: 12px;
-        color: var(--ink-mute);
-        margin: 6px 0 0;
-    }
     .bx-hero-right {
         display: flex;
         gap: 8px;
@@ -4270,10 +4253,10 @@
             align-items: flex-start;
             gap: 10px;
         }
-        .bx-title {
+        .bx-hero .page-title {
             font-size: 24px;
         }
-        .bx-tag-everything {
+        .bx-hero .page-title-hand {
             font-size: 18px;
         }
         .bx-table-head {

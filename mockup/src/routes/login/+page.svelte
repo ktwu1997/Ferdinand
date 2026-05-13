@@ -133,7 +133,7 @@
                      copy that sits between the owl and the first field. -->
                 <div class="login-heading">
                     <Caption>session 01</Caption>
-                    <h1 class="login-h1 mono">sign in</h1>
+                    <h1 class="page-title login-h1">sign in</h1>
                     <p class="login-tagline mono">connect to your sync server.</p>
                 </div>
 
@@ -303,11 +303,7 @@
     }
     .login-h1 {
         font-size: 30px;
-        font-weight: 600;
-        letter-spacing: -0.02em;
         margin: 6px 0 8px;
-        color: var(--ink);
-        line-height: 1.05;
     }
     .login-tagline {
         font-size: 13px;

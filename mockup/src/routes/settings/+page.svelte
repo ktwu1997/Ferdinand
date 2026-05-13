@@ -1001,11 +1001,11 @@
     <header class="tx-head" data-testid="settings-hero">
         <div class="tx-head-left">
             <Caption>settings</Caption>
-            <h1 class="tx-title mono" data-testid="settings-title">
+            <h1 class="page-title" data-testid="settings-title">
                 preferences
-                <span class="tx-title-hand hand" aria-hidden="true">tune your tools</span>
+                <span class="page-title-hand" aria-hidden="true">tune your tools</span>
             </h1>
-            <p class="tx-subtitle mono">
+            <p class="page-subtitle">
                 configure how this collection behaves
             </p>
         </div>
@@ -1180,23 +1180,23 @@
         <div class="tx-panel" data-testid="settings-panel">
             <header class="tx-panel-head">
                 <Caption>{active}.config</Caption>
-                <h2 class="tx-panel-title mono" data-testid="settings-panel-title">
+                <h2 class="page-title tx-panel-title" data-testid="settings-panel-title">
                     {sections.find((s) => s.id === active)?.label.toLowerCase() ?? ""}
                     {#if active === "fsrs"}
-                        <span class="tx-panel-hand hand" aria-hidden="true">tune the scheduler</span>
+                        <span class="page-title-hand" aria-hidden="true">tune the scheduler</span>
                     {:else if active === "appearance"}
-                        <span class="tx-panel-hand hand" aria-hidden="true">paper or ink</span>
+                        <span class="page-title-hand" aria-hidden="true">paper or ink</span>
                     {:else if active === "sync"}
-                        <span class="tx-panel-hand hand" aria-hidden="true">your collection, your server</span>
+                        <span class="page-title-hand" aria-hidden="true">your collection, your server</span>
                     {:else if active === "notetypes"}
-                        <span class="tx-panel-hand hand" aria-hidden="true">card templates</span>
+                        <span class="page-title-hand" aria-hidden="true">card templates</span>
                     {:else if active === "recovery"}
-                        <span class="tx-panel-hand hand" aria-hidden="true">undo a slip</span>
+                        <span class="page-title-hand" aria-hidden="true">undo a slip</span>
                     {:else if active === "admin"}
-                        <span class="tx-panel-hand hand" aria-hidden="true">manage users</span>
+                        <span class="page-title-hand" aria-hidden="true">manage users</span>
                     {/if}
                 </h2>
-                <p class="tx-panel-sub mono">
+                <p class="page-subtitle">
                     {#if active === "fsrs"}
                         tune fsrs v5 to match your memory
                     {:else if active === "appearance"}
@@ -2303,32 +2303,6 @@
         flex-direction: column;
         gap: 4px;
     }
-    .tx-title {
-        font-size: 28px;
-        font-weight: 600;
-        letter-spacing: -0.02em;
-        margin: 4px 0 0;
-        color: var(--ink);
-        line-height: 1.05;
-    }
-    .tx-title-hand {
-        font-family: var(--font-hand);
-        color: var(--accent);
-        font-size: 22px;
-        margin-left: 12px;
-        letter-spacing: 0;
-        text-transform: lowercase;
-    }
-    .tx-subtitle {
-        font-size: 12px;
-        color: var(--ink-mute);
-        margin: 4px 0 0;
-        letter-spacing: 0.04em;
-        display: flex;
-        gap: 10px;
-        align-items: baseline;
-        flex-wrap: wrap;
-    }
     .tx-head-right {
         color: var(--ink);
         opacity: 0.55;
@@ -2690,25 +2664,7 @@
     }
     .tx-panel-title {
         font-size: 26px;
-        font-weight: 600;
-        letter-spacing: -0.02em;
         margin: 4px 0 0;
-        color: var(--ink);
-        line-height: 1.05;
-    }
-    .tx-panel-hand {
-        font-family: var(--font-hand);
-        color: var(--accent);
-        font-size: 22px;
-        margin-left: 12px;
-        text-transform: lowercase;
-        letter-spacing: 0;
-    }
-    .tx-panel-sub {
-        font-size: 12px;
-        color: var(--ink-mute);
-        margin: 4px 0 0;
-        letter-spacing: 0.04em;
     }
 
     /* ============== CARD ============== */
@@ -3423,10 +3379,10 @@
             padding: var(--space-5) var(--space-4) var(--space-10);
             gap: var(--space-5);
         }
-        .tx-title {
+        .tx-head .page-title {
             font-size: 22px;
         }
-        .tx-title-hand {
+        .tx-head .page-title-hand {
             font-size: 18px;
         }
         .tx-head-right {
@@ -3445,7 +3401,7 @@
         .tx-panel-title {
             font-size: 22px;
         }
-        .tx-panel-hand {
+        .tx-panel-title .page-title-hand {
             font-size: 18px;
             margin-left: 8px;
         }

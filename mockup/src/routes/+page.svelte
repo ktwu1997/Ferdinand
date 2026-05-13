@@ -316,9 +316,9 @@
         <header class="dash-head" data-testid="dash-hero">
             <div class="dash-head-left">
                 <Caption>the.deck.ledger</Caption>
-                <h1 class="dash-title">
+                <h1 class="page-title dash-title">
                     decks
-                    <span class="dash-title-hand hand">another round</span>
+                    <span class="page-title-hand dash-title-hand hand">another round</span>
                 </h1>
                 <div class="dash-title-rule" aria-hidden="true">
                     <SketchUnderline width={96} />
@@ -689,7 +689,7 @@
          design's DashboardMobile, which has no in-content brand row). -->
     <div class="dash-mobile">
         <Caption>the.deck.ledger</Caption>
-        <h1 class="m-title">decks</h1>
+        <h1 class="page-title m-title">decks</h1>
         <p class="m-sub mono">
             good morning, {greetingName} ·
             <strong>{totalDueAll}</strong> due · 14d streak
@@ -868,23 +868,16 @@
         min-width: 0;
     }
     .dash-title {
-        font-family: var(--font-mono);
         font-size: 38px;
-        font-weight: 600;
-        letter-spacing: -0.02em;
-        margin: 8px 0 0;
-        line-height: 1.1;
         display: flex;
         align-items: baseline;
         gap: 16px;
         flex-wrap: wrap;
+        margin: 8px 0 0;
     }
     .dash-title-hand {
-        font-family: var(--font-hand);
-        color: var(--accent);
         font-size: 24px;
-        letter-spacing: 0;
-        text-transform: lowercase;
+        margin-left: 0; /* hero uses the flex `gap` for spacing, not the shared margin */
     }
     .dash-title-rule {
         margin-top: 6px;
@@ -1327,11 +1320,8 @@
 
     /* ============== MOBILE ============== */
     .m-title {
-        font-family: var(--font-mono);
         font-size: 26px;
-        font-weight: 600;
         margin: 6px 0 0;
-        letter-spacing: -0.02em;
     }
     .m-sub {
         font-size: 12px;

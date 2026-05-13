@@ -206,3 +206,34 @@
 .sketch-skin .cjk {
     font-family: var(--font-cjk);
 }
+
+/* Page header — the big mono title + cursive companion + subtitle block at the
+   top of every route. One definition; routes override only font-size where the
+   design genuinely differs (dashboard hero = 38px, settings panel h2 = 26px,
+   narrow mobile = smaller). */
+.sketch-skin .page-title {
+    font-family: var(--font-mono);
+    font-feature-settings: "ss02", "zero", "cv01";
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    color: var(--ink);
+    margin: 0;
+}
+.sketch-skin .page-title-hand {
+    font-family: var(--font-hand);
+    color: var(--accent);
+    font-size: 22px;
+    line-height: 1.1;
+    letter-spacing: 0;
+    text-transform: lowercase;
+    margin-left: 12px;
+}
+.sketch-skin .page-subtitle {
+    font-size: 12px;
+    color: var(--ink-mute);
+    letter-spacing: 0.04em;
+    line-height: 1.5;
+    margin: 4px 0 0;
+}

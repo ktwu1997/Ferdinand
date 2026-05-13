@@ -176,11 +176,11 @@
     <header class="sx-head" data-testid="stats-head">
         <div class="sx-head-left">
             <Caption>the.ledger</Caption>
-            <h1 class="sx-title mono" data-testid="stats-title">
+            <h1 class="page-title" data-testid="stats-title">
                 statistics
-                <span class="sx-title-hand hand" aria-hidden="true">{RANGE_LABEL[range]}</span>
+                <span class="page-title-hand" aria-hidden="true">{RANGE_LABEL[range]}</span>
             </h1>
-            <p class="sx-subtitle mono">all decks · snapshot of your review behavior</p>
+            <p class="page-subtitle">all decks · snapshot of your review behavior</p>
         </div>
         <div class="sx-range" role="tablist" aria-label="time range" data-testid="stats-range">
             {#each ["1M", "3M", "1Y", "ALL"] as r (r)}
@@ -448,28 +448,6 @@
         display: flex;
         flex-direction: column;
         gap: 4px;
-    }
-    .sx-title {
-        font-size: 28px;
-        font-weight: 600;
-        letter-spacing: -0.02em;
-        margin: 4px 0 0;
-        color: var(--ink);
-        line-height: 1.05;
-    }
-    .sx-title-hand {
-        font-family: var(--font-hand);
-        color: var(--accent);
-        font-size: 22px;
-        margin-left: 12px;
-        letter-spacing: 0;
-        text-transform: lowercase;
-    }
-    .sx-subtitle {
-        font-size: 12px;
-        color: var(--ink-mute);
-        margin: 4px 0 0;
-        letter-spacing: 0.04em;
     }
 
     /* Range selector — paper pills, ink-bg + bg-fg when active. Matches
@@ -773,10 +751,10 @@
         .sx-head {
             align-items: flex-start;
         }
-        .sx-title {
+        .sx-head .page-title {
             font-size: 22px;
         }
-        .sx-title-hand {
+        .sx-head .page-title-hand {
             font-size: 18px;
             margin-left: 8px;
         }

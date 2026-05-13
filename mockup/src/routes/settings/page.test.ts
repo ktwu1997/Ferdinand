@@ -150,7 +150,7 @@ describe("SettingsPage contract", () => {
             // Phase B-test-fix-2b: per-section title moved from <h1> to
             // `[data-testid=settings-panel-title]` (an h2 inside .tx-panel)
             // when sketch-skin landed; the page-level h1 is now "preferences".
-            // The panel title carries an inline ".tx-panel-hand" sub-span
+            // The panel title carries an inline ".page-title-hand" sub-span
             // ("tune the scheduler"), so assert via toContain on the lowercase
             // section label.
             const panelTitle = container.querySelector(
@@ -158,10 +158,13 @@ describe("SettingsPage contract", () => {
             );
             expect(panelTitle?.textContent?.toLowerCase()).toContain("fsrs");
 
-            // Subtitle (panel-sub) copy is now lowercase: "tune fsrs v5 to
-            // match your memory" — assert on the substring.
+            // Subtitle copy is now lowercase: "tune fsrs v5 to match your
+            // memory" — assert on the substring. The panel sub-line adopted
+            // the shared `.page-subtitle` utility; scope under `.tx-panel-head`
+            // so it doesn't collide with the aside's own `.page-subtitle`.
             expect(
-                container.querySelector(".tx-panel-sub")?.textContent,
+                container.querySelector(".tx-panel-head .page-subtitle")
+                    ?.textContent,
             ).toContain("fsrs v5");
 
             // Phase 9-O2 removed the 19 fake placeholder weights. Real

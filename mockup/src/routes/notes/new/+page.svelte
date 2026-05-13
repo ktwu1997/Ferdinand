@@ -211,11 +211,11 @@
     <header class="nx-head" data-testid="notes-new-hero">
         <div class="nx-head-left">
             <Caption>the.workshop</Caption>
-            <h1 class="nx-title mono" data-testid="notes-new-title">
+            <h1 class="page-title" data-testid="notes-new-title">
                 new note
-                <span class="nx-title-hand hand" aria-hidden="true">add to library</span>
+                <span class="page-title-hand" aria-hidden="true">add to library</span>
             </h1>
-            <p class="nx-subtitle mono">
+            <p class="page-subtitle nx-subtitle">
                 create a card in any deck
                 <span class="nx-subtitle-kbd mono">⌘↵ to save</span>
             </p>
@@ -480,27 +480,8 @@
         flex-direction: column;
         gap: 4px;
     }
-    .nx-title {
-        font-size: 28px;
-        font-weight: 600;
-        letter-spacing: -0.02em;
-        margin: 4px 0 0;
-        color: var(--ink);
-        line-height: 1.05;
-    }
-    .nx-title-hand {
-        font-family: var(--font-hand);
-        color: var(--accent);
-        font-size: 22px;
-        margin-left: 12px;
-        letter-spacing: 0;
-        text-transform: lowercase;
-    }
     .nx-subtitle {
-        font-size: 12px;
-        color: var(--ink-mute);
-        margin: 4px 0 0;
-        letter-spacing: 0.04em;
+        /* keeps the "⌘↵ to save" pill on the same baseline row as the copy */
         display: flex;
         gap: 10px;
         align-items: baseline;
@@ -887,10 +868,10 @@
         .nx-head {
             align-items: flex-start;
         }
-        .nx-title {
+        .nx-head .page-title {
             font-size: 22px;
         }
-        .nx-title-hand {
+        .nx-head .page-title-hand {
             font-size: 18px;
             margin-left: 8px;
         }
