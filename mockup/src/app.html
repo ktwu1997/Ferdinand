@@ -8,8 +8,11 @@
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="apple-mobile-web-app-title" content="Ferdinand" />
-        <meta name="theme-color" content="oklch(97% 0.012 85)" media="(prefers-color-scheme: light)" />
-        <meta name="theme-color" content="oklch(15% 0.008 75)" media="(prefers-color-scheme: dark)" />
+        <!-- Match the sketch-skin --bg tokens from src/styles/tokens.css so the
+             mobile browser chrome (iOS Safari / Android Chrome URL bar) blends
+             with the page background instead of fighting it. -->
+        <meta name="theme-color" content="oklch(90.5% 0.022 80)" media="(prefers-color-scheme: light)" />
+        <meta name="theme-color" content="oklch(15.5% 0.012 60)" media="(prefers-color-scheme: dark)" />
         <meta name="format-detection" content="telephone=no" />
         <title>Ferdinand</title>
         <!-- Speed up the @import font requests fired by src/styles/typography.css
