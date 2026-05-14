@@ -99,9 +99,14 @@ impl IntoResponse for ServerError {
         } else {
             tracing::info!(error = %self.source, status = %self.status, "request rejected");
         }
+        let public_message = if self.status.is_server_error() {
+            "internal server error".to_string()
+        } else {
+            self.source.to_string()
+        };
         let body = ApiError {
             status: self.status.as_u16(),
-            message: self.source.to_string(),
+            message: public_message,
         };
         let mut response = (self.status, Json(body)).into_response();
         if let Some(secs) = self.retry_after_secs {
@@ -118,6 +123,49 @@ pub type ApiResult<T> = Result<T, ServerError>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::Body;
+    use http_body_util::BodyExt;
+
+    async fn body_message(resp: axum::response::Response<Body>) -> String {
+        let bytes = BodyExt::collect(resp.into_body())
+            .await
+            .expect("body collect")
+            .to_bytes();
+        let envelope: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("valid json body");
+        envelope["message"]
+            .as_str()
+            .expect("message field present")
+            .to_owned()
+    }
+
+    #[tokio::test]
+    async fn server_error_body_is_redacted() {
+        let err = ServerError {
+            source: anyhow::anyhow!("internal /tmp/secret-path detail"),
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            retry_after_secs: None,
+        };
+        let resp = err.into_response();
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let msg = body_message(resp).await;
+        assert_eq!(
+            msg, "internal server error",
+            "5xx body must not leak source details",
+        );
+    }
+
+    #[tokio::test]
+    async fn client_error_body_preserves_source_message() {
+        let err = ServerError::bad_request("days must be <= 30");
+        let resp = err.into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let msg = body_message(resp).await;
+        assert_eq!(
+            msg, "days must be <= 30",
+            "4xx body must still return the user-facing message",
+        );
+    }
 
     #[test]
     fn service_unavailable_response_carries_retry_after_header() {
