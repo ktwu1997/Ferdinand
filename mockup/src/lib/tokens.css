@@ -168,3 +168,20 @@
     --safe-bottom: env(safe-area-inset-bottom, 0px);
     --safe-left: env(safe-area-inset-left, 0px);
 }
+
+/* ── Shared loading skeleton utilities ───────────────────────────────────────
+   Reused across /dashboard and /browse — a muted bar that approximates the
+   width of the real content while data is in flight. No animation: the fetch
+   window is ~100ms; a pulse would be more distracting than the placeholder.
+   Colour is pinned to --rule-soft so it adapts to both themes automatically.  */
+
+.skel-bar {
+    display: block;
+    height: 12px;
+    border-radius: 4px;
+    background: var(--rule-soft);
+    width: 70%;
+}
+.skel-bar-sm {
+    width: 45%;
+}
