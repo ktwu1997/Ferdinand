@@ -270,30 +270,30 @@
 
 <style>
     .ipx-panel {
-        margin: 0 0 var(--space-4, 1rem);
-        padding: 0.75rem 1rem;
-        border: 1px dashed var(--skin-edge, #d6cdba);
-        background: var(--surface-soft, rgba(255, 250, 240, 0.55));
-        border-radius: 6px;
+        margin: 0 0 var(--space-4);
+        padding: var(--space-5) var(--space-6);
+        border: var(--border-w-thin) dashed var(--rule);
+        background: var(--bg-soft);
+        border-radius: var(--radius-md);
         position: relative;
     }
     .ipx-toggle {
         display: flex;
         flex-direction: column;
-        gap: 0.15rem;
+        gap: var(--space-1);
         width: 100%;
         background: transparent;
         border: 0;
         padding: 0;
         text-align: left;
-        color: var(--text-strong, #2b2218);
+        color: var(--ink);
         cursor: pointer;
     }
     .ipx-toggle-row {
         display: flex;
         align-items: baseline;
         justify-content: space-between;
-        gap: 0.5rem;
+        gap: var(--space-3);
     }
     .ipx-toggle-title {
         font-size: 1.05rem;
@@ -302,38 +302,38 @@
     }
     .ipx-toggle-caret {
         font-size: 0.9rem;
-        color: var(--text-muted, #7a6c52);
+        color: var(--ink-mute);
     }
     .ipx-toggle-hint {
         font-size: 0.78rem;
-        color: var(--text-muted, #7a6c52);
+        color: var(--ink-mute);
     }
     .ipx-body {
-        margin-top: 0.75rem;
+        margin-top: var(--space-5);
         display: flex;
         flex-direction: column;
-        gap: 0.5rem;
+        gap: var(--space-3);
     }
     .ipx-drop {
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 0.4rem;
+        gap: var(--space-3);
         width: 100%;
-        padding: 1rem 0.75rem;
-        background: var(--surface-base, #fbf6ec);
-        border: 1.5px dashed var(--skin-edge, #d6cdba);
-        border-radius: 6px;
+        padding: var(--space-6) var(--space-5);
+        background: var(--paper);
+        border: var(--border-w) dashed var(--rule);
+        border-radius: var(--radius-md);
         cursor: pointer;
-        color: var(--text-strong, #2b2218);
+        color: var(--ink);
         transition: background 120ms ease-out, border-color 120ms ease-out;
     }
     .ipx-drop:hover {
-        background: var(--surface-hover, #f5edd9);
+        background: var(--bg-soft);
     }
     .ipx-drop-over {
-        background: var(--surface-hover, #f5edd9);
-        border-color: var(--accent, #b07b3f);
+        background: var(--bg-soft);
+        border-color: var(--accent);
     }
     .ipx-drop-title {
         font-size: 0.92rem;
@@ -341,7 +341,7 @@
     }
     .ipx-drop-hint {
         font-size: 0.78rem;
-        color: var(--text-muted, #7a6c52);
+        color: var(--ink-mute);
     }
     .ipx-file-input {
         position: absolute;
@@ -354,24 +354,24 @@
     .ipx-progress {
         display: flex;
         flex-direction: column;
-        gap: 0.35rem;
+        gap: var(--space-2);
     }
     .ipx-progress-row {
         display: flex;
         justify-content: space-between;
         font-size: 0.8rem;
-        color: var(--text-strong, #2b2218);
+        color: var(--ink);
     }
     .ipx-progress-track {
         height: 6px;
-        background: var(--surface-hover, #f5edd9);
-        border: 1px solid var(--skin-edge, #d6cdba);
-        border-radius: 3px;
+        background: var(--bg-soft);
+        border: 1px solid var(--rule);
+        border-radius: var(--radius);
         overflow: hidden;
     }
     .ipx-progress-bar {
         height: 100%;
-        background: var(--accent, #b07b3f);
+        background: var(--accent);
         transition: width 100ms linear;
     }
     .ipx-progress-bar-indet {
@@ -389,36 +389,36 @@
         }
     }
     .ipx-toast {
-        padding: 0.5rem 0.6rem;
-        background: var(--surface-base, #fbf6ec);
-        border: 1px solid var(--skin-edge, #d6cdba);
-        border-left: 3px solid var(--accent, #b07b3f);
-        border-radius: 3px;
+        padding: var(--space-4) var(--space-4);
+        background: var(--paper);
+        border: 1px solid var(--rule);
+        border-left: 3px solid var(--accent);
+        border-radius: var(--radius);
         font-size: 0.84rem;
     }
     .ipx-toast-sub {
         font-size: 0.74rem;
-        color: var(--text-muted, #7a6c52);
+        color: var(--ink-mute);
         margin: 0;
     }
     .ipx-error {
         display: flex;
         align-items: baseline;
         justify-content: space-between;
-        gap: 0.5rem;
-        padding: 0.4rem 0.55rem;
+        gap: var(--space-3);
+        padding: var(--space-3) var(--space-4);
         font-size: 0.8rem;
-        color: #8a3a1d;
-        background: #fbe9de;
-        border: 1px solid #d99a82;
-        border-radius: 3px;
+        color: var(--due);
+        background: color-mix(in oklch, var(--due) 8%, transparent);
+        border: 1px solid color-mix(in oklch, var(--due) 32%, transparent);
+        border-radius: var(--radius);
     }
     .ipx-error-dismiss {
         background: transparent;
         border: 0;
         cursor: pointer;
         font-size: 0.74rem;
-        color: #8a3a1d;
+        color: var(--due);
         text-decoration: underline;
     }
     @media (max-width: 720px) {
@@ -426,7 +426,7 @@
             font-size: 1rem;
         }
         .ipx-drop {
-            padding: 0.75rem;
+            padding: var(--space-5);
         }
     }
 </style>
