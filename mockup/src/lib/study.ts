@@ -29,3 +29,27 @@ export function formatMMSS(ms: number): string {
     const seconds = totalSeconds % 60;
     return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
+
+export interface ReviewDay {
+    /** ISO YYYY-MM-DD in user local timezone. */
+    date: string;
+    reviews: number;
+}
+
+/**
+ * Counts consecutive days with reviews > 0, sorted newest-first,
+ * stopping at the first day with 0 reviews.
+ *
+ * Callers are responsible for ensuring `date` strings are in the
+ * user's local timezone so midnight boundaries are consistent.
+ */
+export function computeStreak(history: ReadonlyArray<ReviewDay>): number {
+    if (history.length === 0) return 0;
+    const sorted = [...history].sort((a, b) => b.date.localeCompare(a.date));
+    let streak = 0;
+    for (const day of sorted) {
+        if (day.reviews > 0) streak++;
+        else break;
+    }
+    return streak;
+}

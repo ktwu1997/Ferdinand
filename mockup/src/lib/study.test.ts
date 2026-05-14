@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { STUDY_INTERVALS, formatMMSS } from "./study";
+import { STUDY_INTERVALS, formatMMSS, computeStreak } from "./study";
 
 describe("formatMMSS", () => {
     test("renders zero as 00:00", () => {
@@ -36,5 +36,37 @@ describe("STUDY_INTERVALS", () => {
             good: "5d",
             easy: "12d",
         });
+    });
+});
+
+describe("computeStreak", () => {
+    test("returns 0 for empty history", () => {
+        expect(computeStreak([])).toBe(0);
+    });
+
+    test("counts consecutive non-zero days from most-recent backwards", () => {
+        expect(
+            computeStreak([
+                { date: "2026-05-14", reviews: 5 },
+                { date: "2026-05-13", reviews: 3 },
+                { date: "2026-05-12", reviews: 0 }, // gap — stop here
+                { date: "2026-05-11", reviews: 7 },
+            ]),
+        ).toBe(2);
+    });
+
+    test("stops at first zero-review day", () => {
+        expect(
+            computeStreak([{ date: "2026-05-14", reviews: 0 }]),
+        ).toBe(0);
+    });
+
+    test("handles out-of-order input by sorting first", () => {
+        expect(
+            computeStreak([
+                { date: "2026-05-13", reviews: 3 },
+                { date: "2026-05-14", reviews: 5 },
+            ]),
+        ).toBe(2);
     });
 });
