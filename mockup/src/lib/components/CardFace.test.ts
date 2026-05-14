@@ -179,3 +179,68 @@ describe("CardFace mount contract", () => {
         }
     });
 });
+
+describe("CardFace M6 — DOMPurify data: URI hardening", () => {
+    let container: HTMLDivElement;
+
+    beforeEach(() => {
+        container = document.createElement("div");
+        document.body.appendChild(container);
+    });
+
+    afterEach(() => {
+        container.remove();
+    });
+
+    test("strips data: URI from audio src", () => {
+        const instance = mount(CardFace, {
+            target: container,
+            props: {
+                html: '<audio src="data:audio/ogg;base64,abc123" controls></audio>',
+                css: "",
+                testid: "data-uri-audio",
+            },
+        });
+        flushSync();
+
+        try {
+            const shadow = shadowFor(container, "data-uri-audio");
+            const audio = shadow.querySelector("audio");
+            // audio element may or may not survive sanitization,
+            // but if it does, its src must not be the data: URI.
+            if (audio) {
+                const src = audio.getAttribute("src");
+                // src is null (stripped) or a non-data: URL — both are correct
+                expect(src === null || !/^data:/i.test(src)).toBe(true);
+            }
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("preserves audio with a relative path src (/_media/ style)", () => {
+        const instance = mount(CardFace, {
+            target: container,
+            props: {
+                html: '<audio src="abc.ogg" controls></audio>',
+                css: "",
+                testid: "relative-audio",
+            },
+        });
+        flushSync();
+
+        try {
+            const shadow = shadowFor(container, "relative-audio");
+            const audio = shadow.querySelector("audio");
+            expect(audio).not.toBeNull();
+            // Relative src gets resolved to an absolute media URL — it must not be stripped.
+            const src = audio!.getAttribute("src");
+            expect(src).not.toBeNull();
+            expect(src).not.toMatch(/^data:/i);
+            // The resolved URL should contain the filename.
+            expect(src).toContain("abc.ogg");
+        } finally {
+            unmount(instance);
+        }
+    });
+});

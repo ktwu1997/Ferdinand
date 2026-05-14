@@ -22,6 +22,17 @@
         if (typeof window === "undefined") return;
         const shadow = host.shadowRoot ?? host.attachShadow({ mode: "open" });
         const prepared = transformAnkiHtml(html);
+        // Strip data: URIs from src attributes — an attacker-controlled
+        // notetype could otherwise exfiltrate data via <audio src="data:...">.
+        // The hook runs per sanitize call and is removed immediately after.
+        DOMPurify.addHook("uponSanitizeAttribute", (_node, data) => {
+            if (
+                data.attrName === "src" &&
+                data.attrValue.toLowerCase().startsWith("data:")
+            ) {
+                data.keepAttr = false;
+            }
+        });
         const cleanHtml = DOMPurify.sanitize(prepared, {
             // Strip <script>, inline event handlers, and other live vectors
             // while preserving the rich markup Anki card templates need.
@@ -29,7 +40,10 @@
             FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover"],
             ADD_TAGS: ["audio", "source"],
             ADD_ATTR: ["controls", "preload", "src"],
+            // Prevent data-* attribute exfiltration channels.
+            ALLOW_DATA_ATTR: false,
         });
+        DOMPurify.removeHook("uponSanitizeAttribute");
         // Per HTML spec, <base> only affects the host Document's URL — it has
         // no effect inside a shadow root, so relative <img src="foo.jpg"> would
         // resolve against the page's URL (e.g. /study/123/foo.jpg) and 404.
