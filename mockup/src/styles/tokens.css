@@ -249,3 +249,9 @@
     line-height: 1.5;
     margin: 4px 0 0;
 }
+
+/* M7 — prevent horizontal overflow on all sketch-skin page wrappers.
+   Shared here so per-route duplicates can be removed. */
+.sketch-skin .page {
+    overflow-x: clip;
+}
