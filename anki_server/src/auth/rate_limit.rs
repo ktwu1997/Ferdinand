@@ -54,12 +54,7 @@ impl LoginRateLimiter {
     ///
     /// `now` is injected so tests can drive the limiter without sleeping.
     /// In production callers pass `Instant::now()`.
-    pub fn check_and_register(
-        &self,
-        ip: IpAddr,
-        username: &str,
-        now: Instant,
-    ) -> Option<u64> {
+    pub fn check_and_register(&self, ip: IpAddr, username: &str, now: Instant) -> Option<u64> {
         if let Some(retry) = check_scope(&self.by_ip, &ip, now) {
             return Some(retry);
         }
@@ -69,6 +64,16 @@ impl LoginRateLimiter {
         record_scope(&self.by_ip, ip, now);
         record_scope(&self.by_user, username.to_string(), now);
         None
+    }
+
+    /// Returns `true` if the by_ip map contains an entry for `ip`.
+    /// Used only in tests to verify eviction behaviour.
+    #[cfg(test)]
+    pub fn contains_ip(&self, ip: &IpAddr) -> bool {
+        self.by_ip
+            .lock()
+            .expect("rate-limit mutex poisoned")
+            .contains_key(ip)
     }
 }
 
@@ -100,11 +105,8 @@ where
     }
 }
 
-fn record_scope<K>(
-    map: &Mutex<HashMap<K, VecDeque<Instant>>>,
-    key: K,
-    now: Instant,
-) where
+fn record_scope<K>(map: &Mutex<HashMap<K, VecDeque<Instant>>>, key: K, now: Instant)
+where
     K: Eq + Hash,
 {
     let mut guard = map.lock().expect("rate-limit mutex poisoned");
@@ -114,6 +116,15 @@ fn record_scope<K>(
         entry.pop_front();
     }
     entry.push_back(now);
+    // Evict entries that are entirely outside the window. We hold the lock
+    // here already, so we prune every deque and remove any that become empty.
+    // This bounds map growth against dictionary attacks or IP-range scans.
+    guard.retain(|_, deque| {
+        while deque.front().is_some_and(|&t| t <= cutoff) {
+            deque.pop_front();
+        }
+        !deque.is_empty()
+    });
 }
 
 #[cfg(test)]
@@ -144,7 +155,10 @@ mod tests {
             "alice",
             t0 + Duration::from_secs(BUDGET as u64),
         );
-        assert!(retry.is_some(), "(BUDGET+1)-th attempt must be rate-limited");
+        assert!(
+            retry.is_some(),
+            "(BUDGET+1)-th attempt must be rate-limited"
+        );
         assert!(retry.unwrap() >= 1);
     }
 
@@ -188,10 +202,7 @@ mod tests {
             lim.check_and_register(ip("10.0.0.1"), "bob", t0);
         }
         // Different IP + different user is fully fresh.
-        assert_eq!(
-            lim.check_and_register(ip("10.0.0.2"), "carol", t0),
-            None,
-        );
+        assert_eq!(lim.check_and_register(ip("10.0.0.2"), "carol", t0), None,);
     }
 
     #[test]
@@ -217,5 +228,44 @@ mod tests {
                 "post-window attempt {i} should be allowed",
             );
         }
+    }
+
+    /// Verify that by_ip map entries are evicted once all their timestamps
+    /// fall outside the sliding window. Without eviction the map would grow
+    /// without bound after a dictionary attack or an IP-range scan.
+    ///
+    /// Strategy: use injected `now` values (no thread::sleep) consistent with
+    /// the rest of the test suite. Record a hit for ip1 at t0, then trigger
+    /// check_and_register for ip2 at t0+WINDOW+1s. The retain pass inside
+    /// record_scope must drain and remove ip1's stale entry.
+    #[test]
+    fn map_evicts_empty_entries_after_window() {
+        let lim = LoginRateLimiter::new();
+        let t0 = Instant::now();
+        let ip1 = ip("1.2.3.4");
+        let ip2 = ip("9.9.9.9");
+
+        // Record one hit for ip1 at t0.
+        lim.check_and_register(ip1, "user-a", t0);
+        assert!(
+            lim.contains_ip(&ip1),
+            "ip1 should be present after recording"
+        );
+
+        // Advance time past the window; ip1's sole entry is now expired.
+        let later = t0 + WINDOW + Duration::from_secs(1);
+
+        // Trigger record_scope for ip2 — this causes the retain pass that must
+        // evict ip1's now-empty deque from the map.
+        lim.check_and_register(ip2, "user-b", later);
+
+        assert!(
+            !lim.contains_ip(&ip1),
+            "ip1's stale entry must be evicted after window expires",
+        );
+        assert!(
+            lim.contains_ip(&ip2),
+            "ip2's fresh entry must remain in the map",
+        );
     }
 }
