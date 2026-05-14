@@ -4,6 +4,16 @@
  */
 
 import { browser } from "$app/environment";
+import { PUBLIC_API_ALLOWED_BASES } from "$env/static/public";
+
+// #3 SSRF guard: only allow same-origin or build-time whitelisted origins.
+// Split on comma, trim, filter empty. Empty string in prod → same-origin only.
+const ALLOWED_BASES = new Set(
+    (PUBLIC_API_ALLOWED_BASES || "")
+        .split(",")
+        .map((s: string) => s.trim())
+        .filter(Boolean),
+);
 
 export interface ApiDeckSummary {
     id: number;
@@ -137,8 +147,23 @@ const SSR_FALLBACK_BASE = "http://localhost:40001";
 
 export function apiBase(): string {
     if (!browser) return SSR_FALLBACK_BASE;
-    const qp = new URLSearchParams(window.location.search).get("api");
-    if (qp) return qp;
+    const override = new URLSearchParams(window.location.search).get("api");
+    if (override) {
+        // #3 SSRF guard: validate the override is same-origin or whitelisted.
+        try {
+            const url = new URL(override, window.location.origin);
+            if (
+                url.origin === window.location.origin ||
+                ALLOWED_BASES.has(url.origin)
+            ) {
+                return url.toString().replace(/\/$/, "");
+            }
+        } catch {
+            // new URL() threw — malformed or non-http scheme; fall through.
+        }
+        console.warn(`[api] ignoring untrusted ?api= override: ${override}`);
+        return "";
+    }
     const env = import.meta.env.VITE_ANKI_API as string | undefined;
     if (env) return env;
     return window.location.origin;
@@ -337,11 +362,8 @@ export interface AnswerRequest {
 }
 
 export async function postAnswer(req: AnswerRequest): Promise<ApiQueueResponse> {
-    return getJson<ApiQueueResponse>("/api/study/answer", {
-        method: "POST",
-        headers: { "content-type": "application/json", accept: "application/json" },
-        body: JSON.stringify(req),
-    });
+    // #9: use postJson so fireOnUnauthorized is triggered on 401 (session expiry).
+    return postJson<ApiQueueResponse>("/api/study/answer", req);
 }
 
 export async function fetchDeckConfigDefault(): Promise<ApiDeckConfigDefault> {

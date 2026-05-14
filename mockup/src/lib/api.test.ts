@@ -12,7 +12,7 @@
 // tests take — rather than standing up a real server.
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { postAdminCreateUser, setOnUnauthorized } from "./api";
+import { apiBase, postAdminCreateUser, postAnswer, setOnUnauthorized } from "./api";
 
 const originalFetch = globalThis.fetch;
 
@@ -93,5 +93,90 @@ describe("postAdminCreateUser", () => {
 
         await expect(postAdminCreateUser("grace", "pw")).rejects.toThrow();
         expect(onUnauth).toHaveBeenCalledTimes(1);
+    });
+});
+
+// #3 SSRF guard — apiBase ?api= override validation
+// jsdom is configured with url "http://localhost:40001/" in vitest.config.ts
+// so window.location.origin === "http://localhost:40001" throughout.
+
+describe("apiBase — SSRF guard (#3)", () => {
+    // Capture the real search so we can restore it between cases.
+    // jsdom's window.location.search is not directly writable, but
+    // we can drive it by navigating (jsdom allows history.pushState).
+    function setSearch(search: string) {
+        const url = new URL(window.location.href);
+        url.search = search;
+        window.history.pushState({}, "", url.toString());
+    }
+
+    afterEach(() => {
+        // Reset to the bare origin so later tests start clean.
+        window.history.pushState({}, "", "http://localhost:40001/");
+    });
+
+    test("returns window.location.origin when no ?api= override", () => {
+        // No ?api= param → guard is skipped; falls through to origin fallback.
+        expect(apiBase()).toBe(window.location.origin);
+    });
+
+    test("accepts a same-origin override", () => {
+        setSearch("?api=http://localhost:40001");
+        expect(apiBase()).toBe("http://localhost:40001");
+    });
+
+    test("REJECTS an evil.com override", () => {
+        setSearch("?api=https://evil.com");
+        expect(apiBase()).toBe("");
+    });
+
+    test("REJECTS a protocol-relative //evil.com override", () => {
+        setSearch("?api=//evil.com");
+        expect(apiBase()).toBe("");
+    });
+
+    test("REJECTS a javascript: scheme override", () => {
+        setSearch("?api=javascript:alert(1)");
+        expect(apiBase()).toBe("");
+    });
+});
+
+// #9 postAnswer — must route through postJson / fireOnUnauthorized
+
+describe("postAnswer — fireOnUnauthorized (#9)", () => {
+    afterEach(() => {
+        globalThis.fetch = originalFetch;
+        setOnUnauthorized(() => {});
+        vi.restoreAllMocks();
+    });
+
+    test("postAnswer triggers fireOnUnauthorized on 401", async () => {
+        const onUnauth = vi.fn();
+        setOnUnauthorized(onUnauth);
+
+        globalThis.fetch = vi.fn(async () => ({
+            ok: false,
+            status: 401,
+            statusText: "Unauthorized",
+            json: async () => ({}),
+        } as Response)) as typeof fetch;
+
+        await expect(
+            postAnswer({ card_id: 1, deck_id: 1, rating: "good" }),
+        ).rejects.toThrow();
+        expect(onUnauth).toHaveBeenCalledOnce();
+    });
+
+    test("postAnswer parses error envelope on 400", async () => {
+        globalThis.fetch = vi.fn(async () => ({
+            ok: false,
+            status: 400,
+            statusText: "Bad Request",
+            json: async () => ({ message: "card not in queue" }),
+        } as Response)) as typeof fetch;
+
+        await expect(
+            postAnswer({ card_id: 999, deck_id: 1, rating: "again" }),
+        ).rejects.toThrow("card not in queue");
     });
 });

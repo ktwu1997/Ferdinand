@@ -10,6 +10,7 @@
         type ApiDeckSummary,
     } from "$lib/api";
     import { deckBreakdownRows, aggregateRetentionPct } from "$lib/stats";
+    import { computeStreak } from "$lib/study";
 
     type Range = "1M" | "3M" | "1Y" | "ALL";
     const RANGE_DAYS: Record<Range, number> = {
@@ -66,15 +67,8 @@
     let totalReviews = $derived(values.reduce((a, v) => a + v, 0));
     let maxBar = $derived(Math.max(1, ...values));
 
-    // Streak = consecutive non-zero days counted backwards from today.
-    let streak = $derived.by(() => {
-        let n = 0;
-        for (let i = values.length - 1; i >= 0; i--) {
-            if (values[i] > 0) n++;
-            else break;
-        }
-        return n;
-    });
+    // Streak via shared $lib/study helper — DRY with /dashboard (issue #16).
+    let streak = $derived(computeStreak(history ?? []));
 
     let bestDay = $derived(values.length === 0 ? 0 : Math.max(...values));
 
@@ -321,7 +315,7 @@
     </section>
 
     <section class="sx-heatmap-section" data-testid="stats-heatmap">
-        <article class="sx-panel sx-heatmap-panel">
+        <article class="sx-panel sx-heatmap-panel" data-testid="stats-heatmap-panel">
             <header class="sx-panel-head">
                 <Caption>activity heatmap</Caption>
                 <span class="sx-panel-meta mono">last {RANGE_DAYS[range]} days</span>
@@ -336,7 +330,7 @@
                         class="sx-heatmap-grid"
                         data-testid="stats-heatmap-svg"
                         viewBox="0 0 {heatmap.cols * (HEAT_CELL + HEAT_GAP)} {HEAT_ROWS * (HEAT_CELL + HEAT_GAP)}"
-                        width={heatmap.cols * (HEAT_CELL + HEAT_GAP)}
+                        preserveAspectRatio="none"
                         height={HEAT_ROWS * (HEAT_CELL + HEAT_GAP)}
                         role="img"
                         aria-label="daily review activity"
@@ -547,13 +541,13 @@
         gap: 12px;
     }
     .sx-heatmap-grid-wrap {
-        display: flex;
-        justify-content: center;
+        display: block;
+        width: 100%;
         padding: 4px 0;
     }
     .sx-heatmap-grid {
         display: block;
-        max-width: 100%;
+        width: 100%;
         height: auto;
     }
     .sx-heatmap-legend {
