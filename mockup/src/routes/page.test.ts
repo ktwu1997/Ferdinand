@@ -235,7 +235,7 @@ describe("HomePage contract", () => {
         }
     });
 
-    test("fetchDecks rejects: explicit banner surfaces server message; fakeDecks still rendered (Phase 10-B)", async () => {
+    test("fetchDecks rejects: explicit banner surfaces server message; deck list stays empty (close #4)", async () => {
         vi.mocked(fetchDecks).mockRejectedValueOnce(
             new Error("backend unreachable"),
         );
@@ -246,44 +246,27 @@ describe("HomePage contract", () => {
 
             expect(vi.mocked(fetchDecks)).toHaveBeenCalledTimes(1);
 
-            // Phase 10-B: banner surfaces server error so users know
-            // counts are stale — home is the entry point so the
-            // outage warrants the noise (vs 9-S browse-tree's silent
-            // fallback).
+            // Issue #4: banner surfaces server error so users know
+            // counts are stale, but we MUST NOT render fakeDecks fallback —
+            // that flashed "日文 N2 / Rust ownership" demo names to real users.
             const banner = container.querySelector(
                 ".dash-desktop .error-banner",
             );
             expect(banner).not.toBeNull();
             expect(banner?.textContent).toContain("backend unreachable");
-            expect(banner?.textContent).toContain("cached counts");
 
-            // Fake fallback still renders so the page isn't blank.
+            // After ready=true with no live decks → 0 cards rendered (NOT fakeDecks).
             const cards = container.querySelectorAll(
                 '[data-testid="deck-card"]',
             );
-            expect(cards.length).toBe(fakeDecks.length);
+            expect(cards.length).toBe(0);
 
-            // .dash-subtitle sums totalDue over every fakeDeck —
-            // computed from fixture so updates flow through.
-            const expectedTotalDue = fakeDecks.reduce(
-                (a, d) => a + totalDue(d),
-                0,
-            );
-            const subtitleStrong = container.querySelector(
-                ".dash-desktop .dash-subtitle strong",
-            );
-            expect(subtitleStrong?.textContent).toContain(
-                String(expectedTotalDue),
-            );
-
-            // First ledger row mirrors the first fake deck — clicking it
-            // is the rev-2 "continue where you left off" path.
-            const firstRow = container.querySelector(
-                '[data-testid="deck-card"]',
-            );
+            // Skeleton should also be gone (we're past the gate, just empty).
             expect(
-                firstRow?.querySelector(".deck-card-name")?.textContent?.trim(),
-            ).toBe(fakeDecks[0].name);
+                container.querySelector(
+                    '[data-testid="dashboard-deck-skeleton"]',
+                ),
+            ).toBeNull();
         } finally {
             unmount(instance);
         }
@@ -415,7 +398,7 @@ describe("Phase 11-B stats history", () => {
         }
     });
 
-    test("fetchStatsRecent rejects: recent-section error banner surfaces and fakeHistory totals drive .recent-total", async () => {
+    test("fetchStatsRecent rejects: recent-section error banner surfaces and .recent-total stays at 0 (close #4)", async () => {
         vi.mocked(fetchDecks).mockResolvedValueOnce(decksOk);
         vi.mocked(fetchStatsRecent).mockRejectedValueOnce(
             new Error("stats endpoint unreachable"),
@@ -430,19 +413,15 @@ describe("Phase 11-B stats history", () => {
             );
             expect(banner).not.toBeNull();
             expect(banner?.textContent).toContain("stats endpoint unreachable");
-            expect(banner?.textContent).toContain("cached values");
 
-            // Fallback: fakeHistory still drives the count so the
-            // page isn't blank.
-            const totalReviews = fakeHistory.reduce(
-                (a, d) => a + d.reviews,
-                0,
-            );
+            // Issue #4: NEVER show fakeHistory totals to real users
+            // on fetch error. Total stays at 0 (banner already
+            // tells the user the data is unavailable).
             expect(
                 container
                     .querySelector(".recent-section .recent-total")
                     ?.textContent?.trim(),
-            ).toBe(totalReviews.toLocaleString());
+            ).toBe("0");
         } finally {
             unmount(instance);
         }

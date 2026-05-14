@@ -160,9 +160,9 @@
             });
     });
 
-    // Gate: show empty list (skeleton) while pending; fall back to fakeDecks only on error.
-    let decks = $derived(decksReady ? (liveDecks ?? fakeDecks) : []);
-    let resume = $derived(decks[0] ?? fakeDecks[0]);
+    // Gate: skeleton while pending; empty list on error (never show fakeDecks to real users — close #4).
+    let decks = $derived(decksReady ? (liveDecks ?? []) : []);
+    let resume = $derived(decks[0]);
 
     async function startCreateDeck(): Promise<void> {
         if (liveDecks === null) {
@@ -260,8 +260,8 @@
         await auth.logout();
     }
 
-    // Same gate: empty while pending so no fake totals flash; fallback on error.
-    let history = $derived(historyReady ? (liveHistory ?? fakeHistory) : []);
+    // Same gate: empty while pending AND on error so no fake totals leak (close #4).
+    let history = $derived(historyReady ? (liveHistory ?? []) : []);
     let streakDays = $derived(historyReady ? computeStreak(liveHistory ?? []) : null);
     let totalReviews = $derived(history.reduce((a, d) => a + d.reviews, 0));
     let totalDueAll = $derived(decks.reduce((a, d) => a + totalDue(d), 0));
