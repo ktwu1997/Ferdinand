@@ -28,7 +28,9 @@ use axum::Router;
 use base64::Engine as _;
 use clap::Parser;
 use time::Duration;
-use tower_http::cors::CorsLayer;
+use axum::http::header::{CONTENT_TYPE, COOKIE};
+use axum::http::{HeaderValue, Method};
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tower_sessions::cookie::Key;
 use tower_sessions::{Expiry, SessionManagerLayer};
@@ -126,8 +128,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
 
     // Open auth db + build session store on the same file. Schema bootstrap
     // is idempotent so this is safe across restarts and across `cargo test`.
-    let auth = AuthDb::open(&auth_db_path)
-        .with_context(|| format!("open auth db at {auth_db_path}"))?;
+    let auth =
+        AuthDb::open(&auth_db_path).with_context(|| format!("open auth db at {auth_db_path}"))?;
     tracing::info!(path = %auth_db_path, "auth db ready");
 
     seed_user_if_requested(&auth)?;
@@ -140,12 +142,18 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     // provisioned a key that survives across hosts. `secure=true` follows
     // the same loopback rule — Caddy terminates TLS in front so the browser
     // sees HTTPS even though anki_server is plaintext on its loopback port.
-    let session_key = load_session_key(bind)
-        .with_context(|| "session key configuration rejected")?;
+    let session_key =
+        load_session_key(bind).with_context(|| "session key configuration rejected")?;
     let session_layer = SessionManagerLayer::new(session_store)
         .with_name(SESSION_COOKIE)
         .with_http_only(true)
-        .with_secure(!bind.is_loopback())
+        .with_secure({
+            match std::env::var("ANKI_SECURE_COOKIE").ok().as_deref() {
+                Some("true" | "1") => true,
+                Some("false" | "0") => false,
+                _ => !bind.is_loopback(),
+            }
+        })
         .with_same_site(tower_sessions::cookie::SameSite::Lax)
         .with_expiry(Expiry::OnInactivity(Duration::days(30)))
         .with_signed(session_key);
@@ -159,8 +167,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     } else {
         tracing::info!("ANKI_ADMIN_USERNAME unset — /api/admin/* will 403 for everyone");
     }
-    let server_state = ServerState::new(auth, PathBuf::from(&users_dir))
-        .with_admin_username(admin_username);
+    let server_state =
+        ServerState::new(auth, PathBuf::from(&users_dir)).with_admin_username(admin_username);
 
     // Public routes (no auth gate): /api/auth/{register,login,logout} + /api/health
     // come from `auth::routes::public_router()` and `routes::public_router()`.
@@ -169,12 +177,10 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     // assumes `require_auth` already ran upstream). `route_layer` only
     // applies the gate to admin routes, NOT to everything merged into
     // `protected` afterwards.
-    let admin_routes = admin::admin_router().route_layer(
-        axum::middleware::from_fn_with_state(
-            server_state.clone(),
-            auth::middleware::require_admin,
-        ),
-    );
+    let admin_routes = admin::admin_router().route_layer(axum::middleware::from_fn_with_state(
+        server_state.clone(),
+        auth::middleware::require_admin,
+    ));
     // Protected routes: everything that touches a Collection + /api/auth/me
     // + the admin sub-router (which carries its own admin gate inside).
     // The collection routes inherit the auth gate via `AppState`'s extractor,
@@ -187,10 +193,27 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
 
     let api = Router::new().merge(public).merge(protected);
 
+    let allowed_origins: Vec<HeaderValue> = std::env::var("ANKI_CORS_ALLOW_ORIGINS")
+        .unwrap_or_else(|_| "http://localhost:5174".to_string())
+        .split(',')
+        .filter_map(|s| s.trim().parse::<HeaderValue>().ok())
+        .collect();
+    let cors = CorsLayer::new()
+        .allow_origin(AllowOrigin::list(allowed_origins))
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PATCH,
+            Method::DELETE,
+            Method::PUT,
+        ])
+        .allow_headers([CONTENT_TYPE, COOKIE])
+        .allow_credentials(true);
+
     let app = static_assets::attach(api)
         .layer(session_layer)
         .layer(TraceLayer::new_for_http())
-        .layer(CorsLayer::very_permissive())
+        .layer(cors)
         .with_state(server_state);
 
     let addr = SocketAddr::new(bind, port);
@@ -278,10 +301,9 @@ fn resolve_auth_db_path(cli: Option<&str>, users_dir: &str) -> String {
     // Sibling of `users_dir`: e.g. `data/users` → `data/auth.db`.
     let users_path = PathBuf::from(users_dir);
     match users_path.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => parent
-            .join("auth.db")
-            .to_string_lossy()
-            .into_owned(),
+        Some(parent) if !parent.as_os_str().is_empty() => {
+            parent.join("auth.db").to_string_lossy().into_owned()
+        }
         _ => DEFAULT_AUTH_DB.to_string(),
     }
 }
@@ -296,8 +318,7 @@ fn seed_user_if_requested(auth: &AuthDb) -> anyhow::Result<()> {
     if password.is_empty() {
         return Ok(());
     }
-    let username =
-        std::env::var("FERDINAND_SEED_USER").unwrap_or_else(|_| "ktwu".to_string());
+    let username = std::env::var("FERDINAND_SEED_USER").unwrap_or_else(|_| "ktwu".to_string());
     if auth.find_user(&username)?.is_some() {
         tracing::info!(user = %username, "seed user already present, skipping");
         return Ok(());
@@ -332,8 +353,7 @@ mod session_key_tests {
     #[test]
     fn accepts_64_byte_base64_key() {
         let value = b64(&[7u8; 64]);
-        load_session_key_from(Some(&value), loopback())
-            .expect("64-byte key should be accepted");
+        load_session_key_from(Some(&value), loopback()).expect("64-byte key should be accepted");
     }
 
     #[test]
