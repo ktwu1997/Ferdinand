@@ -9,9 +9,10 @@
     import MobileTopBar from "$lib/components/MobileTopBar.svelte";
     import { setOnUnauthorized } from "$lib/api";
     import { auth } from "$lib/auth.svelte";
+    import type { Snippet } from "svelte";
 
     interface Props {
-        children?: any;
+        children?: Snippet;
     }
 
     let { children }: Props = $props();
