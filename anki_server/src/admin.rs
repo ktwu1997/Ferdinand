@@ -155,9 +155,7 @@ async fn create_user(
     Json(body): Json<CreateUserBody>,
 ) -> ApiResult<impl IntoResponse> {
     let username = crate::auth::routes::validate_username(&body.username)?;
-    if body.password.is_empty() {
-        return Err(ServerError::bad_request("password must not be empty"));
-    }
+    crate::auth::password::validate_password_strength(&body.password)?;
     if state.auth.find_user(&username)?.is_some() {
         return Err(ServerError::conflict(format!(
             "user '{username}' already exists"
@@ -188,9 +186,7 @@ async fn reset_password(
     Path(username): Path<String>,
     Json(body): Json<ResetPasswordBody>,
 ) -> ApiResult<impl IntoResponse> {
-    if body.new_password.is_empty() {
-        return Err(ServerError::bad_request("new password must not be empty"));
-    }
+    crate::auth::password::validate_password_strength(&body.new_password)?;
     if state.auth.find_user(&username)?.is_none() {
         return Err(ServerError::not_found(format!(
             "user '{username}' not found"
@@ -310,17 +306,17 @@ mod tests {
     async fn create_user_duplicate_username_is_conflict() {
         let state = test_state();
         assert_eq!(
-            create_status(&state, "grace", "pw-one").await,
+            create_status(&state, "grace", "pw-one-long").await,
             StatusCode::CREATED
         );
         // Second create with the same name → 409, original hash untouched.
         assert_eq!(
-            create_status(&state, "grace", "pw-two").await,
+            create_status(&state, "grace", "pw-two-long").await,
             StatusCode::CONFLICT
         );
         let row = state.auth.find_user("grace").unwrap().unwrap();
         assert!(
-            crate::auth::password::verify("pw-one", &row.password_hash).unwrap(),
+            crate::auth::password::verify("pw-one-long", &row.password_hash).unwrap(),
             "conflicting create must not overwrite the existing password"
         );
         // Still exactly one such user.
