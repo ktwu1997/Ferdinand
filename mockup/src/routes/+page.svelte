@@ -161,8 +161,8 @@
     });
 
     // Gate: skeleton while pending; empty list on error (never show fakeDecks to real users — close #4).
-    let decks = $derived(decksReady ? (liveDecks ?? []) : []);
-    let resume = $derived(decks[0]);
+    let decks: Deck[] = $derived(decksReady ? (liveDecks ?? []) : []);
+    let resume: Deck | undefined = $derived(decks[0]);
 
     async function startCreateDeck(): Promise<void> {
         if (liveDecks === null) {
@@ -261,7 +261,7 @@
     }
 
     // Same gate: empty while pending AND on error so no fake totals leak (close #4).
-    let history = $derived(historyReady ? (liveHistory ?? []) : []);
+    let history: ApiDayCount[] = $derived(historyReady ? (liveHistory ?? []) : []);
     let streakDays = $derived(historyReady ? computeStreak(liveHistory ?? []) : null);
     let totalReviews = $derived(history.reduce((a, d) => a + d.reviews, 0));
     let totalDueAll = $derived(decks.reduce((a, d) => a + totalDue(d), 0));
