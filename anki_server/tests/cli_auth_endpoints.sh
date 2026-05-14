@@ -150,10 +150,20 @@ assert_status "7. POST /api/auth/logout" 204
 http GET "$BASE/api/auth/me" "" yes
 assert_status "8. GET /api/auth/me post-logout" 401
 
-# 9. /api/auth/register no longer exists — verify it 404s (route deleted M9).
+# 9. /api/auth/register no longer exists — verify it 404 or 405 (route
+# deleted in M9; tower returns 405 when a fallback GET handler shadows
+# the same path — both are equivalent "route gone" signals).
 http POST "$BASE/api/auth/register" \
     "{\"username\":\"alice\",\"password\":\"alice-test-pwd\"}" yes
-assert_status "9. POST /api/auth/register is gone (404)" 404
+case "$STATUS" in
+    404|405)
+        echo "  ✓ 9. POST /api/auth/register is gone → $STATUS"
+        ;;
+    *)
+        echo "RED: 9. POST /api/auth/register expected 404 or 405, got $STATUS (body=$BODY)" >&2
+        fail=1
+        ;;
+esac
 
 # 10. Re-login after logout to confirm session cycling works end-to-end.
 http POST "$BASE/api/auth/login" \

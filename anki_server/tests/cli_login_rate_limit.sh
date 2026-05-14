@@ -66,24 +66,13 @@ fi
 fail=0
 TARGET="ratelimit"
 DECOY="otheruser"
-GOOD_PWD="real-pwd-not-used-$$"
 
-# Register the target + a decoy. Both use throwaway passwords; the test
-# never logs in successfully as either, since we want stable counters.
-register() {
-    local user="$1" pwd="$2"
-    local code
-    code=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
-        -H 'Content-Type: application/json' \
-        -d "{\"username\":\"$user\",\"password\":\"$pwd\"}" \
-        "$BASE/api/auth/register")
-    if [[ "$code" != "201" ]]; then
-        echo "RED: register $user expected 201 got $code" >&2
-        fail=1
-    fi
-}
-register "$TARGET" "$GOOD_PWD"
-register "$DECOY" "$GOOD_PWD"
+# The rate limiter scopes by username string regardless of whether the
+# user exists — bad-creds against an unknown user still returns 401 and
+# still bumps the counter. So we skip user creation entirely: the test
+# only needs the limiter's accounting, not real auth. (Phase A2 M9
+# removed POST /api/auth/register; admin user creation is out of scope
+# for a pure rate-limit assertion.)
 
 # ---- 5 bad attempts → 401 each --------------------------------------------
 for i in 1 2 3 4 5; do
