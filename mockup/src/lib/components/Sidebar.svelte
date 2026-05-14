@@ -70,7 +70,7 @@
 
     let currentPath = $derived($page.url.pathname);
     let host = $derived($page.url.host);
-    let username = $derived(auth.user?.username ?? "ktwu");
+    let username = $derived(auth.user?.username ?? "—");
     let initials = $derived(username.slice(0, 2).toLowerCase());
 
     // Total cards due across all leaf decks — drives the "Decks" badge.
