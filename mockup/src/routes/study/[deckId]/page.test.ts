@@ -533,3 +533,60 @@ describe("StudyPage contract", () => {
         });
     });
 });
+
+// M4: flattenTree was removed; the page now imports flattenLeafDecks from
+// $lib/decks. This test verifies that the deck-lookup path resolves via
+// the shared library function by feeding a nested tree and confirming the
+// correct leaf is matched by id — which is what flattenLeafDecks returns.
+import { flattenLeafDecks } from "$lib/decks";
+import type { ApiDeckSummary } from "$lib/api";
+
+describe("M4 — flattenLeafDecks used for deck lookup (no local flattenTree)", () => {
+    function mkDeck(overrides: Partial<ApiDeckSummary> & { id: number; name: string }): ApiDeckSummary {
+        return {
+            level: 1,
+            new_count: 0,
+            learn_count: 0,
+            review_count: 0,
+            total_in_deck: 0,
+            filtered: false,
+            collapsed: false,
+            preset_id: 1,
+            children: [],
+            ...overrides,
+        };
+    }
+
+    test("flattenLeafDecks flattens a nested tree to leaf decks the study page can match by id", () => {
+        const tree: ApiDeckSummary[] = [
+            mkDeck({
+                id: 1,
+                name: "TOEIC",
+                children: [
+                    mkDeck({ id: 11, name: "Vocabulary", level: 2, children: [
+                        mkDeck({ id: 111, name: "L600", level: 3, new_count: 5 }),
+                    ] }),
+                ],
+            }),
+        ];
+
+        const flat = flattenLeafDecks(tree);
+        // Only the leaf is returned.
+        expect(flat).toHaveLength(1);
+        expect(flat[0].id).toBe(111);
+        // The page matches by String(d.id) === deckIdParam; id is preserved.
+        expect(String(flat[0].id)).toBe("111");
+        // Name carries the full path (matches study page's deckName display).
+        expect(flat[0].name).toBe("TOEIC::Vocabulary::L600");
+    });
+
+    test("flattenLeafDecks with flat decks (no children) returns them unchanged", () => {
+        const tree: ApiDeckSummary[] = [
+            mkDeck({ id: 42, name: "Spanish" }),
+            mkDeck({ id: 43, name: "Rust" }),
+        ];
+        const flat = flattenLeafDecks(tree);
+        expect(flat.map((d) => d.id)).toEqual([42, 43]);
+        expect(flat.map((d) => d.name)).toEqual(["Spanish", "Rust"]);
+    });
+});

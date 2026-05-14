@@ -36,6 +36,7 @@
         type ApiCardSummary,
         type AnswerRating,
     } from "$lib/api";
+    import { flattenLeafDecks } from "$lib/decks";
     import { STUDY_INTERVALS, formatMMSS } from "$lib/study";
     import CardFace from "$lib/components/CardFace.svelte";
     import { Btn, Caption } from "$lib/components/ui";
@@ -92,7 +93,7 @@
     onMount(async () => {
         try {
             const list = await fetchDecks();
-            const flat = flattenTree(list.decks);
+            const flat = flattenLeafDecks(list.decks);
             const hit =
                 flat.find((d) => String(d.id) === deckIdParam) ??
                 flat.find((d) => slug(d.name) === deckIdParam) ??
@@ -159,19 +160,7 @@
         };
     });
 
-    function flattenTree(
-        tree: { id: number; name: string; level: number; children: any[] }[],
-    ): Array<{ id: number; name: string }> {
-        const out: Array<{ id: number; name: string }> = [];
-        const walk = (nodes: any[]) => {
-            for (const n of nodes) {
-                if (n.level >= 1) out.push({ id: n.id, name: n.name });
-                if (n.children?.length) walk(n.children);
-            }
-        };
-        walk(tree);
-        return out;
-    }
+
 
     function slug(name: string): string {
         return name.toLowerCase().replace(/[^a-z0-9-]+/g, "-");
