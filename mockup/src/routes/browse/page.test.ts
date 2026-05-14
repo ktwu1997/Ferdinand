@@ -744,10 +744,9 @@ describe("BrowsePage contract", () => {
         });
 
         test("tree rename success: dblclick → input → Enter → PATCH called, row reflects new name", async () => {
-            vi.mocked(fetchCards).mockResolvedValueOnce({
-                total: 0,
-                cards: [],
-            });
+            vi.mocked(fetchCards)
+                .mockResolvedValueOnce({ total: 0, cards: [] })   // initial load
+                .mockResolvedValueOnce({ total: 0, cards: [] });  // refetch after rename (#10)
             vi.mocked(fetchDecks).mockResolvedValueOnce({
                 decks: [deck(101, "日本語", { total_in_deck: 137 })],
             });
@@ -959,6 +958,68 @@ describe("BrowsePage contract", () => {
                 expect(svg).toBeTruthy();
                 expect(svg?.getAttribute("width")).toBe("28");
                 expect(svg?.getAttribute("height")).toBe("28");
+            } finally {
+                unmount(instance);
+            }
+        });
+
+        // #10 — refetch cards after tree rename so the result list reflects
+        // the authoritative server state (not just an optimistic local map).
+        test("tree rename success: fetchCards is called again after patchDeckName resolves — close #10", async () => {
+            const initialCards = {
+                total: 1,
+                cards: [card(201, "<p>初</p>", "<p>hajime</p>", {
+                    deck_id: 101,
+                    deck_name: "日本語",
+                })],
+            };
+            const refreshedCards = {
+                total: 1,
+                cards: [card(201, "<p>初</p>", "<p>hajime</p>", {
+                    deck_id: 101,
+                    deck_name: "日本語 N2",
+                })],
+            };
+            vi.mocked(fetchCards)
+                .mockResolvedValueOnce(initialCards)  // initial load
+                .mockResolvedValueOnce(refreshedCards); // refetch after rename
+            vi.mocked(fetchDecks).mockResolvedValueOnce({
+                decks: [deck(101, "日本語", { total_in_deck: 1 })],
+            });
+            vi.mocked(patchDeckName).mockResolvedValueOnce({
+                id: 101,
+                name: "日本語 N2",
+            });
+
+            const instance = mount(Page, { target: container, props: {} });
+            try {
+                await settle();
+
+                // Initial load: fetchCards called once.
+                expect(vi.mocked(fetchCards)).toHaveBeenCalledTimes(1);
+
+                // Trigger rename via dblclick → type → Enter.
+                const items = treeDeckButtons(container);
+                expect(items.length).toBe(1);
+                items[0]!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+                await settle();
+
+                const input = container.querySelector<HTMLInputElement>(
+                    ".bx-sidebar .bx-tree-rename",
+                );
+                if (!input) throw new Error(".bx-tree-rename input missing");
+                input.value = "日本語 N2";
+                input.dispatchEvent(new Event("input", { bubbles: true }));
+                input.dispatchEvent(
+                    new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+                );
+                await settle();
+
+                // After rename: patchDeckName called, then fetchCards called again (#10 fix).
+                expect(vi.mocked(patchDeckName)).toHaveBeenCalledTimes(1);
+                expect(vi.mocked(patchDeckName)).toHaveBeenCalledWith(101, "日本語 N2");
+                expect(vi.mocked(fetchCards)).toHaveBeenCalledTimes(2);
+                expect(container.querySelector(".error-banner")).toBeNull();
             } finally {
                 unmount(instance);
             }

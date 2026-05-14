@@ -988,13 +988,17 @@
             liveDecks = liveDecks.map((d) =>
                 d.id === res.id ? { ...d, name: res.name } : d,
             );
-            // Propagate to liveCards too so the editor pill + row deckName
-            // stay consistent with the tree (single canonical UI store).
+            // Propagate to liveCards: optimistic inline update then server refetch
+            // so the row list reflects the authoritative server state (close #10).
             if (liveCards) {
                 liveCards = liveCards.map((c) =>
                     c.deck_id === res.id ? { ...c, deck_name: res.name } : c,
                 );
             }
+            // Refetch from server — ensures any filtered/sorted view is accurate.
+            const refreshed = await fetchCards(query, PAGE_SIZE, pageOffset);
+            liveCards = refreshed.cards;
+            liveTotal = refreshed.total;
             treeEditingDeckId = null;
             treeDeckDraft = "";
         } catch (e) {
