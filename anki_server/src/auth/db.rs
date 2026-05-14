@@ -18,6 +18,8 @@ use std::sync::Mutex;
 use anyhow::Context;
 use rusqlite::{params, Connection, OptionalExtension};
 
+use crate::state::lock_or_recover;
+
 use super::SESSION_USER_KEY;
 
 /// Handle to the auth database. Cheaply clonable (`Arc`-shared connection).
@@ -77,7 +79,7 @@ impl AuthDb {
     }
 
     fn bootstrap_schema(&self) -> anyhow::Result<()> {
-        let conn = self.inner.lock().expect("auth db poisoned");
+        let conn = lock_or_recover(&self.inner);
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS users (
                  id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -116,7 +118,7 @@ impl AuthDb {
 
     /// Look a user up by username. Returns `None` if not found.
     pub fn find_user(&self, username: &str) -> anyhow::Result<Option<UserRow>> {
-        let conn = self.inner.lock().expect("auth db poisoned");
+        let conn = lock_or_recover(&self.inner);
         let row = conn
             .query_row(
                 "SELECT id, username, password_hash, created_at, disabled_at
@@ -143,7 +145,7 @@ impl AuthDb {
     /// order-insensitive without us paying for an extra `ORDER BY
     /// username`.
     pub fn list_users(&self) -> anyhow::Result<Vec<UserRow>> {
-        let conn = self.inner.lock().expect("auth db poisoned");
+        let conn = lock_or_recover(&self.inner);
         let mut stmt = conn.prepare(
             "SELECT id, username, password_hash, created_at, disabled_at
                FROM users ORDER BY id ASC",
@@ -169,7 +171,7 @@ impl AuthDb {
     /// an opaque 500.
     pub fn update_disabled(&self, username: &str, disabled: bool) -> anyhow::Result<()> {
         let new_value: Option<i64> = if disabled { Some(unix_now()) } else { None };
-        let conn = self.inner.lock().expect("auth db poisoned");
+        let conn = lock_or_recover(&self.inner);
         let updated = conn
             .execute(
                 "UPDATE users SET disabled_at = ?1 WHERE username = ?2",
@@ -200,7 +202,7 @@ impl AuthDb {
     /// portable across distros that build rusqlite without that
     /// feature flag.
     pub fn delete_sessions_for_user(&self, username: &str) -> anyhow::Result<usize> {
-        let conn = self.inner.lock().expect("auth db poisoned");
+        let conn = lock_or_recover(&self.inner);
         // Phase 1: scan and collect ids whose JSON data matches.
         let ids: Vec<Vec<u8>> = {
             let mut stmt = conn.prepare("SELECT id, data FROM sessions")?;
@@ -249,7 +251,7 @@ impl AuthDb {
     /// `Err` on UNIQUE conflict — caller maps that to a 409.
     pub fn insert_user(&self, username: &str, password_hash: &str) -> anyhow::Result<i64> {
         let now = unix_now();
-        let conn = self.inner.lock().expect("auth db poisoned");
+        let conn = lock_or_recover(&self.inner);
         conn.execute(
             "INSERT INTO users (username, password_hash, created_at)
              VALUES (?1, ?2, ?3)",
@@ -264,7 +266,7 @@ impl AuthDb {
     /// `Err` if the user does not exist — callers must already have authed
     /// the user and looked them up, so a missing row is an internal bug.
     pub fn update_password(&self, username: &str, password_hash: &str) -> anyhow::Result<()> {
-        let conn = self.inner.lock().expect("auth db poisoned");
+        let conn = lock_or_recover(&self.inner);
         let updated = conn
             .execute(
                 "UPDATE users SET password_hash = ?1 WHERE username = ?2",

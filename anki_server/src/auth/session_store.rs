@@ -23,6 +23,7 @@ use tower_sessions::session_store::{Error as StoreError, Result as StoreResult};
 use tower_sessions::SessionStore;
 
 use super::db::AuthDb;
+use crate::state::lock_or_recover;
 
 /// Sqlite-backed session store. Cheap to clone (`Arc<Mutex<Connection>>`).
 #[derive(Clone, Debug)]
@@ -60,7 +61,7 @@ impl SessionStore for SqliteSessionStore {
             let expiry = record.expiry_date.unix_timestamp();
             let conn = self.conn.clone();
             let inserted = tokio::task::spawn_blocking(move || -> StoreResult<bool> {
-                let conn = conn.lock().expect("session store poisoned");
+                let conn = lock_or_recover(&conn);
                 let res = conn.execute(
                     "INSERT INTO sessions (id, data, expiry_date) VALUES (?1, ?2, ?3)",
                     params![id_bytes.as_slice(), serialised, expiry],
@@ -94,7 +95,7 @@ impl SessionStore for SqliteSessionStore {
         let expiry = record.expiry_date.unix_timestamp();
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || -> StoreResult<()> {
-            let conn = conn.lock().expect("session store poisoned");
+            let conn = lock_or_recover(&conn);
             conn.execute(
                 "INSERT INTO sessions (id, data, expiry_date) VALUES (?1, ?2, ?3)
                  ON CONFLICT(id) DO UPDATE SET
@@ -114,7 +115,7 @@ impl SessionStore for SqliteSessionStore {
         let id = *session_id;
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || -> StoreResult<Option<Record>> {
-            let conn = conn.lock().expect("session store poisoned");
+            let conn = lock_or_recover(&conn);
             let row = conn
                 .query_row(
                     "SELECT data, expiry_date FROM sessions WHERE id = ?1",
@@ -153,7 +154,7 @@ impl SessionStore for SqliteSessionStore {
         let id_bytes = session_id.0.to_le_bytes();
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || -> StoreResult<()> {
-            let conn = conn.lock().expect("session store poisoned");
+            let conn = lock_or_recover(&conn);
             conn.execute(
                 "DELETE FROM sessions WHERE id = ?1",
                 params![id_bytes.as_slice()],

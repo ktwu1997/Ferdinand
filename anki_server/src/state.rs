@@ -35,6 +35,24 @@ use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 
 use anki::collection::{Collection, CollectionBuilder};
+
+/// Acquire a `std::sync::Mutex` lock, recovering from poison instead of
+/// propagating a second panic. When a thread panics while holding the lock,
+/// `std::sync::Mutex` marks itself *poisoned* and every subsequent `.lock()`
+/// returns `Err(PoisonError)`. Calling `.unwrap()` or `.expect()` on that
+/// error causes a second panic and tears down the whole process.
+///
+/// This helper extracts the inner guard from the poison error — the data is
+/// still valid (the panicking thread's changes may be partially applied, but
+/// for append-only or idempotent structures like our maps and SQLite
+/// connections that's acceptable) — and logs a `tracing::error` so operators
+/// see the event in logs without the process dying.
+pub(crate) fn lock_or_recover<T>(m: &StdMutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| {
+        tracing::error!("std::sync::Mutex poisoned — recovering inner state");
+        e.into_inner()
+    })
+}
 use anyhow::Context;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
@@ -87,9 +105,7 @@ impl ServerState {
     /// Expose the inner per-user cell for testing (concurrent-open assertion).
     #[cfg(test)]
     pub(crate) fn user_cell_for(&self, username: &str) -> Option<UserCell> {
-        self.users
-            .lock()
-            .expect("user cache poisoned")
+        lock_or_recover(&self.users)
             .get(username)
             .cloned()
     }
@@ -130,7 +146,7 @@ impl ServerState {
         // Hold the outer StdMutex only for this map operation; drop it
         // before any async work.
         let cell: UserCell = {
-            let mut map = self.users.lock().expect("user cache poisoned");
+            let mut map = lock_or_recover(&self.users);
             map.entry(username.to_string())
                 .or_insert_with(|| Arc::new(Mutex::new(None)))
                 .clone()

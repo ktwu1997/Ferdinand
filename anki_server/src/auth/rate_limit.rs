@@ -24,6 +24,8 @@ use std::net::IpAddr;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use crate::state::lock_or_recover;
+
 /// Maximum login attempts permitted within [`WINDOW`]. The (BUDGET+1)-th hit
 /// inside the window returns 429 + `Retry-After`.
 pub const BUDGET: usize = 5;
@@ -70,10 +72,7 @@ impl LoginRateLimiter {
     /// Used only in tests to verify eviction behaviour.
     #[cfg(test)]
     pub fn contains_ip(&self, ip: &IpAddr) -> bool {
-        self.by_ip
-            .lock()
-            .expect("rate-limit mutex poisoned")
-            .contains_key(ip)
+        lock_or_recover(&self.by_ip).contains_key(ip)
     }
 }
 
@@ -86,7 +85,7 @@ where
     K: Eq + Hash + std::borrow::Borrow<Q>,
     Q: Eq + Hash + ?Sized,
 {
-    let guard = map.lock().expect("rate-limit mutex poisoned");
+    let guard = lock_or_recover(map);
     let window = guard.get(key)?;
     let cutoff = now.checked_sub(WINDOW)?;
     let live_count = window.iter().filter(|&&t| t > cutoff).count();
@@ -109,7 +108,7 @@ fn record_scope<K>(map: &Mutex<HashMap<K, VecDeque<Instant>>>, key: K, now: Inst
 where
     K: Eq + Hash,
 {
-    let mut guard = map.lock().expect("rate-limit mutex poisoned");
+    let mut guard = lock_or_recover(map);
     let entry = guard.entry(key).or_default();
     let cutoff = now.checked_sub(WINDOW).unwrap_or(now);
     while entry.front().is_some_and(|&t| t <= cutoff) {
