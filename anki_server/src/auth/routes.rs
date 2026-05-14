@@ -2,8 +2,6 @@
 //!
 //! Endpoints
 //! ---------
-//! * `POST  /api/auth/register` — create a user. 201 on success, 409 if
-//!   username taken.
 //! * `POST  /api/auth/login`    — verify credentials, mint a session.
 //!   200 on success, 401 on bad creds.
 //! * `POST  /api/auth/logout`   — clear the session. Idempotent → 204 even
@@ -14,12 +12,16 @@
 //!   401 if `current` doesn't match the stored hash, 400 if `new` is empty
 //!   or equals `current` (no-op), 200 on success. The non-empty rule matches
 //!   register's policy intentionally — bumping the strength floor is a
-//!   project-wide change (register + change_password + admin reset) tracked
+//!   project-wide change (change_password + admin reset) tracked
 //!   for a follow-up phase. Cycles the current session id so a session
 //!   captured with the old credential can't be replayed after the change.
 //!
-//! Public routes are everything before `require_auth` runs (register/login/
-//! logout). Everything else (`me`, `password`) sits behind the auth gate.
+//! Note: user creation is done via `POST /api/admin/users` (admin path).
+//! The `/api/auth/register` route was removed — it was dead code once the
+//! admin create-user endpoint landed (Phase B2/WS2).
+//!
+//! Public routes are everything before `require_auth` runs (login/logout).
+//! Everything else (`me`, `password`) sits behind the auth gate.
 
 use std::net::SocketAddr;
 use std::time::Instant;
@@ -69,12 +71,10 @@ pub struct OkBody {
     pub ok: bool,
 }
 
-/// Routes that **do not** sit behind `require_auth`. Everything that mutates
-/// session state (login/register) lives here so first-time visitors can
-/// reach them.
+/// Routes that **do not** sit behind `require_auth`. Login/logout live here
+/// so unauthenticated visitors can reach them.
 pub fn public_router() -> Router<ServerState> {
     Router::new()
-        .route("/api/auth/register", post(register))
         .route("/api/auth/login", post(login))
         .route("/api/auth/logout", post(logout))
 }
@@ -85,28 +85,6 @@ pub fn protected_router() -> Router<ServerState> {
     Router::new()
         .route("/api/auth/me", get(me))
         .route("/api/auth/password", patch(change_password))
-}
-
-async fn register(
-    State(state): State<ServerState>,
-    Json(body): Json<CredentialsBody>,
-) -> ApiResult<impl IntoResponse> {
-    let username = validate_username(&body.username)?;
-    if body.password.is_empty() {
-        return Err(ServerError::bad_request("password must not be empty"));
-    }
-    if state.auth.find_user(&username)?.is_some() {
-        return Err(ServerError::conflict(format!(
-            "user '{username}' already exists"
-        )));
-    }
-    let hash = super::password::hash(&body.password)?;
-    state.auth.insert_user(&username, &hash)?;
-    let is_admin = state.is_admin(&username);
-    Ok((
-        StatusCode::CREATED,
-        Json(UserBody { username, is_admin }),
-    ))
 }
 
 async fn login(

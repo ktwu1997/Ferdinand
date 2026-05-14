@@ -150,27 +150,17 @@ assert_status "7. POST /api/auth/logout" 204
 http GET "$BASE/api/auth/me" "" yes
 assert_status "8. GET /api/auth/me post-logout" 401
 
-# 9. Register a brand-new user → 201.
+# 9. /api/auth/register no longer exists — verify it 404s (route deleted M9).
 http POST "$BASE/api/auth/register" \
     "{\"username\":\"alice\",\"password\":\"alice-test-pwd\"}" yes
-assert_status "9. POST /api/auth/register fresh user" 201
+assert_status "9. POST /api/auth/register is gone (404)" 404
 
-# 10. Register the same user again → 409.
-http POST "$BASE/api/auth/register" \
-    "{\"username\":\"alice\",\"password\":\"alice-test-pwd\"}" yes
-assert_status "10. POST /api/auth/register duplicate" 409
-
-# 11. Register with too-short username → 400.
-http POST "$BASE/api/auth/register" \
-    "{\"username\":\"ab\",\"password\":\"whatever\"}" yes
-assert_status "11. POST /api/auth/register username too short" 400
-
-# 12. Newly-registered user can log in.
+# 10. Re-login after logout to confirm session cycling works end-to-end.
 http POST "$BASE/api/auth/login" \
-    "{\"username\":\"alice\",\"password\":\"alice-test-pwd\"}" yes
-assert_status "12. POST /api/auth/login as alice" 200
+    "{\"username\":\"$SEED_USER\",\"password\":\"$SEED_PASSWORD\"}" yes
+assert_status "10. POST /api/auth/login second session" 200
 
 if [[ $fail -eq 0 ]]; then
-    echo "GREEN: 12/12 auth-endpoint cases passed"
+    echo "GREEN: 10/10 auth-endpoint cases passed"
 fi
 exit $fail
