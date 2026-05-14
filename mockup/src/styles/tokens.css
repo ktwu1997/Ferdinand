@@ -30,6 +30,16 @@
 
     --warn: oklch(50% 0.13 50); /* hard / warning */
     --due: oklch(48% 0.13 32); /* again / danger */
+    --easy: oklch(56% 0.10 240); /* slate blue, kraft-friendly */
+
+    /* Anki flag colours — earthy recolour for kraft-paper context */
+    --flag-1: oklch(60% 0.18 22);   /* red */
+    --flag-2: oklch(72% 0.16 60);   /* orange */
+    --flag-3: oklch(58% 0.14 145);  /* green */
+    --flag-4: oklch(55% 0.15 240);  /* blue */
+    --flag-5: oklch(64% 0.16 350);  /* pink */
+    --flag-6: oklch(68% 0.14 175);  /* teal */
+    --flag-7: oklch(50% 0.18 290);  /* purple */
 }
 
 :root[data-theme="dark"] .sketch-skin,
@@ -51,6 +61,7 @@
 
     --warn: oklch(75% 0.13 60);
     --due: oklch(72% 0.16 30);
+    --easy: oklch(70% 0.12 240);
 }
 
 /* Auto dark via OS preference when the user hasn't pinned a theme. */
@@ -69,6 +80,7 @@
         --accent-soft: oklch(28% 0.05 150);
         --warn: oklch(75% 0.13 60);
         --due: oklch(72% 0.16 30);
+        --easy: oklch(70% 0.12 240);
     }
 }
 

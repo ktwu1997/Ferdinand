@@ -2267,13 +2267,13 @@
                             onclick={() => bulkFlagSelected(0)}
                         >∅</button>
                         {#each [
-                            { value: 1, label: "Red", color: "#dc3545" },
-                            { value: 2, label: "Orange", color: "#fd7e14" },
-                            { value: 3, label: "Green", color: "#28a745" },
-                            { value: 4, label: "Blue", color: "#0d6efd" },
-                            { value: 5, label: "Pink", color: "#e83e8c" },
-                            { value: 6, label: "Turquoise", color: "#20c997" },
-                            { value: 7, label: "Purple", color: "#6f42c1" },
+                            { value: 1, label: "Red", color: "var(--flag-1)" },
+                            { value: 2, label: "Orange", color: "var(--flag-2)" },
+                            { value: 3, label: "Green", color: "var(--flag-3)" },
+                            { value: 4, label: "Blue", color: "var(--flag-4)" },
+                            { value: 5, label: "Pink", color: "var(--flag-5)" },
+                            { value: 6, label: "Turquoise", color: "var(--flag-6)" },
+                            { value: 7, label: "Purple", color: "var(--flag-7)" },
                         ] as chip (chip.value)}
                             <button
                                 type="button"
@@ -2554,13 +2554,13 @@
 
         <div class="flag-strip" role="radiogroup" aria-label="Card flag">
             {#each [
-                { value: 1, label: "Red", color: "#dc3545" },
-                { value: 2, label: "Orange", color: "#fd7e14" },
-                { value: 3, label: "Green", color: "#28a745" },
-                { value: 4, label: "Blue", color: "#0d6efd" },
-                { value: 5, label: "Pink", color: "#e83e8c" },
-                { value: 6, label: "Turquoise", color: "#20c997" },
-                { value: 7, label: "Purple", color: "#6f42c1" },
+                { value: 1, label: "Red", color: "var(--flag-1)" },
+                { value: 2, label: "Orange", color: "var(--flag-2)" },
+                { value: 3, label: "Green", color: "var(--flag-3)" },
+                { value: 4, label: "Blue", color: "var(--flag-4)" },
+                { value: 5, label: "Pink", color: "var(--flag-5)" },
+                { value: 6, label: "Turquoise", color: "var(--flag-6)" },
+                { value: 7, label: "Purple", color: "var(--flag-7)" },
             ] as chip (chip.value)}
                 <button
                     type="button"
@@ -3468,7 +3468,7 @@
         color: #2e7d32;
     }
     .history-button[data-button="easy"] {
-        color: #1565c0;
+        color: var(--easy);
     }
     .history-button[data-button="manual"] {
         color: var(--ink-mute);

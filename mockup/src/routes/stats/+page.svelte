@@ -637,7 +637,7 @@
         color: var(--accent);
     }
     .sx-answer-key-easy {
-        color: var(--easy, #4a6c8e);
+        color: var(--easy);
     }
     .sx-answer-meta {
         font-size: 11px;
@@ -664,7 +664,7 @@
         background: var(--accent);
     }
     .sx-answer-fill-easy {
-        background: var(--easy, #4a6c8e);
+        background: var(--easy);
     }
 
     /* ============== DECK BREAKDOWN ============== */
