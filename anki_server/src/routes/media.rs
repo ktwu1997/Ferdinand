@@ -24,6 +24,7 @@ use axum::Json;
 use serde::Serialize;
 
 use crate::error::{ApiResult, ServerError};
+use crate::routes::multipart_stream::stream_field_to_tempfile;
 use crate::state::AppState;
 
 /// Reject filenames that could escape the media directory or target hidden
@@ -48,10 +49,7 @@ fn validate_filename(name: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
-pub async fn get_media(
-    state: AppState,
-    Path(filename): Path<String>,
-) -> Response<Body> {
+pub async fn get_media(state: AppState, Path(filename): Path<String>) -> Response<Body> {
     if let Err(reason) = validate_filename(&filename) {
         tracing::debug!(filename = %filename, reason, "media request rejected");
         return bad_request();
@@ -272,21 +270,14 @@ pub async fn post_upload(
             .map(|s| s.to_owned())
             .map_err(ServerError::bad_request)?;
         let kind = validate_upload_mime(&raw_mime).map_err(ServerError::bad_request)?;
-        let bytes = field
-            .bytes()
-            .await
-            .map_err(|e| ServerError::bad_request(format!("multipart read failed: {e}")))?;
         let cap = kind.max_bytes();
-        if bytes.len() as u64 > cap {
-            return Err(ServerError::bad_request(format!(
-                "file too large ({} bytes); max is {} bytes",
-                bytes.len(),
-                cap
-            )));
-        }
+        // Stream to a temp file with running cap check — never buffers the
+        // full body in RAM before rejecting. See routes/multipart_stream.rs.
+        let (tmp, size_bytes) = stream_field_to_tempfile(field, cap).await?;
         let target = unique_target_path(state.media_dir.as_path(), &validated_name);
-        tokio::fs::write(&target, &bytes).await.map_err(|e| {
-            ServerError::from(anyhow::anyhow!("write {} failed: {e}", target.display()))
+        // Copy from the temp file to the final media-dir location.
+        tokio::fs::copy(tmp.path(), &target).await.map_err(|e| {
+            ServerError::from(anyhow::anyhow!("copy to {} failed: {e}", target.display()))
         })?;
         let stored = target
             .file_name()
@@ -295,7 +286,7 @@ pub async fn post_upload(
             .to_owned();
         return Ok(Json(MediaUploadResponse {
             filename: stored,
-            size_bytes: bytes.len() as u64,
+            size_bytes,
         }));
     }
     Err(ServerError::bad_request(
