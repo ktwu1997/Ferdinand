@@ -13,6 +13,10 @@ description = "HTTP + WebSocket server wrapping rslib for the web and iOS client
 name = "anki_server"
 path = "src/main.rs"
 
+[lib]
+name = "anki_server"
+path = "src/lib.rs"
+
 [dependencies]
 anki = { path = "../rslib", features = ["rustls"] }
 anki_proto = { path = "../rslib/proto" }
@@ -39,7 +43,8 @@ time = { version = "0.3", features = ["serde"] }
 
 [dev-dependencies]
 http-body-util = "0.1"
-tokio = { workspace = true, features = ["rt", "macros"] }
+tokio = { workspace = true, features = ["rt", "macros", "rt-multi-thread"] }
+futures = { workspace = true }
 
 [features]
 default = []

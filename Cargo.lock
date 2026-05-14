@@ -252,6 +252,8 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "clap",
+ "futures",
+ "http-body-util",
  "include_dir",
  "mime_guess",
  "regex",

@@ -14,9 +14,20 @@
 //!   for whichever user the session resolved to. The first request from a
 //!   given user opens their collection; subsequent requests reuse it.
 //!
-//! The `users` cache uses `std::sync::Mutex` (not tokio's) because the
-//! lookup is non-blocking. `Collection::open` itself does sync I/O, but
-//! it's gated by tokio's `spawn_blocking` so we don't stall the runtime.
+//! ## Concurrency model
+//!
+//! The outer `users` map is protected by a `std::sync::Mutex` held only for
+//! the instant needed to find-or-create a per-user `Arc<tokio::sync::Mutex<Option<AppState>>>`.
+//! That per-user cell serialises concurrent first-use requests for the *same*
+//! user — the first waiter builds the collection, stores it in the `Option`,
+//! then releases the lock; all subsequent waiters see `Some(...)` and clone
+//! cheaply.  Different users never contend on each other's lock, which
+//! preserves parallel throughput during a multi-user cold start.
+//!
+//! This eliminates the TOCTOU race present in the old design where two
+//! concurrent first-use requests for the same user could both pass the
+//! `None` check, both call `CollectionBuilder::build`, and the SQLite WAL
+//! exclusive-write lock would cause the loser to block indefinitely.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -35,6 +46,11 @@ use crate::auth::middleware::AuthedUser;
 use crate::auth::rate_limit::LoginRateLimiter;
 use crate::error::ServerError;
 
+/// A per-user "build once" cell.  The outer `Option` starts as `None`; the
+/// first task to hold the inner `Mutex` builds `AppState` and flips it to
+/// `Some`.  Subsequent holders clone directly from the `Some` value.
+type UserCell = Arc<Mutex<Option<AppState>>>;
+
 /// Router-wide state. Cheaply clonable.
 #[derive(Clone)]
 pub struct ServerState {
@@ -50,9 +66,11 @@ pub struct ServerState {
     /// instead of a heap copy — admin checks are on the hot path of every
     /// admin-router request.
     pub admin_username: Option<Arc<String>>,
-    /// `username → AppState`. Inserted lazily on first use so a fresh user
-    /// doesn't pay a cold-start penalty until they actually authenticate.
-    users: Arc<StdMutex<HashMap<String, AppState>>>,
+    /// `username → per-user init cell`.  The outer `StdMutex` is held only
+    /// for the instant needed to locate or create the [`UserCell`]; the
+    /// actual (potentially slow) collection open happens under the inner
+    /// `tokio::sync::Mutex`, so the outer lock is never held across I/O.
+    users: Arc<StdMutex<HashMap<String, UserCell>>>,
 }
 
 impl ServerState {
@@ -64,6 +82,16 @@ impl ServerState {
             admin_username: None,
             users: Arc::new(StdMutex::new(HashMap::new())),
         }
+    }
+
+    /// Expose the inner per-user cell for testing (concurrent-open assertion).
+    #[cfg(test)]
+    pub(crate) fn user_cell_for(&self, username: &str) -> Option<UserCell> {
+        self.users
+            .lock()
+            .expect("user cache poisoned")
+            .get(username)
+            .cloned()
     }
 
     /// Phase B2: builder-style setter so `main.rs` can wire the admin
@@ -92,37 +120,38 @@ impl ServerState {
 
     /// Resolve (or open + cache) the [`AppState`] for `username`.
     ///
-    /// Cheap once warmed: a `HashMap` lookup. Cold path opens the
-    /// collection (which is I/O-heavy, hence `spawn_blocking`) before the
-    /// cache fills.
+    /// **Thread-safety**: concurrent first-use calls for the *same* user
+    /// serialise on the per-user [`UserCell`] mutex so `CollectionBuilder`
+    /// is invoked exactly once.  Calls for *different* users proceed in
+    /// parallel — they contend on the outer map lock only for the nanoseconds
+    /// needed to insert/retrieve the cell, never during the actual I/O.
     pub async fn app_state_for(&self, username: &str) -> anyhow::Result<AppState> {
-        if let Some(existing) = self.cached(username) {
-            return Ok(existing);
+        // Step 1 — acquire (or create) this user's init cell.
+        // Hold the outer StdMutex only for this map operation; drop it
+        // before any async work.
+        let cell: UserCell = {
+            let mut map = self.users.lock().expect("user cache poisoned");
+            map.entry(username.to_string())
+                .or_insert_with(|| Arc::new(Mutex::new(None)))
+                .clone()
+        };
+
+        // Step 2 — serialise concurrent first-use on the per-user mutex.
+        let mut guard = cell.lock().await;
+        if let Some(existing) = guard.as_ref() {
+            return Ok(existing.clone());
         }
-        // Open outside the cache lock — the open is slow and we don't want
-        // to serialise concurrent first-uses for *different* users.
+
+        // Step 3 — we are the winner; build the collection.
         let users_dir = (*self.users_dir).clone();
         let user = username.to_string();
-        let opened = tokio::task::spawn_blocking(move || AppState::open_for_user(&users_dir, &user))
-            .await
-            .with_context(|| format!("spawn_blocking for user '{username}'"))??;
-        // Re-check under the lock; another concurrent first-use might have
-        // beaten us. If so, drop ours on the floor — but the on-disk
-        // collection has already been opened twice. CollectionBuilder
-        // tolerates that (it acquires its own file lock).
-        let mut cache = self.users.lock().expect("user cache poisoned");
-        Ok(cache
-            .entry(username.to_string())
-            .or_insert(opened)
-            .clone())
-    }
+        let built =
+            tokio::task::spawn_blocking(move || AppState::open_for_user(&users_dir, &user))
+                .await
+                .with_context(|| format!("spawn_blocking for user '{username}'"))??;
 
-    fn cached(&self, username: &str) -> Option<AppState> {
-        self.users
-            .lock()
-            .expect("user cache poisoned")
-            .get(username)
-            .cloned()
+        *guard = Some(built.clone());
+        Ok(built)
     }
 }
 
@@ -144,10 +173,7 @@ impl AppState {
     /// hooks (`bootstrap` + `seed_notetypes`) so a fresh user gets the
     /// same opinionated layout as ktwu's fork — both are idempotent so
     /// repeated opens are no-ops.
-    pub fn open_for_user(
-        users_dir: impl AsRef<Path>,
-        username: &str,
-    ) -> anyhow::Result<Self> {
+    pub fn open_for_user(users_dir: impl AsRef<Path>, username: &str) -> anyhow::Result<Self> {
         let user_dir = users_dir.as_ref().join(username);
         std::fs::create_dir_all(&user_dir)
             .with_context(|| format!("create user dir {}", user_dir.display()))?;
@@ -310,7 +336,8 @@ mod tests {
 
     fn parts_with_user(username: &str) -> Parts {
         let mut req = axum::http::Request::builder().body(()).unwrap();
-        req.extensions_mut().insert(AuthedUser(username.to_string()));
+        req.extensions_mut()
+            .insert(AuthedUser(username.to_string()));
         req.into_parts().0
     }
 
@@ -342,7 +369,10 @@ mod tests {
         // so the extractor is not blanket-503-ing every request.
         let server = ServerState::new(tmp_auth_db(), tmp_users_dir());
         let mut parts = parts_with_user("alice");
-        if AppState::from_request_parts(&mut parts, &server).await.is_err() {
+        if AppState::from_request_parts(&mut parts, &server)
+            .await
+            .is_err()
+        {
             panic!("a healthy users-dir must resolve an AppState");
         }
     }
