@@ -972,3 +972,81 @@ describe("Phase 17-B forecast bar", () => {
         }
     });
 });
+
+// Issue #4: dashboard fixture-flash gates
+describe("Issue #4 — skeleton gates", () => {
+    let container: HTMLDivElement;
+
+    beforeEach(() => {
+        vi.resetAllMocks();
+        resetPageStub();
+        vi.mocked(fetchStatsRecent).mockResolvedValue(fakeHistoryAsApi);
+        vi.mocked(fetchForecast).mockResolvedValue(emptyForecast);
+        container = document.createElement("div");
+        document.body.appendChild(container);
+    });
+
+    afterEach(() => {
+        container.remove();
+    });
+
+    test("renders skeleton before fetchDecks resolves (no fake deck names visible)", async () => {
+        // A promise that never resolves — keeps decksReady = false.
+        vi.mocked(fetchDecks).mockReturnValue(new Promise(() => {}));
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            // Don't await settle — we want the pending state.
+            flushSync();
+
+            // Fake deck names must not appear while loading.
+            expect(container.textContent).not.toContain("日文 N2");
+            expect(container.textContent).not.toContain("Rust ownership");
+            expect(container.textContent).not.toContain("World History");
+
+            // Skeleton placeholder should be present.
+            expect(
+                container.querySelector('[data-testid="dashboard-deck-skeleton"]'),
+            ).not.toBeNull();
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("renders real decks after fetchDecks resolves — skeleton gone", async () => {
+        vi.mocked(fetchDecks).mockResolvedValueOnce(decksOk);
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            // Real deck appears.
+            const cards = container.querySelectorAll('[data-testid="deck-card"]');
+            expect(cards.length).toBe(1);
+            expect(cards[0]!.getAttribute("data-deck-name")).toBe("Spanish");
+
+            // Skeleton is gone.
+            expect(
+                container.querySelector('[data-testid="dashboard-deck-skeleton"]'),
+            ).toBeNull();
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("no hardcoded '14d' streak literal after historyReady", async () => {
+        vi.mocked(fetchDecks).mockResolvedValueOnce(decksOk);
+        // Empty history → streak = 0, not "14d".
+        vi.mocked(fetchStatsRecent).mockResolvedValueOnce({ days: 0, history: [] });
+
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            // "14d" must not appear anywhere in the rendered DOM.
+            expect(container.textContent).not.toMatch(/\b14d\b/);
+        } finally {
+            unmount(instance);
+        }
+    });
+});

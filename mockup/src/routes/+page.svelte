@@ -67,6 +67,7 @@
         type ApiForecastDay,
     } from "$lib/api";
     import { flattenLeafDecks, leafSegment } from "$lib/decks";
+    import { computeStreak } from "$lib/study";
 
     // The ledger lists the *studiable leaf decks*, not the nested tree
     // `GET /api/decks` returns. `flattenLeafDecks` ($lib/decks) walks the
@@ -93,6 +94,8 @@
     }
 
     let liveDecks: Deck[] | null = $state(null);
+    let decksReady = $state(false);
+    let historyReady = $state(false);
     let loadError = $state<string | null>(null);
     let liveHistory: ApiDayCount[] | null = $state(null);
     let statsError = $state<string | null>(null);
@@ -125,30 +128,40 @@
     let newFilteredError = $state<string | null>(null);
     let newFilteredNameInput = $state<HTMLInputElement | null>(null);
 
-    onMount(async () => {
-        try {
-            const res = await fetchDecks();
-            liveDecks = mapApiDecks(res.decks);
-        } catch (e) {
-            loadError = e instanceof Error ? e.message : "Couldn't load decks";
-        }
+    onMount(() => {
+        fetchDecks()
+            .then((res) => {
+                liveDecks = mapApiDecks(res.decks);
+            })
+            .catch((e: unknown) => {
+                loadError = e instanceof Error ? e.message : "Couldn't load decks";
+            })
+            .finally(() => {
+                decksReady = true;
+            });
 
-        try {
-            const stats = await fetchStatsRecent(30);
-            liveHistory = stats.history;
-        } catch (e) {
-            statsError = e instanceof Error ? e.message : "Couldn't load stats";
-        }
+        fetchStatsRecent(30)
+            .then((stats) => {
+                liveHistory = stats.history;
+            })
+            .catch((e: unknown) => {
+                statsError = e instanceof Error ? e.message : "Couldn't load stats";
+            })
+            .finally(() => {
+                historyReady = true;
+            });
 
-        try {
-            const fc = await fetchForecast(7);
-            forecast = fc.history;
-        } catch (e) {
-            forecastError = e instanceof Error ? e.message : "Couldn't load forecast";
-        }
+        fetchForecast(7)
+            .then((fc) => {
+                forecast = fc.history;
+            })
+            .catch((e: unknown) => {
+                forecastError = e instanceof Error ? e.message : "Couldn't load forecast";
+            });
     });
 
-    let decks = $derived(liveDecks ?? fakeDecks);
+    // Gate: show empty list (skeleton) while pending; fall back to fakeDecks only on error.
+    let decks = $derived(decksReady ? (liveDecks ?? fakeDecks) : []);
     let resume = $derived(decks[0] ?? fakeDecks[0]);
 
     async function startCreateDeck(): Promise<void> {
@@ -247,7 +260,9 @@
         await auth.logout();
     }
 
-    let history = $derived(liveHistory ?? fakeHistory);
+    // Same gate: empty while pending so no fake totals flash; fallback on error.
+    let history = $derived(historyReady ? (liveHistory ?? fakeHistory) : []);
+    let streakDays = $derived(historyReady ? computeStreak(liveHistory ?? []) : null);
     let totalReviews = $derived(history.reduce((a, d) => a + d.reviews, 0));
     let totalDueAll = $derived(decks.reduce((a, d) => a + totalDue(d), 0));
     let activeDeckCount = $derived(
@@ -367,7 +382,7 @@
             <div class="today-stat">
                 <Caption>streak</Caption>
                 <div class="today-value mono" style="--stat-color: var(--warn)">
-                    14d <SketchFlame size={16} />
+                    {streakDays !== null ? `${streakDays}d` : '—'} <SketchFlame size={16} />
                 </div>
             </div>
         </section>
@@ -499,6 +514,17 @@
                 <div class="error-banner mono" role="alert">{newFilteredError}</div>
             {/if}
 
+            {#if !decksReady}
+                <ul
+                    class="deck-ledger-skel"
+                    data-testid="dashboard-deck-skeleton"
+                    aria-hidden="true"
+                >
+                    <li class="ledger-skel-row"><span class="skel-bar"></span></li>
+                    <li class="ledger-skel-row"><span class="skel-bar skel-bar-sm" style="width:55%"></span></li>
+                    <li class="ledger-skel-row"><span class="skel-bar" style="width:64%"></span></li>
+                </ul>
+            {:else}
             <div class="deck-ledger" data-testid="deck-grid">
                 <div class="ledger-head mono" role="presentation">
                     <span class="lh-idx">idx</span>
@@ -585,6 +611,7 @@
                     </span>
                 </button>
             </div>
+            {/if}
 
             <div class="deck-foot">
                 <Caption>
@@ -692,7 +719,7 @@
         <h1 class="page-title m-title">decks</h1>
         <p class="m-sub mono">
             good morning, {greetingName} ·
-            <strong>{totalDueAll}</strong> due · 14d streak
+            <strong>{totalDueAll}</strong> due · {streakDays !== null ? `${streakDays}d` : '—'} streak
             <SketchFlame size={11} />
         </p>
 
@@ -713,7 +740,7 @@
             </div>
             <div class="m-today-cell">
                 <Caption>streak</Caption>
-                <div class="m-today-value mono" style="--stat-color: var(--warn)">14d</div>
+                <div class="m-today-value mono" style="--stat-color: var(--warn)">{streakDays !== null ? `${streakDays}d` : '—'}</div>
             </div>
         </div>
 
@@ -1003,6 +1030,18 @@
     }
     .inline-input:focus {
         border-bottom-color: var(--accent);
+    }
+
+    /* — ledger skeleton (pending state) — */
+    .deck-ledger-skel {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        pointer-events: none;
+    }
+    .ledger-skel-row {
+        padding: 10px 8px;
+        border-bottom: 1px solid var(--rule-soft);
     }
 
     /* — ledger table ————————————————————————— */
