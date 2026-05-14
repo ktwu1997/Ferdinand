@@ -307,8 +307,14 @@
     // Date label for the // caption. Locale matches the design exemplar
     // (2026·05·08 thursday) — middle-dot separators + lowercase weekday read
     // as a deliberate aesthetic choice rather than "May 8, 2026" prose.
-    const today = (() => {
-        const d = new Date();
+    // M3: `nowTick` ticks every 60s so the label refreshes past midnight.
+    let nowTick = $state(Date.now());
+    $effect(() => {
+        const id = setInterval(() => (nowTick = Date.now()), 60_000);
+        return () => clearInterval(id);
+    });
+    let today = $derived((() => {
+        const d = new Date(nowTick);
         const y = d.getFullYear();
         const m = String(d.getMonth() + 1).padStart(2, "0");
         const day = String(d.getDate()).padStart(2, "0");
@@ -316,7 +322,7 @@
             .toLocaleDateString("en-US", { weekday: "long" })
             .toLowerCase();
         return `${y}·${m}·${day} ${weekday}`;
-    })();
+    })());
 
     let greetingName = $derived(auth.user?.username ?? "friend");
     let resumeGlyph = $derived(deriveGlyph(leafSegment(resume.name)));
@@ -872,7 +878,6 @@
     @media (max-width: 640px) {
         .page {
             padding: 16px 18px 24px;
-            overflow-x: clip;
         }
         .dash-desktop {
             display: none;

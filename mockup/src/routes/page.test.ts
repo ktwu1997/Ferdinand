@@ -1029,3 +1029,44 @@ describe("Issue #4 — skeleton gates", () => {
         }
     });
 });
+
+// M3: today date label is derived from nowTick and shows current date.
+describe("M3 — today date label", () => {
+    let container: HTMLDivElement;
+
+    beforeEach(() => {
+        vi.resetAllMocks();
+        resetPageStub();
+        vi.mocked(fetchStatsRecent).mockResolvedValue(fakeHistoryAsApi);
+        vi.mocked(fetchForecast).mockResolvedValue(emptyForecast);
+        container = document.createElement("div");
+        document.body.appendChild(container);
+    });
+
+    afterEach(() => {
+        container.remove();
+    });
+
+    test("today-date element shows YYYY·MM·DD weekday format for the current date", async () => {
+        vi.mocked(fetchDecks).mockResolvedValueOnce(decksOk);
+        const instance = mount(Page, { target: container, props: {} });
+        try {
+            await settle();
+
+            const el = container.querySelector(".today-date");
+            expect(el).not.toBeNull();
+            const text = el!.textContent ?? "";
+            // Must match e.g. "2026·05·14 wednesday"
+            expect(text).toMatch(/^\d{4}·\d{2}·\d{2} [a-z]+$/);
+
+            // Must reflect today's actual date (not a stale hardcoded value).
+            const d = new Date();
+            const expectedYear = String(d.getFullYear());
+            const expectedMonth = String(d.getMonth() + 1).padStart(2, "0");
+            const expectedDay = String(d.getDate()).padStart(2, "0");
+            expect(text).toContain(`${expectedYear}·${expectedMonth}·${expectedDay}`);
+        } finally {
+            unmount(instance);
+        }
+    });
+});
