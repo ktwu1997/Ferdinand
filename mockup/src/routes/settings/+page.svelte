@@ -73,7 +73,7 @@
     });
 
     let active = $state("fsrs");
-    let themeChoice: ThemeChoice = $state("light");
+    let themeChoice: ThemeChoice = $state(typeof window !== "undefined" ? getThemeChoice() : "light");
 
     // FSRS settings wired to anki_server (Phase 9-N2; optimize/reschedule 9-O2;
     // multi-preset selector 9-O''). Server stores desired_retention as a
@@ -445,7 +445,6 @@
     }
 
     onMount(async () => {
-        themeChoice = getThemeChoice();
         try {
             const [list, fsrs, hc] = await Promise.all([
                 fetchDeckConfigs(),
