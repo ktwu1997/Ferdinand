@@ -1,4 +1,6 @@
 <script lang="ts">
+    import type { Snippet } from "svelte";
+
     interface Props {
         variant?: "default" | "primary" | "flat";
         padding?: "sm" | "md" | "lg";
@@ -6,7 +8,7 @@
         href?: string;
         onclick?: (e: MouseEvent) => void;
         interactive?: boolean;
-        children?: any;
+        children?: Snippet;
     }
 
     let {
