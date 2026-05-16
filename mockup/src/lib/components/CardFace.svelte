@@ -63,6 +63,45 @@
             el.setAttribute(attr, base + raw);
         }
 
+        // Concept-Deep template omits the `.card-image` block entirely when
+        // the Image field is empty (Mustache `{{#Image}}…{{/Image}}` truthy
+        // section). For words gemini classified as too abstract to illustrate
+        // (added to image_skip.txt — adverbs, function words), this leaves an
+        // unexplained gap above the Why/Example/Contrast sections. Inject a
+        // sketch-style "no illustration" placeholder so the user sees an
+        // intentional absence instead of wondering if the image failed to load.
+        // Guarded so it only fires on the Concept-Deep answer side (hr#answer
+        // present + at least one .section.{why,example,contrast,mnemonic,source}
+        // — Cloze-Deep cards don't carry those sections and never had an
+        // Image field, so they never get a placeholder).
+        const isAnswerSide = shadow.querySelector("hr#answer");
+        const hasConceptSection = shadow.querySelector(
+            ".section.why, .section.example, .section.contrast, .section.mnemonic, .section.source",
+        );
+        const hasImage = shadow.querySelector(".card-image");
+        if (isAnswerSide && hasConceptSection && !hasImage) {
+            const placeholder = document.createElement("div");
+            placeholder.className = "card-image card-image-empty";
+            placeholder.setAttribute("data-testid", "card-image-empty");
+            placeholder.innerHTML =
+                '<svg class="empty-frame" viewBox="0 0 80 60" width="80" height="60" aria-hidden="true">' +
+                '<path d="M5 5 H20 M5 5 V15 M75 5 H60 M75 5 V15 M5 55 H20 M5 55 V45 M75 55 H60 M75 55 V45" ' +
+                'stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" />' +
+                '<path d="M12 14 L68 46" stroke="currentColor" stroke-width="1.2" fill="none" ' +
+                'stroke-linecap="round" opacity="0.4" />' +
+                "</svg>" +
+                '<div class="empty-caption">no illustration · abstract concept</div>';
+            // Insert directly after the .back block (matches the position
+            // .card-image would have occupied in the template), falling back
+            // to appending to .card if the back div is somehow absent.
+            const back = shadow.querySelector(".back");
+            if (back?.parentNode) {
+                back.parentNode.insertBefore(placeholder, back.nextSibling);
+            } else {
+                shadow.querySelector(".card")?.appendChild(placeholder);
+            }
+        }
+
         // Append a safety stylesheet AFTER the user CSS so viewport defaults
         // override author rules that would otherwise overflow on phones.
         // Tests assert a single user-authored style block via
@@ -73,7 +112,16 @@
             ":host{display:block;}" +
             "img,video,audio,table{max-width:100%;height:auto;}" +
             "pre{white-space:pre-wrap;word-break:break-word;}" +
-            ".card{box-sizing:border-box;max-width:100%;}";
+            ".card{box-sizing:border-box;max-width:100%;}" +
+            ".card-image-empty{" +
+                "flex-direction:column;align-items:center;gap:8px;" +
+                "opacity:0.55;color:var(--text-subtle,oklch(65% 0.006 60));" +
+                "font-family:var(--font-mono,ui-monospace,\"JetBrains Mono\",Menlo,monospace);" +
+            "}" +
+            ".card-image-empty .empty-frame{color:inherit;}" +
+            ".card-image-empty .empty-caption{" +
+                "font-size:11px;letter-spacing:0.04em;text-transform:lowercase;" +
+            "}";
         shadow.appendChild(safety);
     });
 </script>

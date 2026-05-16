@@ -244,3 +244,147 @@ describe("CardFace M6 — DOMPurify data: URI hardening", () => {
         }
     });
 });
+
+describe("CardFace — empty-image placeholder for Concept-Deep", () => {
+    let container: HTMLDivElement;
+
+    beforeEach(() => {
+        container = document.createElement("div");
+        document.body.appendChild(container);
+    });
+
+    afterEach(() => {
+        container.remove();
+    });
+
+    test("renders placeholder on Concept-Deep answer side when .card-image is absent", () => {
+        // Mirrors the Concept-Deep answer template with NO {{#Image}} block —
+        // i.e. an abstract word the gemini classifier left in image_skip.txt.
+        const instance = mount(CardFace, {
+            target: container,
+            props: {
+                html:
+                    '<div class="front-q">customarily</div>' +
+                    '<hr id="answer">' +
+                    '<div class="back">(adv.) 慣常地</div>' +
+                    '<div class="section why"><div class="section-label">Why</div>...</div>' +
+                    '<div class="section example"><div class="section-label">Example</div>...</div>',
+                css: "",
+                testid: "empty-placeholder",
+            },
+        });
+        flushSync();
+
+        try {
+            const shadow = shadowFor(container, "empty-placeholder");
+            const placeholder = shadow.querySelector(
+                '[data-testid="card-image-empty"]',
+            );
+            expect(placeholder).not.toBeNull();
+            expect(placeholder!.classList.contains("card-image")).toBe(true);
+            expect(placeholder!.classList.contains("card-image-empty")).toBe(
+                true,
+            );
+            // The placeholder must sit directly after .back to match the slot
+            // .card-image would have occupied in the live template.
+            const back = shadow.querySelector(".back");
+            expect(back!.nextElementSibling).toBe(placeholder);
+            // Caption + frame markers present so visual review is unambiguous.
+            expect(placeholder!.querySelector(".empty-frame")).not.toBeNull();
+            expect(
+                placeholder!.querySelector(".empty-caption")?.textContent,
+            ).toMatch(/no illustration/);
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("does NOT render placeholder when .card-image is already present", () => {
+        // A Concept-Deep card with a real image — placeholder must stay absent
+        // so it doesn't double up alongside the actual illustration. Note we
+        // use an empty .card-image div (no inner <img>) because jsdom trips
+        // over Canvas.Image when constructing real <img> elements; the
+        // detection logic only cares about the .card-image wrapper's presence.
+        const instance = mount(CardFace, {
+            target: container,
+            props: {
+                html:
+                    '<div class="front-q">negotiate</div>' +
+                    '<hr id="answer">' +
+                    '<div class="back">(v.) 協商</div>' +
+                    '<div class="card-image"></div>' +
+                    '<div class="section why"><div class="section-label">Why</div>...</div>',
+                css: "",
+                testid: "with-image",
+            },
+        });
+        flushSync();
+
+        try {
+            const shadow = shadowFor(container, "with-image");
+            expect(
+                shadow.querySelector('[data-testid="card-image-empty"]'),
+            ).toBeNull();
+            // The wrapper div still exists, unmodified, in its template slot.
+            expect(shadow.querySelector(".card-image")).not.toBeNull();
+            expect(
+                shadow
+                    .querySelector(".card-image")
+                    ?.classList.contains("card-image-empty"),
+            ).toBe(false);
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("does NOT render placeholder on front (qfmt) — no hr#answer", () => {
+        // The front side only shows {{Front}} — no answer-side markers means
+        // the placeholder logic must not fire (otherwise every front would
+        // sprout a spurious empty frame).
+        const instance = mount(CardFace, {
+            target: container,
+            props: {
+                html: '<div class="front-q">negotiate</div>',
+                css: "",
+                testid: "front-side",
+            },
+        });
+        flushSync();
+
+        try {
+            const shadow = shadowFor(container, "front-side");
+            expect(
+                shadow.querySelector('[data-testid="card-image-empty"]'),
+            ).toBeNull();
+        } finally {
+            unmount(instance);
+        }
+    });
+
+    test("does NOT render placeholder on non-Concept-Deep cards (no .section markers)", () => {
+        // Cloze-Deep answer reveals a different template — no Image field, no
+        // .section.{why,example,...} markers. Placeholder must skip these to
+        // avoid putting a misleading "abstract" hint on a normal Cloze card.
+        const instance = mount(CardFace, {
+            target: container,
+            props: {
+                html:
+                    '<div class="cloze-front">[...] is in the details</div>' +
+                    '<hr id="answer">' +
+                    '<div class="cloze-back">the devil is in the details</div>',
+                css: "",
+                testid: "cloze-card",
+            },
+        });
+        flushSync();
+
+        try {
+            const shadow = shadowFor(container, "cloze-card");
+            expect(
+                shadow.querySelector('[data-testid="card-image-empty"]'),
+            ).toBeNull();
+        } finally {
+            unmount(instance);
+        }
+    });
+});
